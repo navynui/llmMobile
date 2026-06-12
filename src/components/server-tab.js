@@ -302,9 +302,46 @@ export class ServerTab extends LitElement {
     this.statusMessage = '';
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    this.activeModelPoll = setInterval(() => {
+      if (this.status?.server?.status === 'running') {
+        this.fetchActiveModel();
+      }
+    }, 4000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.activeModelPoll) {
+      clearInterval(this.activeModelPoll);
+    }
+  }
+
   firstUpdated() {
     this.fetchModelsList();
     this.fetchActiveModel();
+  }
+
+  updated(changedProperties) {
+    if (changedProperties.has('activeModel')) {
+      const oldActive = changedProperties.get('activeModel');
+      const newActive = this.activeModel;
+      
+      if (newActive && newActive !== oldActive) {
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: `🟢 Model Loaded: "${newActive}" is ready for inference!` },
+          bubbles: true,
+          composed: true
+        }));
+      } else if (!newActive && oldActive) {
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: `⚪ Model Unloaded: VRAM cleared.` },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    }
   }
 
   async fetchModelsList() {

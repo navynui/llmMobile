@@ -304,6 +304,71 @@ def stop_llm():
 # REST endpoints – model management
 # ───────────────────────────────────────────────
 
+def _add_to_models_ini(filename: str):
+    if not os.path.exists(MODES_INI_PATH):
+        try:
+            os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
+            with open(MODES_INI_PATH, "w") as f:
+                f.write("")
+        except Exception:
+            return
+
+    # Check if already present in models.ini
+    already_present = False
+    try:
+        with open(MODES_INI_PATH, "r") as f:
+            content = f.read()
+            if f"[{filename}]" in content or f"[{filename.lower()}]" in content.lower():
+                already_present = True
+    except Exception:
+        pass
+
+    if not already_present:
+        try:
+            with open(MODES_INI_PATH, "a") as f:
+                f.write(f"\n\n[{filename}]\n; Auto-added on download completion\n")
+            print(f"[Models INI] Auto-added {filename} to models.ini")
+        except Exception as e:
+            print(f"[Models INI] Failed to auto-add {filename}: {e}")
+
+
+def _remove_from_models_ini(filename: str):
+    if not os.path.exists(MODES_INI_PATH):
+        return
+    try:
+        with open(MODES_INI_PATH, "r") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        skip_section = False
+        target_section = f"[{filename.lower()}]"
+
+        for line in lines:
+            line_stripped = line.strip()
+            # Check if line is a section header
+            if line_stripped.startswith("[") and line_stripped.endswith("]"):
+                if line_stripped.lower() == target_section:
+                    skip_section = True
+                    continue
+                else:
+                    skip_section = False
+
+            if skip_section:
+                continue
+
+            new_lines.append(line)
+
+        with open(MODES_INI_PATH, "w") as f:
+            f.writelines(new_lines)
+        print(f"[Models INI] Cleaned up {filename} from models.ini")
+    except Exception as e:
+        print(f"[Models INI] Failed to clean up {filename}: {e}")
+
+
+class ModelsIniRequest(BaseModel):
+    content: str
+
+
 @app.get("/models")
 def list_models():
     if not os.path.exists(MODES_INI_PATH):
@@ -338,10 +403,35 @@ def delete_model(filename: str):
     if not filename.endswith(".gguf") or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = os.path.join(MODELS_DIR, filename)
-    if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail="File not found")
-    os.remove(path)
-    return {"detail": f"Deleted {filename}"}
+    if os.path.exists(path):
+        os.remove(path)
+    
+    # Also clean up models.ini configuration
+    _remove_from_models_ini(filename)
+    return {"detail": f"Deleted {filename} and updated models.ini"}
+
+
+@app.get("/api/models_ini")
+def get_models_ini():
+    if not os.path.exists(MODES_INI_PATH):
+        return {"content": ""}
+    try:
+        with open(MODES_INI_PATH, "r") as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/models_ini")
+def save_models_ini(req: ModelsIniRequest):
+    try:
+        os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
+        with open(MODES_INI_PATH, "w") as f:
+            f.write(req.content)
+        return {"detail": "models.ini updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/api/llm/models")
@@ -1129,6 +1219,7 @@ async def _download_model_task(repo_id: str, filename: str):
                     total_bytes = int(r_head.headers.get("content-length", 0))
                     current_bytes = total_bytes
                     shutil.move(temp_path, dest_path)
+                    _add_to_models_ini(filename)
                     with _downloads_lock:
                         _active_downloads[key].update({
                             "status": "completed",
@@ -1184,6 +1275,7 @@ async def _download_model_task(repo_id: str, filename: str):
                 # Check if fully downloaded
                 if current_bytes >= total_bytes:
                     shutil.move(temp_path, dest_path)
+                    _add_to_models_ini(filename)
                     with _downloads_lock:
                         _active_downloads[key].update({
                             "status": "completed",
@@ -1215,7 +1307,7 @@ async def search_hf_models(q: str):
 
 @app.get("/api/models/details")
 async def get_hf_model_details(repo_id: str):
-    url = f"https://huggingface.co/api/models/{repo_id}"
+    url = f"https://huggingface.co/api/models/{repo_id}?blobs=true"
     async with httpx.AsyncClient() as client:
         try:
             r = await client.get(url, timeout=10.0)
@@ -1233,6 +1325,7 @@ async def get_hf_model_details(repo_id: str):
             return {"repo_id": repo_id, "gguf_files": gguf_files, "downloads": data.get("downloads", 0), "likes": data.get("likes", 0)}
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
+
 
 
 @app.post("/api/models/download")
