@@ -44,6 +44,10 @@ export class LlmApp extends LitElement {
       background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.03), transparent 40%);
     }
 
+    .main-content.chat-route {
+      overflow: hidden;
+    }
+
     /* Update Banner */
     .update-banner {
       background: var(--primary);
@@ -610,7 +614,7 @@ export class LlmApp extends LitElement {
         </aside>
 
         <!-- Main Workspace -->
-        <main class="main-content">
+        <main class="main-content ${this.currentRoute === '#/chat' ? 'chat-route' : ''}">
           ${this.renderActiveTabContent()}
         </main>
 
