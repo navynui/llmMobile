@@ -15,6 +15,7 @@ import docker
 import httpx
 import paho.mqtt.client as mqtt
 import websocket as ws_client
+import sqlite3
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
@@ -32,6 +33,16 @@ app = FastAPI(title="LLM Mobile Manager")
 # --- Constants ---
 MODES_INI_PATH      = "/models/models.ini"
 MODELS_DIR          = "/models"
+
+DB_PATH = "/app/llm_bench.db"
+if not os.path.exists(DB_PATH):
+    DB_PATH = "/home/nui/llmaCPP/llm_bench.db"
+
+def get_db_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
 IMAGE_GEN_OUTPUT    = "/comfyui-output"
 WORKFLOW_PATH       = "/app/MyZimage_turbo.json"
 PROMPTS_FILE        = "/app/PROMPTS"
@@ -1343,17 +1354,61 @@ def get_downloads_status():
         return {"downloads": list(_active_downloads.values())}
 
 @app.get("/api/benchmarks")
-def get_benchmarks():
-    return {
-        "benchmarks": [
-            {"model": "Llama-3-8B-Instruct.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 38.5, "score": 82.1},
-            {"model": "Llama-3-8B-Instruct.Q8_0", "platform": "Tesla P100 (16GB)", "quant": "Q8_0", "tokens_sec": 26.2, "score": 83.4},
-            {"model": "Mistral-7B-v0.3.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 42.1, "score": 80.5},
-            {"model": "Phi-3-mini-128k.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 65.4, "score": 78.8},
-            {"model": "Llama-3-8B-Instruct.Q4_K_M", "platform": "RTX 3090 (24GB)", "quant": "Q4_K_M", "tokens_sec": 84.1, "score": 82.1},
-            {"model": "Gemma-2-9B-IT.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 31.8, "score": 84.2}
-        ]
-    }
+def get_benchmarks(show_all: bool = False):
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        
+        query = """
+        WITH latest_runs AS (
+            SELECT tr.model_id, tr.run_id, tr.timestamp,
+                   ROW_NUMBER() OVER (PARTITION BY tr.model_id ORDER BY tr.timestamp DESC) as rn
+            FROM test_runs tr
+        ),
+        run_scores_agg AS (
+            SELECT lr.model_id, lr.run_id, lr.timestamp,
+                   SUM(rs.score) as total_score,
+                   MAX(CASE WHEN rs.round_name = 'speed_metric' THEN rs.speed_tps END) as avg_tps
+            FROM latest_runs lr
+            JOIN round_scores rs ON lr.run_id = rs.run_id
+            WHERE lr.rn = 1
+            GROUP BY lr.model_id, lr.run_id, lr.timestamp
+        )
+        SELECT m.model_id, m.name, m.quantization, m.status, m.notes,
+               rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps,
+               (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
+        FROM models m
+        JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
+        ORDER BY rsa.total_score DESC;
+        """
+        
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        benchmarks = []
+        for r in rows:
+            avg_tps = r["avg_tps"] or 0.0
+            total_score = r["total_score"] or 0
+            hallucinated = r["hallucination_count"] > 0
+            
+            # Apply strict filters if show_all is False
+            if not show_all:
+                if avg_tps < 20.0 or hallucinated or total_score < 50:
+                    continue
+            
+            benchmarks.append({
+                "model": r["name"],
+                "platform": "Tesla P100 (16GB)",
+                "quant": r["quantization"] or "Unknown",
+                "tokens_sec": round(avg_tps, 1),
+                "score": total_score
+            })
+            
+        return {"benchmarks": benchmarks}
+    except Exception as e:
+        print(f"Error querying benchmarks database: {e}")
+        return {"benchmarks": [], "error": str(e)}
 
 
 @app.get("/api/logs")
