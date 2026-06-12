@@ -1410,6 +1410,231 @@ def get_benchmarks(show_all: bool = False):
         print(f"Error querying benchmarks database: {e}")
         return {"benchmarks": [], "error": str(e)}
 
+_benchmark_running = False
+_benchmark_lock = asyncio.Lock()
+_benchmark_progress = {
+    "running": False,
+    "model_id": "",
+    "current_round": "",
+    "rounds_completed": 0,
+    "total_rounds": 5,
+    "logs": []
+}
+
+def log_benchmark_progress(msg: str):
+    print(msg)
+    _benchmark_progress["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    if len(_benchmark_progress["logs"]) > 200:
+        _benchmark_progress["logs"].pop(0)
+
+
+class BenchmarkRunRequest(BaseModel):
+    judge_model_id: Optional[str] = None
+
+
+async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
+    global _benchmark_running
+    
+    _benchmark_progress["running"] = True
+    _benchmark_progress["model_id"] = model_id
+    _benchmark_progress["current_round"] = "Initializing..."
+    _benchmark_progress["rounds_completed"] = 0
+    _benchmark_progress["logs"] = []
+    
+    log_benchmark_progress(f"Starting benchmark sequence for model: {model_id}")
+    
+    prompts = {
+        "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
+        "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
+        "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
+        "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
+        "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
+    }
+    
+    rounds_list = []
+    server_url = get_llm_server_url()
+    api_url = f"{server_url}/completion"
+    
+    try:
+        async with httpx.AsyncClient(timeout=600.0) as client:
+            for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
+                _benchmark_progress["current_round"] = round_name
+                log_benchmark_progress(f"Executing {round_name}...")
+                
+                payload = {
+                    "model": model_id,
+                    "prompt": prompt_text,
+                    "temperature": 0.7,
+                    "stream": False,
+                    "n_predict": 4096
+                }
+                
+                start_time = time.time()
+                try:
+                    response = await client.post(api_url, json=payload)
+                    duration = time.time() - start_time
+                    
+                    if response.status_code == 200:
+                        res_data = response.json()
+                        tokens_predicted = res_data.get("tokens_predicted", 0)
+                        timings = res_data.get("timings", {})
+                        speed_tps = timings.get("predicted_per_second", 0)
+                        
+                        if tokens_predicted == 0 and "content" in res_data:
+                            tokens_predicted = len(res_data["content"]) // 4
+                        
+                        if speed_tps == 0 and duration > 0:
+                            speed_tps = tokens_predicted / duration
+                            
+                        log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                        
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "prompt": prompt_text,
+                            "response": res_data.get("content", ""),
+                            "metrics": {
+                                "duration_seconds": round(duration, 2),
+                                "tokens_generated": tokens_predicted,
+                                "tokens_per_second": round(speed_tps, 2)
+                            }
+                        })
+                    else:
+                        log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}")
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "error": f"HTTP status {response.status_code}"
+                        })
+                except Exception as round_err:
+                    log_benchmark_progress(f"Exception in {round_name}: {round_err}")
+                    rounds_list.append({
+                        "round_name": get_gold_key(round_name) or round_name,
+                        "error": str(round_err)
+                    })
+                
+                _benchmark_progress["rounds_completed"] = idx
+                
+                if idx < len(prompts):
+                    log_benchmark_progress("Cooling down for 10 seconds to prevent VRAM locks...")
+                    await asyncio.sleep(10)
+                    
+        # Compile and save JSON
+        results = {
+            "model_id": model_id,
+            "model_name": os.path.basename(model_id),
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "rounds": rounds_list
+        }
+        
+        out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
+        os.makedirs(out_dir, exist_ok=True)
+        raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
+        
+        with open(raw_output_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=4, ensure_ascii=False)
+            
+        log_benchmark_progress(f"Saved raw results to {raw_output_path}")
+        
+        # Trigger judge
+        log_benchmark_progress("Starting AI Judge grading sequence...")
+        _benchmark_progress["current_round"] = "AI Judge Grading..."
+        
+        req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
+        judge_res = await judge_benchmark(req)
+        
+        log_benchmark_progress("AI Judge grading sequence completed successfully!")
+        
+    except Exception as run_err:
+        log_benchmark_progress(f"Benchmark run failed: {run_err}")
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+            INSERT INTO models (model_id, name, quantization, status, notes)
+            VALUES (?, ?, ?, 'FAILED', ?)
+            ON CONFLICT(model_id) DO UPDATE SET
+                status = 'FAILED',
+                notes = ?
+            """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Failed: {str(run_err)}", f"Failed: {str(run_err)}"))
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            log_benchmark_progress(f"Failed to record failure in DB: {db_err}")
+    finally:
+        async with _benchmark_lock:
+            _benchmark_running = False
+        _benchmark_progress["running"] = False
+        _benchmark_progress["current_round"] = "Finished"
+
+
+@app.post("/api/benchmarks/run")
+async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTasks):
+    global _benchmark_running
+    
+    async with _benchmark_lock:
+        if _benchmark_running:
+            raise HTTPException(status_code=400, detail="A benchmark is already actively running. Please wait for it to complete.")
+        _benchmark_running = True
+        
+    try:
+        # Detect loaded model
+        model_id = await _get_loaded_model()
+        if not model_id:
+            async with _benchmark_lock:
+                _benchmark_running = False
+            raise HTTPException(status_code=400, detail="No active model is loaded in the server. Please load a model before running benchmarks.")
+            
+        run_id = str(uuid.uuid4())
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Determine raw output path
+        out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
+        raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
+        
+        # Save placeholder records in database
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+        INSERT INTO models (model_id, name, quantization, status, notes)
+        VALUES (?, ?, ?, 'TESTING', ?)
+        ON CONFLICT(model_id) DO UPDATE SET
+            status = 'TESTING',
+            notes = ?
+        """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
+        
+        # Clean any historical test run for this model so we keep only the latest
+        cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
+        old_runs = cursor.fetchall()
+        for old_run in old_runs:
+            cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
+            
+        cursor.execute("""
+        INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
+        VALUES (?, ?, ?, ?)
+        """, (run_id, model_id, timestamp, raw_output_path))
+        
+        conn.commit()
+        conn.close()
+        
+        # Queue background task
+        background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id)
+        
+        return {
+            "status": "success",
+            "message": "Benchmark sequence initiated successfully in the background.",
+            "run_id": run_id,
+            "model_id": model_id
+        }
+    except Exception as e:
+        async with _benchmark_lock:
+            _benchmark_running = False
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/benchmarks/status")
+def get_benchmark_status():
+    return _benchmark_progress
+
 
 class JudgeRequest(BaseModel):
     run_id: Optional[str] = None
