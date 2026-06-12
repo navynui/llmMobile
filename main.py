@@ -29,14 +29,6 @@ except ImportError:
 
 app = FastAPI(title="LLM Mobile Manager")
 
-# --- Push Notification Globals ---
-VAPID_PUBLIC_KEY = ""
-VAPID_PRIVATE_KEY = ""
-VAPID_KEYS_FILE = os.path.join(IMAGE_GEN_OUTPUT, "vapid_keys.json")
-_push_subscriptions = []
-SUBS_FILE_PATH = os.path.join(IMAGE_GEN_OUTPUT, "push_subscriptions.json")
-QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
-
 # --- Constants ---
 MODELS_DIR          = "/models"
 IMAGE_GEN_OUTPUT    = "/comfyui-output"
@@ -46,6 +38,14 @@ LLM_PROJECT_NAME    = os.environ.get("LLM_PROJECT_NAME", "llmacpp")
 LLM_COMPOSE_DIR     = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
 COMFYUI_HOST        = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")
 COMFY_CLIENT_ID     = "llm-mobile"
+
+# --- Push Notification Globals ---
+VAPID_PUBLIC_KEY = ""
+VAPID_PRIVATE_KEY = ""
+VAPID_KEYS_FILE = os.path.join(IMAGE_GEN_OUTPUT, "vapid_keys.json")
+_push_subscriptions = []
+SUBS_FILE_PATH = os.path.join(IMAGE_GEN_OUTPUT, "push_subscriptions.json")
+QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
 
 # ComfyUI workflow node IDs (MyZimage_turbo.json layout)
 NODE_PROMPT_TEXT    = "57:27"   # CLIPTextEncode → .inputs.text

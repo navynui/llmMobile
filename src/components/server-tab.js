@@ -350,7 +350,7 @@ export class ServerTab extends LitElement {
 
   async handleServerToggle() {
     this.actionPending = true;
-    const isRunning = this.status.server?.status === 'running';
+    const isRunning = this.status?.server?.status === 'running';
     const endpoint = isRunning ? '/stop' : '/start';
     this.showStatus(isRunning ? 'Stopping LLM server...' : 'Starting LLM server...');
 
@@ -445,7 +445,10 @@ export class ServerTab extends LitElement {
   }
 
   render() {
-    const isServerRunning = this.status.server?.status === 'running';
+    const status = this.status || {};
+    const stats = this.stats || {};
+    const serverStatus = status.server || {};
+    const isServerRunning = serverStatus.status === 'running';
 
     return html`
       <div class="container">
@@ -453,13 +456,13 @@ export class ServerTab extends LitElement {
         <div class="card">
           <div class="card-title">
             <span>⚡ LLM Service Status</span>
-            <span class="status-badge status-${this.status.server?.status || 'stopped'}">
-              ● ${this.status.server?.status || 'Stopped'}
+            <span class="status-badge status-${serverStatus.status || 'stopped'}">
+              ● ${serverStatus.status || 'Stopped'}
             </span>
           </div>
           <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px;">
-            <div><strong>Image:</strong> ${this.status.server?.image || 'N/A'}</div>
-            ${isServerRunning ? html`<div><strong>Uptime:</strong> ${this.status.server?.uptime || 'N/A'}</div>` : ''}
+            <div><strong>Image:</strong> ${serverStatus.image || 'N/A'}</div>
+            ${isServerRunning ? html`<div><strong>Uptime:</strong> ${serverStatus.uptime || 'N/A'}</div>` : ''}
           </div>
           <button 
             class="${isServerRunning ? 'btn-danger' : 'btn-primary'}" 
@@ -478,10 +481,10 @@ export class ServerTab extends LitElement {
             <div class="stat-box">
               <div class="stat-header">
                 <span>CPU Utility</span>
-                <span>${Math.round(this.stats.cpu_util || 0)}%</span>
+                <span>${Math.round(stats.cpu_util || 0)}%</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getUtilColorClass(this.stats.cpu_util)}" style="width: ${this.stats.cpu_util || 0}%"></div>
+                <div class="stat-bar ${this.getUtilColorClass(stats.cpu_util || 0)}" style="width: ${stats.cpu_util || 0}%"></div>
               </div>
             </div>
 
@@ -489,10 +492,10 @@ export class ServerTab extends LitElement {
             <div class="stat-box">
               <div class="stat-header">
                 <span>CPU Temp</span>
-                <span>${Math.round(this.stats.cpu_temp || 0)}°C</span>
+                <span>${Math.round(stats.cpu_temp || 0)}°C</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getTempColorClass(this.stats.cpu_temp)}" style="width: ${this.stats.cpu_temp || 0}%"></div>
+                <div class="stat-bar ${this.getTempColorClass(stats.cpu_temp || 0)}" style="width: ${stats.cpu_temp || 0}%"></div>
               </div>
             </div>
 
@@ -500,10 +503,10 @@ export class ServerTab extends LitElement {
             <div class="stat-box">
               <div class="stat-header">
                 <span>GPU Utility</span>
-                <span>${Math.round(this.stats.gpu_util || 0)}%</span>
+                <span>${Math.round(stats.gpu_util || 0)}%</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getUtilColorClass(this.stats.gpu_util)}" style="width: ${this.stats.gpu_util || 0}%"></div>
+                <div class="stat-bar ${this.getUtilColorClass(stats.gpu_util || 0)}" style="width: ${stats.gpu_util || 0}%"></div>
               </div>
             </div>
 
@@ -511,10 +514,10 @@ export class ServerTab extends LitElement {
             <div class="stat-box">
               <div class="stat-header">
                 <span>GPU Temp</span>
-                <span>${Math.round(this.stats.gpu_temp || 0)}°C</span>
+                <span>${Math.round(stats.gpu_temp || 0)}°C</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getTempColorClass(this.stats.gpu_temp)}" style="width: ${this.stats.gpu_temp || 0}%"></div>
+                <div class="stat-bar ${this.getTempColorClass(stats.gpu_temp || 0)}" style="width: ${stats.gpu_temp || 0}%"></div>
               </div>
             </div>
 
@@ -522,10 +525,10 @@ export class ServerTab extends LitElement {
             <div class="stat-box full-width">
               <div class="stat-header">
                 <span>System RAM Usage</span>
-                <span>${Math.round(this.stats.ram_percent || 0)}%</span>
+                <span>${Math.round(stats.ram_percent || 0)}%</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getUtilColorClass(this.stats.ram_percent)}" style="width: ${this.stats.ram_percent || 0}%"></div>
+                <div class="stat-bar ${this.getUtilColorClass(stats.ram_percent || 0)}" style="width: ${stats.ram_percent || 0}%"></div>
               </div>
             </div>
 
@@ -533,21 +536,21 @@ export class ServerTab extends LitElement {
             <div class="stat-box full-width">
               <div class="stat-header">
                 <span>GPU VRAM Usage</span>
-                <span>${Math.round(this.stats.vram_percent || 0)}%</span>
+                <span>${Math.round(stats.vram_percent || 0)}%</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getUtilColorClass(this.stats.vram_percent)}" style="width: ${this.stats.vram_percent || 0}%"></div>
+                <div class="stat-bar ${this.getUtilColorClass(stats.vram_percent || 0)}" style="width: ${stats.vram_percent || 0}%"></div>
               </div>
             </div>
 
             <!-- Storage Usage -->
             <div class="stat-box full-width">
               <div class="stat-header">
-                <span>Host Storage (${this.stats.storage_used_gb || 0}GB / ${this.stats.storage_total_gb || 0}GB)</span>
-                <span>${Math.round(this.stats.storage_percent || 0)}%</span>
+                <span>Host Storage (${stats.storage_used_gb || 0}GB / ${stats.storage_total_gb || 0}GB)</span>
+                <span>${Math.round(stats.storage_percent || 0)}%</span>
               </div>
               <div class="stat-progress">
-                <div class="stat-bar ${this.getUtilColorClass(this.stats.storage_percent)}" style="width: ${this.stats.storage_percent || 0}%"></div>
+                <div class="stat-bar ${this.getUtilColorClass(stats.storage_percent || 0)}" style="width: ${stats.storage_percent || 0}%"></div>
               </div>
             </div>
           </div>
