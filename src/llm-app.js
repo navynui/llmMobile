@@ -352,6 +352,17 @@ export class LlmApp extends LitElement {
         console.error("Failed to parse SSE payload", err);
       }
     });
+
+    this.evtSource.addEventListener('notification', (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload.message) {
+          this.showToast(payload.message);
+        }
+      } catch (err) {
+        console.error("Failed to parse notification payload", err);
+      }
+    });
   }
 
   stopSSEStream() {

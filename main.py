@@ -222,6 +222,7 @@ async def _local_stats_poller():
 async def startup_event():
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
+    asyncio.create_task(log_monitor_task())
     _init_vapid_keys()
     _load_subscriptions()
     _load_persisted_queue()
@@ -521,27 +522,93 @@ async def proxy_chat(request: Request):
 # SSE – /events/status
 # ───────────────────────────────────────────────
 
+_sse_subscribers = []
+
+def broadcast_notification(message: str):
+    print(f"[Log Monitor] Broadcasting notification: {message}")
+    for q in list(_sse_subscribers):
+        try:
+            q.put_nowait(message)
+        except Exception:
+            pass
+
+
+async def log_monitor_task():
+    global docker_client
+    # Start tracking from current time to avoid historical log spam
+    last_log_time = int(time.time())
+    print("[Log Monitor] Started background log monitor task")
+    while True:
+        try:
+            await asyncio.sleep(2)
+            if not docker_client:
+                continue
+            try:
+                c = docker_client.containers.get("llm-server")
+                if c.status != "running":
+                    continue
+            except Exception:
+                continue
+            
+            # Fetch logs since last_log_time
+            now = int(time.time())
+            try:
+                logs_bytes = c.logs(since=last_log_time, stdout=True, stderr=True)
+                logs = logs_bytes.decode("utf-8", errors="ignore")
+            except Exception as e:
+                print(f"[Log Monitor] Error fetching container logs: {e}")
+                continue
+                
+            last_log_time = now
+            
+            if "update_slots: all slots are idle" in logs or "all slots are idle" in logs:
+                model_name = "Model"
+                try:
+                    loaded_model = await _get_loaded_model()
+                    if loaded_model:
+                        model_name = os.path.basename(loaded_model)
+                except Exception:
+                    pass
+                broadcast_notification(f"🎉 {model_name} loaded successfully!")
+        except Exception as e:
+            print(f"[Log Monitor] Task encountered unexpected error: {e}")
+
+
 @app.get("/events/status")
 async def stream_status(request: Request, since: str = "0"):
     last_id_hdr = request.headers.get("last-event-id") or since
     counter = int(last_id_hdr) if last_id_hdr.isdigit() else 0
 
+    q = asyncio.Queue()
+    _sse_subscribers.append(q)
+
     async def _gen():
         nonlocal counter
-        while True:
-            if await request.is_disconnected():
-                break
-            counter += 1
-            with _stats_lock:
-                stats = dict(_stats_cache["data"])
-            try:
-                status = get_status()
-            except Exception:
-                status = {}
-            payload = json.dumps({"stats": stats, "status": status,
-                                  "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
-            yield f"id: {counter}\nevent: stats\nretry: 3000\ndata: {payload}\n\n"
-            await asyncio.sleep(2)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                
+                while not q.empty():
+                    msg = q.get_nowait()
+                    counter += 1
+                    notif_payload = json.dumps({"message": msg})
+                    yield f"id: {counter}\nevent: notification\ndata: {notif_payload}\n\n"
+
+                counter += 1
+                with _stats_lock:
+                    stats = dict(_stats_cache["data"])
+                try:
+                    status = get_status()
+                except Exception:
+                    status = {}
+                payload = json.dumps({"stats": stats, "status": status,
+                                      "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
+                yield f"id: {counter}\nevent: stats\nretry: 3000\ndata: {payload}\n\n"
+                await asyncio.sleep(2)
+        finally:
+            if q in _sse_subscribers:
+                _sse_subscribers.remove(q)
 
     return StreamingResponse(_gen(), media_type="text/event-stream")
 
@@ -1467,7 +1534,11 @@ _benchmark_progress = {
     "current_round": "",
     "rounds_completed": 0,
     "total_rounds": 5,
-    "logs": []
+    "logs": [],
+    "queue_running": False,
+    "queue": [],
+    "queue_completed": [],
+    "queue_current_index": 0
 }
 
 def log_benchmark_progress(msg: str):
@@ -1610,9 +1681,247 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             log_benchmark_progress(f"Failed to record failure in DB: {db_err}")
     finally:
         async with _benchmark_lock:
+            _benchmark_progress["running"] = False
+        _benchmark_progress["current_round"] = "Finished"
+
+
+class BenchmarkQueueRequest(BaseModel):
+    models: list[str]
+    judge_model_id: str
+
+
+async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
+    global _benchmark_running
+    
+    _benchmark_progress["running"] = True
+    _benchmark_progress["queue_running"] = True
+    _benchmark_progress["queue"] = models
+    _benchmark_progress["queue_completed"] = []
+    _benchmark_progress["queue_current_index"] = 0
+    _benchmark_progress["logs"] = []
+    
+    log_benchmark_progress(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
+    
+    try:
+        for idx, model_id in enumerate(models):
+            _benchmark_progress["queue_current_index"] = idx
+            log_benchmark_progress(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
+            
+            # 1. Load the test model via the server API
+            log_benchmark_progress(f"Queue: Requesting server to load test model: {model_id}")
+            async with httpx.AsyncClient() as client:
+                try:
+                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": model_id}, timeout=30)
+                    if load_res.status_code != 200:
+                        log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}")
+                        continue
+                except Exception as e:
+                    log_benchmark_progress(f"Queue Error: Exception loading {model_id}: {e}")
+                    continue
+            
+            # 2. Wait for model to load successfully
+            log_benchmark_progress(f"Queue: Waiting for {model_id} to load...")
+            loaded = False
+            for _ in range(60): # wait up to 120 seconds
+                await asyncio.sleep(2)
+                curr_loaded = await _get_loaded_model()
+                if curr_loaded and os.path.basename(curr_loaded).lower() == os.path.basename(model_id).lower():
+                    loaded = True
+                    break
+            
+            if not loaded:
+                log_benchmark_progress(f"Queue Error: Timeout loading model {model_id}. Skipping.")
+                continue
+                
+            log_benchmark_progress(f"Queue: Success! {model_id} loaded. Running benchmark...")
+            
+            # 3. Create run_id and run the benchmark rounds on the test model
+            run_id = str(uuid.uuid4())
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
+            raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
+            
+            # Insert or update status in DB as TESTING
+            try:
+                conn = get_db_conn()
+                cursor = conn.cursor()
+                cursor.execute("""
+                INSERT INTO models (model_id, name, quantization, status, notes)
+                VALUES (?, ?, ?, 'TESTING', ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    status = 'TESTING',
+                    notes = ?
+                """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
+                
+                # Delete old run records
+                cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
+                for old_run in cursor.fetchall():
+                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
+                    
+                cursor.execute("""
+                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
+                VALUES (?, ?, ?, ?)
+                """, (run_id, model_id, timestamp, raw_output_path))
+                conn.commit()
+                conn.close()
+            except Exception as db_err:
+                log_benchmark_progress(f"Queue DB Error: {db_err}")
+                continue
+                
+            prompts = {
+                "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
+                "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
+                "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
+                "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
+                "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
+            }
+            
+            rounds_list = []
+            server_url = get_llm_server_url()
+            api_url = f"{server_url}/completion"
+            
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
+                    _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
+                    _benchmark_progress["rounds_completed"] = r_idx - 1
+                    
+                    log_benchmark_progress(f"Executing {round_name} on {model_id}...")
+                    payload = {
+                        "model": model_id,
+                        "prompt": prompt_text,
+                        "temperature": 0.7,
+                        "stream": False,
+                        "n_predict": 4096
+                    }
+                    start_time = time.time()
+                    try:
+                        response = await client.post(api_url, json=payload)
+                        duration = time.time() - start_time
+                        if response.status_code == 200:
+                            res_data = response.json()
+                            tokens_predicted = res_data.get("tokens_predicted", 0)
+                            timings = res_data.get("timings", {})
+                            speed_tps = timings.get("predicted_per_second", 0)
+                            if tokens_predicted == 0 and "content" in res_data:
+                                tokens_predicted = len(res_data["content"]) // 4
+                            if speed_tps == 0 and duration > 0:
+                                speed_tps = tokens_predicted / duration
+                            log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                            
+                            rounds_list.append({
+                                "round_name": get_gold_key(round_name) or round_name,
+                                "prompt": prompt_text,
+                                "response": res_data.get("content", ""),
+                                "metrics": {
+                                    "duration_seconds": round(duration, 2),
+                                    "tokens_generated": tokens_predicted,
+                                    "tokens_per_second": round(speed_tps, 2)
+                                }
+                            })
+                        else:
+                            log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}")
+                            rounds_list.append({
+                                "round_name": get_gold_key(round_name) or round_name,
+                                "error": f"HTTP status {response.status_code}"
+                            })
+                    except Exception as round_err:
+                        log_benchmark_progress(f"Exception in {round_name}: {round_err}")
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "error": str(round_err)
+                        })
+                    
+                    _benchmark_progress["rounds_completed"] = r_idx
+                    if r_idx < len(prompts):
+                        log_benchmark_progress("Cooling down for 10 seconds to prevent VRAM locks...")
+                        await asyncio.sleep(10)
+                        
+            # Save raw JSON results
+            results = {
+                "model_id": model_id,
+                "model_name": os.path.basename(model_id),
+                "timestamp": timestamp,
+                "rounds": rounds_list
+            }
+            os.makedirs(out_dir, exist_ok=True)
+            with open(raw_output_path, "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=4, ensure_ascii=False)
+            log_benchmark_progress(f"Saved raw test results.")
+            
+            # 4. Switch to Judge Model for evaluation
+            log_benchmark_progress(f"Queue: Requesting server to load Judge model: {judge_model_id}")
+            async with httpx.AsyncClient() as client:
+                try:
+                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": judge_model_id}, timeout=30)
+                    if load_res.status_code != 200:
+                        log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model")
+                        continue
+                except Exception as e:
+                    log_benchmark_progress(f"Queue Error: Exception loading Judge: {e}")
+                    continue
+                    
+            # Wait for Judge model to load
+            log_benchmark_progress(f"Queue: Waiting for Judge model to load...")
+            judge_loaded = False
+            for _ in range(60):
+                await asyncio.sleep(2)
+                curr_loaded = await _get_loaded_model()
+                if curr_loaded and os.path.basename(curr_loaded).lower() == os.path.basename(judge_model_id).lower():
+                    judge_loaded = True
+                    break
+            
+            if not judge_loaded:
+                log_benchmark_progress(f"Queue Error: Timeout loading Judge model {judge_model_id}. Skipping grading.")
+                continue
+                
+            # 5. Execute AI Judge evaluation
+            log_benchmark_progress("Queue: Starting AI Judge grading sequence...")
+            _benchmark_progress["current_round"] = "AI Judge Grading..."
+            try:
+                req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
+                await judge_benchmark(req)
+                log_benchmark_progress(f"Queue: AI Judge grading completed successfully for {model_id}!")
+                _benchmark_progress["queue_completed"].append(model_id)
+            except Exception as judge_err:
+                log_benchmark_progress(f"Queue Judge Error: {judge_err}")
+                
+            # Wait 10s cooldown between models
+            if idx < len(models) - 1:
+                log_benchmark_progress("Cooling down 10 seconds before next model in queue...")
+                await asyncio.sleep(10)
+                
+        log_benchmark_progress("--- Automated Benchmark Queue Completed Successfully! ---")
+        
+    except Exception as queue_err:
+        log_benchmark_progress(f"Queue execution failed: {queue_err}")
+    finally:
+        async with _benchmark_lock:
             _benchmark_running = False
         _benchmark_progress["running"] = False
+        _benchmark_progress["queue_running"] = False
         _benchmark_progress["current_round"] = "Finished"
+
+
+@app.post("/api/benchmarks/queue/run")
+async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: BackgroundTasks):
+    global _benchmark_running
+    
+    async with _benchmark_lock:
+        if _benchmark_running:
+            raise HTTPException(status_code=400, detail="A benchmark or queue is already actively running. Please wait for it to complete.")
+        _benchmark_running = True
+        
+    try:
+        background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id)
+        return {
+            "status": "success",
+            "message": "Automated benchmark queue initiated successfully in the background.",
+            "queue_size": len(req.models)
+        }
+    except Exception as e:
+        async with _benchmark_lock:
+            _benchmark_running = False
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/benchmarks/run")

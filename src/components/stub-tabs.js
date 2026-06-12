@@ -25,6 +25,7 @@ export class MoreTab extends LitElement {
     benchmarkProgress: { type: Object },
     activeModelId: { type: String },
     selectedJudgeModelId: { type: String },
+    benchmarkQueue: { type: Array },
 
     // Settings & Logs state
     serverStatus: { type: String }, // 'running', 'stopped', 'loading'
@@ -714,6 +715,7 @@ export class MoreTab extends LitElement {
     };
     this.activeModelId = '';
     this.selectedJudgeModelId = '';
+    this.benchmarkQueue = [];
     this.benchmarkPollInterval = null;
 
     // Settings & Logs
@@ -979,6 +981,78 @@ export class MoreTab extends LitElement {
     } catch (err) {
       console.error("Error running judge evaluation:", err);
       alert("An error occurred while attempting to run the judge evaluation.");
+    }
+  }
+
+  async runQueueBenchmark() {
+    if (this.benchmarkProgress && this.benchmarkProgress.running) {
+      alert("A benchmark is already in progress!");
+      return;
+    }
+    if (this.benchmarkQueue.length === 0) {
+      alert("Please select at least one model to benchmark.");
+      return;
+    }
+    if (!this.selectedJudgeModelId) {
+      alert("Please designate a Judge LLM.");
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/benchmarks/queue/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          models: this.benchmarkQueue,
+          judge_model_id: this.selectedJudgeModelId
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        this.startBenchmarkPolling();
+        this.benchmarkProgress = {
+          ...this.benchmarkProgress,
+          running: true,
+          queue_running: true,
+          queue: [...this.benchmarkQueue],
+          queue_completed: [],
+          queue_current_index: 0,
+          current_round: "Initializing queue...",
+          rounds_completed: 0,
+          logs: ["[UI] Benchmark queue run requested..."]
+        };
+        this.benchmarkQueue = [];
+      } else {
+        alert(data.detail || "Failed to start queue benchmark.");
+      }
+    } catch (err) {
+      console.error("Error triggering queue benchmark:", err);
+      alert("An error occurred while attempting to start the queue benchmark.");
+    }
+  }
+
+  toggleModelInQueue(modelName) {
+    const idx = this.benchmarkQueue.indexOf(modelName);
+    if (idx === -1) {
+      this.benchmarkQueue = [...this.benchmarkQueue, modelName];
+    } else {
+      this.benchmarkQueue = this.benchmarkQueue.filter(m => m !== modelName);
+    }
+  }
+
+  toggleAllReadyModelsInQueue(readyModels) {
+    const readyNames = readyModels.map(m => m.model);
+    const allReadyInQueue = readyNames.every(m => this.benchmarkQueue.includes(m));
+    if (allReadyInQueue) {
+      this.benchmarkQueue = this.benchmarkQueue.filter(m => !readyNames.includes(m));
+    } else {
+      const newQueue = [...this.benchmarkQueue];
+      readyNames.forEach(m => {
+        if (!newQueue.includes(m)) {
+          newQueue.push(m);
+        }
+      });
+      this.benchmarkQueue = newQueue;
     }
   }
 
@@ -1349,13 +1423,42 @@ export class MoreTab extends LitElement {
           <div class="card" style="border-color: var(--primary); box-shadow: 0 0 15px rgba(99, 102, 241, 0.25); background: rgba(99, 102, 241, 0.03);">
             <h3 style="margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
               <span class="loader" style="border-top-color: var(--primary); width: 16px; height: 16px; border-width: 2px;"></span>
-              ⚡ Benchmarking in Progress...
+              ⚡ ${this.benchmarkProgress.queue_running ? 'Automated Benchmark Queue in Progress...' : 'Benchmarking in Progress...'}
             </h3>
-            <span class="card-subtitle" style="margin-bottom: 12px;">Active Model: <code style="color: var(--text-primary); font-weight: bold; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: var(--radius-sm);">${this.benchmarkProgress.model_id || 'Unknown'}</code></span>
+            <span class="card-subtitle" style="margin-bottom: 12px;">
+              ${this.benchmarkProgress.queue_running ? html`
+                Queue Progress: <strong>${(this.benchmarkProgress.queue_current_index || 0) + 1} / ${this.benchmarkProgress.queue?.length || 0}</strong> models
+              ` : html`
+                Active Model: <code style="color: var(--text-primary); font-weight: bold; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: var(--radius-sm);">${this.benchmarkProgress.model_id || 'Unknown'}</code>
+              `}
+            </span>
+
+            <!-- Queue Progress List -->
+            ${this.benchmarkProgress.queue_running && this.benchmarkProgress.queue ? html`
+              <div style="display: flex; flex-direction: column; gap: 6px; margin: 12px 0; background: rgba(0,0,0,0.25); padding: 12px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.04);">
+                <span style="font-size: 0.8rem; font-weight: bold; color: var(--text-secondary); margin-bottom: 4px; display: block;">Queue Status:</span>
+                ${this.benchmarkProgress.queue.map((m, idx) => {
+                  const isCompleted = this.benchmarkProgress.queue_completed?.includes(m) || idx < (this.benchmarkProgress.queue_current_index || 0);
+                  const isCurrent = idx === (this.benchmarkProgress.queue_current_index || 0);
+                  return html`
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.01);">
+                      <span style="color: ${isCurrent ? 'var(--primary)' : isCompleted ? 'var(--text-secondary)' : '#9ca3af'}; font-weight: ${isCurrent ? 'bold' : 'normal'};">
+                        ${idx + 1}. ${m.split('/').pop()}
+                      </span>
+                      <span>
+                        ${isCompleted ? html`<span style="color: var(--success); font-weight: bold;">✅ Completed</span>` :
+                          isCurrent ? html`<span class="pulse-glowing" style="color: var(--primary); font-weight: bold; animation: pulse 1.5s infinite;">⚡ Running</span>` :
+                          html`<span style="color: var(--text-secondary); font-style: italic;">💤 Pending</span>`}
+                      </span>
+                    </div>
+                  `;
+                })}
+              </div>
+            ` : ''}
 
             <div style="margin: 12px 0;">
               <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 6px;">
-                <span style="color: var(--text-secondary);">Current Round: <strong style="color: var(--text-primary);">${this.benchmarkProgress.current_round || 'Initializing...'}</strong></span>
+                <span style="color: var(--text-secondary);">Current Status: <strong style="color: var(--text-primary);">${this.benchmarkProgress.current_round || 'Initializing...'}</strong></span>
                 <span style="color: var(--primary); font-weight: bold;">${progressPercent}% (${completedRounds}/${totalRounds})</span>
               </div>
               <div class="progress-track" style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden;">
@@ -1435,6 +1538,29 @@ export class MoreTab extends LitElement {
                 ⚖️ Re-Grade Latest Run
               </button>
             </div>
+
+            <!-- Frontend Queue Control -->
+            ${this.benchmarkQueue.length > 0 ? html`
+              <div style="background: rgba(99,102,241,0.05); padding: 12px; border-radius: var(--radius-md); border: 1px solid rgba(99,102,241,0.25); margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-size: 0.82rem; font-weight: 600; color: #a5b4fc;">📋 Selected Queue (${this.benchmarkQueue.length} models):</span>
+                  <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(239,68,68,0.2); color: #ef4444; background: transparent;" @click="${() => this.benchmarkQueue = []}">Clear</button>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); max-height: 80px; overflow-y: auto;">
+                  ${this.benchmarkQueue.map(qm => html`
+                    <span class="meta-badge" style="background: rgba(255,255,255,0.05); padding: 2px 6px;">${qm.split('/').pop()}</span>
+                  `)}
+                </div>
+                <button 
+                  class="btn" 
+                  style="width: 100%; background: linear-gradient(135deg, var(--primary), #4f46e5); color: white; border: none; font-size: 0.85rem; padding: 10px 16px; font-weight: bold; box-shadow: 0 0 10px rgba(99, 102, 241, 0.4);" 
+                  ?disabled="${this.benchmarkProgress && this.benchmarkProgress.running}"
+                  @click="${this.runQueueBenchmark}"
+                >
+                  🚀 Run Automated Queue Benchmark
+                </button>
+              </div>
+            ` : ''}
           </div>
         </div>
 
@@ -1486,6 +1612,13 @@ export class MoreTab extends LitElement {
             <table>
               <thead>
                 <tr>
+                  <th style="width: 40px; text-align: center;">
+                    <input 
+                      type="checkbox" 
+                      .checked="${list.filter(b => b.is_ready).length > 0 && list.filter(b => b.is_ready).every(b => this.benchmarkQueue.includes(b.model))}"
+                      @change="${() => this.toggleAllReadyModelsInQueue(list.filter(b => b.is_ready))}"
+                    >
+                  </th>
                   <th @click="${() => this.handleSort('model')}">Model ${this.sortField === 'model' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
                   <th @click="${() => this.handleSort('platform')}">Platform ${this.sortField === 'platform' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
                   <th @click="${() => this.handleSort('quant')}">Quant ${this.sortField === 'quant' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
@@ -1496,25 +1629,57 @@ export class MoreTab extends LitElement {
               <tbody>
                 ${this.benchmarksLoading ? html`
                   <tr>
-                    <td colspan="5" style="text-align: center; padding: 30px;">
+                    <td colspan="6" style="text-align: center; padding: 30px;">
                       <span class="loader" style="border-top-color: var(--primary);"></span> Loading benchmarking scores...
                     </td>
                   </tr>
                 ` : list.length === 0 ? html`
                   <tr>
-                    <td colspan="5" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
                       No benchmark matches your criteria.
                     </td>
                   </tr>
-                ` : list.map(b => html`
-                  <tr>
-                    <td class="td-model">${b.model}</td>
-                    <td class="td-plat">${b.platform}</td>
-                    <td><span class="meta-badge">${b.quant}</span></td>
-                    <td class="td-speed">${b.tokens_sec} t/s</td>
-                    <td class="td-score">${b.score}</td>
-                  </tr>
-                `)}
+                ` : list.map(b => {
+                  const isJudge = this.selectedJudgeModelId === b.model || (this.activeModelId === b.model && !this.selectedJudgeModelId);
+                  const inQueue = this.benchmarkQueue.includes(b.model);
+                  
+                  return html`
+                    <tr class="${inQueue ? 'row-queued' : ''}" style="${inQueue ? 'background: rgba(99,102,241,0.04);' : ''}">
+                      <td style="text-align: center;">
+                        ${b.is_ready ? html`
+                          <input 
+                            type="checkbox" 
+                            .checked="${inQueue}"
+                            @change="${() => this.toggleModelInQueue(b.model)}"
+                          >
+                        ` : html`
+                          <span style="font-size: 0.8rem; opacity: 0.3;" title="File not found or not in models.ini">❌</span>
+                        `}
+                      </td>
+                      <td class="td-model">
+                        <div style="display: flex; flex-direction: column; gap: 2px;">
+                          <span style="word-break: break-all;">${b.model}</span>
+                          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
+                            ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.65rem; padding: 1px 4px;">⚖️ Judge</span>` : ''}
+                            ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.65rem; padding: 1px 4px;">Tested</span>` : ''}
+                          </div>
+                        </div>
+                      </td>
+                      <td class="td-plat">
+                        ${b.is_ready ? html`
+                          <span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--success); font-weight: bold; border: 1px solid rgba(16, 185, 129, 0.2); font-size: 0.72rem; padding: 2px 6px;">
+                            Ready
+                          </span>
+                        ` : html`
+                          <span style="color: var(--text-secondary); font-size: 0.8rem;">${b.platform}</span>
+                        `}
+                      </td>
+                      <td><span class="meta-badge">${b.quant}</span></td>
+                      <td class="td-speed">${b.tokens_sec !== null ? `${b.tokens_sec} t/s` : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
+                      <td class="td-score">${b.score !== null ? b.score : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
+                    </tr>
+                  `;
+                })}
               </tbody>
             </table>
           </div>
