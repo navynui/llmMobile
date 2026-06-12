@@ -21,6 +21,10 @@ export class MoreTab extends LitElement {
     sortAscending: { type: Boolean },
     filterQuery: { type: String },
     platformFilter: { type: String },
+    showAllBenchmarks: { type: Boolean },
+    benchmarkProgress: { type: Object },
+    activeModelId: { type: String },
+    selectedJudgeModelId: { type: String },
 
     // Settings & Logs state
     serverStatus: { type: String }, // 'running', 'stopped', 'loading'
@@ -699,6 +703,18 @@ export class MoreTab extends LitElement {
     this.sortAscending = false;
     this.filterQuery = '';
     this.platformFilter = 'all';
+    this.showAllBenchmarks = false;
+    this.benchmarkProgress = {
+      running: false,
+      model_id: '',
+      current_round: '',
+      rounds_completed: 0,
+      total_rounds: 5,
+      logs: []
+    };
+    this.activeModelId = '';
+    this.selectedJudgeModelId = '';
+    this.benchmarkPollInterval = null;
 
     // Settings & Logs
     this.serverStatus = 'stopped';
@@ -727,11 +743,14 @@ export class MoreTab extends LitElement {
     this.fetchServerStatus();
     this.fetchLocalModels();
     this.fetchModelsIni();
+    this.fetchActiveModelId();
+    this.startBenchmarkPolling();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     this.stopDownloadPolling();
+    this.stopBenchmarkPolling();
   }
 
   // --- Downloader Logic ---
@@ -841,7 +860,7 @@ export class MoreTab extends LitElement {
   async fetchBenchmarks() {
     this.benchmarksLoading = true;
     try {
-      const res = await fetch('/api/benchmarks');
+      const res = await fetch(`/api/benchmarks?show_all=${this.showAllBenchmarks}`);
       if (res.ok) {
         const data = await res.json();
         this.benchmarks = data.benchmarks || [];
@@ -852,6 +871,117 @@ export class MoreTab extends LitElement {
       this.benchmarksLoading = false;
     }
   }
+
+  startBenchmarkPolling() {
+    if (this.benchmarkPollInterval) return;
+    this.fetchBenchmarkStatus();
+    this.benchmarkPollInterval = setInterval(() => this.fetchBenchmarkStatus(), 1500);
+  }
+
+  stopBenchmarkPolling() {
+    if (this.benchmarkPollInterval) {
+      clearInterval(this.benchmarkPollInterval);
+      this.benchmarkPollInterval = null;
+    }
+  }
+
+  async fetchBenchmarkStatus() {
+    try {
+      const res = await fetch('/api/benchmarks/status');
+      if (res.ok) {
+        const data = await res.json();
+        const wasRunning = this.benchmarkProgress && this.benchmarkProgress.running;
+        this.benchmarkProgress = data;
+        
+        if (wasRunning && !data.running) {
+          this.fetchBenchmarks();
+          this.fetchLocalModels();
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch benchmark status:", err);
+    }
+  }
+
+  async fetchActiveModelId() {
+    try {
+      const res = await fetch('/api/llm/models');
+      if (res.ok) {
+        const data = await res.json();
+        const loadedModel = data.data?.find(m => m.status === 'loaded' || m.status?.value === 'loaded');
+        this.activeModelId = loadedModel ? loadedModel.id : '';
+        if (this.activeModelId && !this.selectedJudgeModelId) {
+          this.selectedJudgeModelId = this.activeModelId;
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to check active model:", err);
+    }
+  }
+
+  async runBenchmark() {
+    if (this.benchmarkProgress && this.benchmarkProgress.running) {
+      alert("A benchmark is already in progress!");
+      return;
+    }
+    if (!this.activeModelId) {
+      alert("No active model loaded. Please load a model in the Server tab first.");
+      return;
+    }
+    
+    try {
+      const res = await fetch('/api/benchmarks/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          judge_model_id: this.selectedJudgeModelId || this.activeModelId
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        this.startBenchmarkPolling();
+        this.benchmarkProgress = {
+          ...this.benchmarkProgress,
+          running: true,
+          current_round: "Initializing...",
+          rounds_completed: 0,
+          logs: ["[UI] Benchmark run requested..."]
+        };
+      } else {
+        alert(data.detail || "Failed to start benchmark.");
+      }
+    } catch (err) {
+      console.error("Error triggering benchmark:", err);
+      alert("An error occurred while attempting to start the benchmark.");
+    }
+  }
+
+  async runJudge() {
+    if (!this.activeModelId) {
+      alert("No active model loaded to act as Judge. Please load a model in the Server tab first.");
+      return;
+    }
+    try {
+      const res = await fetch('/api/benchmarks/judge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          judge_model_id: this.selectedJudgeModelId || this.activeModelId
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert("Judge evaluation completed successfully! Data upserted.");
+        this.fetchBenchmarks();
+      } else {
+        alert(data.detail || "Failed to run judge evaluation.");
+      }
+    } catch (err) {
+      console.error("Error running judge evaluation:", err);
+      alert("An error occurred while attempting to run the judge evaluation.");
+    }
+  }
+
 
   handleSort(field) {
     if (this.sortField === field) {
