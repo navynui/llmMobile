@@ -1338,12 +1338,131 @@ export class MoreTab extends LitElement {
 
   renderBenchmarksView() {
     const list = this.getFilteredAndSortedBenchmarks();
+    const totalRounds = this.benchmarkProgress.total_rounds || 5;
+    const completedRounds = this.benchmarkProgress.rounds_completed || 0;
+    const progressPercent = Math.min(100, Math.round((completedRounds / totalRounds) * 100));
+
     return html`
       <div class="sub-view">
+        <!-- Live Progress overlay/panel -->
+        ${this.benchmarkProgress && this.benchmarkProgress.running ? html`
+          <div class="card" style="border-color: var(--primary); box-shadow: 0 0 15px rgba(99, 102, 241, 0.25); background: rgba(99, 102, 241, 0.03);">
+            <h3 style="margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
+              <span class="loader" style="border-top-color: var(--primary); width: 16px; height: 16px; border-width: 2px;"></span>
+              ⚡ Benchmarking in Progress...
+            </h3>
+            <span class="card-subtitle" style="margin-bottom: 12px;">Active Model: <code style="color: var(--text-primary); font-weight: bold; background: rgba(255,255,255,0.05); padding: 2px 6px; border-radius: var(--radius-sm);">${this.benchmarkProgress.model_id || 'Unknown'}</code></span>
+
+            <div style="margin: 12px 0;">
+              <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 6px;">
+                <span style="color: var(--text-secondary);">Current Round: <strong style="color: var(--text-primary);">${this.benchmarkProgress.current_round || 'Initializing...'}</strong></span>
+                <span style="color: var(--primary); font-weight: bold;">${progressPercent}% (${completedRounds}/${totalRounds})</span>
+              </div>
+              <div class="progress-track" style="height: 6px; background: rgba(255,255,255,0.05); border-radius: 3px; overflow: hidden;">
+                <div class="progress-fill" style="width: ${progressPercent}%; height: 100%; background: linear-gradient(90deg, var(--primary), #a5b4fc); transition: width 0.4s ease; box-shadow: 0 0 8px var(--primary);"></div>
+              </div>
+            </div>
+
+            <div style="margin-top: 16px;">
+              <span style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600; display: block; margin-bottom: 6px;">Live Runner Logs:</span>
+              <div style="font-family: 'Courier New', Courier, monospace; background: #070b19; border: 1px solid rgba(99, 102, 241, 0.2); padding: 12px; border-radius: var(--radius-md); max-height: 160px; overflow-y: auto; color: #34d399; font-size: 0.75rem; line-height: 1.4; scroll-behavior: smooth;" id="benchmark-terminal">
+                ${this.benchmarkProgress.logs && this.benchmarkProgress.logs.length > 0 ? 
+                  this.benchmarkProgress.logs.map(log => html`<div style="margin-bottom: 3px; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 2px;">${log}</div>`) :
+                  html`<div style="color: var(--text-secondary); font-style: italic;">No execution logs streamed yet...</div>`
+                }
+              </div>
+            </div>
+          </div>
+          <div style="height: 16px;"></div>
+        ` : ''}
+
+        <!-- Interactive Testing Panel -->
+        <div class="card" style="margin-bottom: 16px; background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04);">
+          <h3 style="font-size: 1rem; margin-bottom: 4px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+            🚀 Model Testing & Evaluation
+          </h3>
+          <span class="card-subtitle" style="margin-bottom: 16px;">Measure GGUF inference speeds across standardized QA evaluation rounds and score using a designated Judge LLM.</span>
+
+          <div style="display: flex; flex-direction: column; gap: 12px; background: rgba(0, 0, 0, 0.15); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-color);">
+            <!-- Active Model Status -->
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <span style="font-size: 0.85rem; font-weight: 500; color: var(--text-secondary);">Currently Loaded Server Model:</span>
+              ${this.activeModelId ? html`
+                <span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--success); font-weight: bold; border: 1px solid rgba(16, 185, 129, 0.2); font-size: 0.8rem; padding: 4px 10px;">
+                  🟢 ${this.activeModelId.split('/').pop()}
+                </span>
+              ` : html`
+                <span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: var(--danger); font-weight: bold; border: 1px solid rgba(239, 68, 68, 0.2); font-size: 0.8rem; padding: 4px 10px;">
+                  🔴 No active model loaded in server
+                </span>
+              `}
+            </div>
+
+            <!-- Judge Selection -->
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary);">⚖️ Designate Judge LLM:</label>
+              <select 
+                class="select-input" 
+                style="width: 100%; background: #0c101b; border: 1px solid var(--border-color); font-size: 0.85rem; padding: 8px;"
+                .value="${this.selectedJudgeModelId}"
+                @change="${e => this.selectedJudgeModelId = e.target.value}"
+              >
+                ${this.activeModelId ? html`<option value="${this.activeModelId}">(Recommended) Loaded Active Model: ${this.activeModelId.split('/').pop()}</option>` : ''}
+                ${this.localModels.filter(m => m.filename !== this.activeModelId).map(m => html`
+                  <option value="${m.filename}">${m.filename}</option>
+                `)}
+                ${!this.activeModelId && this.localModels.length === 0 ? html`<option value="">No local GGUF models available</option>` : ''}
+              </select>
+              <span style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic;">The Judge LLM is responsible for grading qualitative output from 0-25 per round using golden reference answers.</span>
+            </div>
+
+            <!-- Action Triggers -->
+            <div style="display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap;">
+              <button 
+                class="btn btn-secondary" 
+                style="flex: 1; min-width: 150px; background: var(--primary); color: white; border: none; font-size: 0.85rem; padding: 10px 16px;" 
+                ?disabled="${!this.activeModelId || (this.benchmarkProgress && this.benchmarkProgress.running)}"
+                @click="${this.runBenchmark}"
+              >
+                🚀 Start 5-Round Benchmark
+              </button>
+              <button 
+                class="btn btn-secondary" 
+                style="flex: 1; min-width: 150px; font-size: 0.85rem; padding: 10px 16px; border: 1px solid var(--border-color);" 
+                ?disabled="${!this.activeModelId || (this.benchmarkProgress && this.benchmarkProgress.running)}"
+                @click="${this.runJudge}"
+              >
+                ⚖️ Re-Grade Latest Run
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Strict Quality Filter Switch -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255, 255, 255, 0.01); border: 1px solid rgba(255, 255, 255, 0.04); padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 16px; gap: 16px;">
+          <div style="display: flex; flex-direction: column; gap: 4px; flex: 1;">
+            <span style="font-weight: 600; font-size: 0.85rem; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+              🛡️ Strict Quality Filters
+            </span>
+            <span style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.3;">
+              Only display high-quality models (speed &ge; 20 t/s, zero hallucinations, score &ge; 50). Toggle off to list all tested models.
+            </span>
+          </div>
+          <label class="switch">
+            <input 
+              type="checkbox" 
+              ?checked="${!this.showAllBenchmarks}" 
+              @change="${() => { this.showAllBenchmarks = !this.showAllBenchmarks; this.fetchBenchmarks(); }}"
+            >
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Ranking Scores Table Card -->
         <div class="card">
           <div class="benchmarks-header">
-            <h2>📊 LLM Benchmark Scores</h2>
-            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${this.fetchBenchmarks}">⟳ Refresh</button>
+            <h2>🏆 LLM Benchmark Scores & Rankings</h2>
+            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${() => { this.fetchBenchmarks(); this.fetchActiveModelId(); }}">⟳ Refresh</button>
           </div>
           <span class="card-subtitle">Inference speeds and efficiency scoring across local GGUF models and GPU configurations.</span>
 
