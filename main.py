@@ -1488,6 +1488,7 @@ def get_benchmarks(show_all: bool = False):
                     continue
             
             benchmarks.append({
+                "model_id": r["model_id"],
                 "model": model_name,
                 "platform": "Tesla P100 (16GB)",
                 "quant": r["quantization"] or "Unknown",
@@ -1510,6 +1511,7 @@ def get_benchmarks(show_all: bool = False):
                             filename = m.group(1) + ".gguf"
                             if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
                                 benchmarks.append({
+                                    "model_id": filename,
                                     "model": filename,
                                     "platform": "Ready",
                                     "quant": get_quantization_from_name(filename),
@@ -1525,6 +1527,60 @@ def get_benchmarks(show_all: bool = False):
     except Exception as e:
         print(f"Error querying benchmarks database: {e}")
         return {"benchmarks": [], "error": str(e)}
+
+
+@app.get("/api/benchmarks/details")
+def get_benchmark_details(model_id: str):
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        
+        # 1. Fetch model metadata
+        cursor.execute("SELECT model_id, name, quantization, status, notes FROM models WHERE model_id = ?", (model_id,))
+        model_row = cursor.fetchone()
+        if not model_row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Model benchmark record not found")
+            
+        # 2. Fetch latest run
+        cursor.execute("SELECT run_id, timestamp FROM test_runs WHERE model_id = ? ORDER BY timestamp DESC LIMIT 1", (model_id,))
+        run_row = cursor.fetchone()
+        
+        rounds = []
+        hallucinations = []
+        timestamp = None
+        run_id = None
+        
+        if run_row:
+            run_id = run_row["run_id"]
+            timestamp = run_row["timestamp"]
+            
+            # Fetch scores
+            cursor.execute("SELECT round_name, score, reasoning, speed_tps FROM round_scores WHERE run_id = ? ORDER BY id ASC", (run_id,))
+            rounds = [dict(row) for row in cursor.fetchall()]
+            
+            # Fetch hallucinations
+            cursor.execute("SELECT round_name, description FROM model_hallucinations WHERE model_id = ?", (model_id,))
+            hallucinations = [dict(row) for row in cursor.fetchall()]
+            
+        conn.close()
+        
+        return {
+            "model_id": model_row["model_id"],
+            "name": model_row["name"],
+            "quantization": model_row["quantization"],
+            "status": model_row["status"],
+            "notes": model_row["notes"],
+            "run_id": run_id,
+            "timestamp": timestamp,
+            "rounds": rounds,
+            "hallucinations": hallucinations
+        }
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        print(f"Error fetching benchmark details for {model_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 _benchmark_running = False
 _benchmark_lock = asyncio.Lock()

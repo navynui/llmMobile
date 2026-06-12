@@ -45,6 +45,11 @@ export class MoreTab extends LitElement {
     localModels: { type: Array },
     localModelsLoading: { type: Boolean },
     modelToDelete: { type: String },
+
+    // Benchmark details modal
+    selectedBenchmarkDetails: { type: Object },
+    detailsModalLoading: { type: Boolean },
+    showDetailsModal: { type: Boolean },
   };
 
   static styles = css`
@@ -681,6 +686,20 @@ export class MoreTab extends LitElement {
     }
     .status-running { color: var(--success); }
     .status-stopped { color: var(--text-muted); }
+
+    .modal-large { max-width: 650px !important; max-height: 85vh; }
+    .modal-body-scrollable { max-height: calc(85vh - 120px); overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 14px; }
+    .round-card { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: var(--radius-md); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .round-card-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 6px; }
+    .round-card-title { font-weight: 600; color: #a5b4fc; font-size: 0.85rem; }
+    .round-card-score { font-weight: 700; color: var(--success); font-size: 0.8rem; background: rgba(16, 185, 129, 0.1); padding: 2px 6px; border-radius: var(--radius-sm); }
+    .round-card-reasoning { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.45; background: rgba(0, 0, 0, 0.25); padding: 8px 12px; border-left: 3px solid var(--primary); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin: 2px 0 0 0; white-space: pre-wrap; }
+    .round-card-meta { font-size: 0.72rem; color: var(--text-muted); display: flex; gap: 12px; }
+    .hallucination-warning-box { background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-md); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .hallucination-warning-title { color: #f87171; font-weight: 600; font-size: 0.82rem; display: flex; align-items: center; gap: 6px; }
+    .hallucination-warning-desc { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; }
+    .clickable-cell { transition: color 0.15s ease; }
+    .clickable-cell:hover { text-decoration: underline; color: #a5b4fc !important; }
   `;
 
   constructor() {
@@ -736,6 +755,11 @@ export class MoreTab extends LitElement {
     this.localModels = [];
     this.localModelsLoading = false;
     this.modelToDelete = null;
+
+    // Benchmark details modal state
+    this.selectedBenchmarkDetails = null;
+    this.detailsModalLoading = false;
+    this.showDetailsModal = false;
   }
 
   connectedCallback() {
@@ -1656,7 +1680,7 @@ export class MoreTab extends LitElement {
                           <span style="font-size: 0.8rem; opacity: 0.3;" title="File not found or not in models.ini">❌</span>
                         `}
                       </td>
-                      <td class="td-model">
+                      <td class="td-model ${b.is_tested ? 'clickable-cell' : ''}" style="${b.is_tested ? 'cursor: pointer;' : ''}" @click="${() => b.is_tested && this.viewBenchmarkDetails(b.model_id)}">
                         <div style="display: flex; flex-direction: column; gap: 2px;">
                           <span style="word-break: break-all;">${b.model}</span>
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
@@ -1676,7 +1700,7 @@ export class MoreTab extends LitElement {
                       </td>
                       <td><span class="meta-badge">${b.quant}</span></td>
                       <td class="td-speed">${b.tokens_sec !== null ? `${b.tokens_sec} t/s` : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
-                      <td class="td-score">${b.score !== null ? b.score : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
+                      <td class="td-score ${b.is_tested ? 'clickable-cell' : ''}" style="${b.is_tested ? 'cursor: pointer;' : ''}" @click="${() => b.is_tested && this.viewBenchmarkDetails(b.model_id)}">${b.score !== null ? b.score : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
                     </tr>
                   `;
                 })}
@@ -1881,6 +1905,98 @@ export class MoreTab extends LitElement {
     `;
   }
 
+  async viewBenchmarkDetails(modelId) {
+    this.showDetailsModal = true;
+    this.detailsModalLoading = true;
+    this.selectedBenchmarkDetails = null;
+    try {
+      const response = await fetch(`/api/benchmarks/details?model_id=${encodeURIComponent(modelId)}`);
+      if (response.ok) {
+        this.selectedBenchmarkDetails = await response.json();
+      }
+    } catch (e) {
+      console.error("Error fetching benchmark details:", e);
+    } finally {
+      this.detailsModalLoading = false;
+    }
+  }
+
+  renderDetailsModal() {
+    if (!this.showDetailsModal) return '';
+    return html`
+      <div class="modal-backdrop" @click="${() => this.showDetailsModal = false}">
+        <div class="modal modal-large" @click="${e => e.stopPropagation()}">
+          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+            <h3 class="modal-title" style="color: #a5b4fc; font-size: 1.1rem; margin: 0;">📊 Benchmark Evaluation Report</h3>
+            <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.8rem; background: transparent; border-color: rgba(255,255,255,0.15); border-radius: var(--radius-sm);" @click="${() => this.showDetailsModal = false}">✕</button>
+          </div>
+          <div class="modal-body modal-body-scrollable">
+            ${this.detailsModalLoading ? html`
+              <div style="text-align: center; padding: 30px; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+                <span class="loader" style="border-top-color: var(--primary);"></span> Loading details...
+              </div>
+            ` : !this.selectedBenchmarkDetails ? html`
+              <div style="color: #f87171; text-align: center; padding: 20px;">Failed to load report.</div>
+            ` : html`
+              <div style="display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px;">
+                <span style="font-weight: bold; font-size: 1.05rem; color: white; word-break: break-all;">${this.selectedBenchmarkDetails.name}</span>
+                <div style="display: flex; gap: 6px; font-size: 0.72rem; flex-wrap: wrap;">
+                  <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Quant: ${this.selectedBenchmarkDetails.quantization}</span>
+                  <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Tested: ${this.selectedBenchmarkDetails.timestamp}</span>
+                  <span class="meta-badge" style="background: ${this.selectedBenchmarkDetails.status && this.selectedBenchmarkDetails.status.includes('⚠️') ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)'}; color: ${this.selectedBenchmarkDetails.status && this.selectedBenchmarkDetails.status.includes('⚠️') ? '#f87171' : '#34d399'}; border: 1px solid ${this.selectedBenchmarkDetails.status && this.selectedBenchmarkDetails.status.includes('⚠️') ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}; padding: 2px 6px;">${this.selectedBenchmarkDetails.status}</span>
+                </div>
+                ${this.selectedBenchmarkDetails.notes ? html`
+                  <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--text-muted); margin-top: 4px;">
+                    <strong>Notes:</strong> ${this.selectedBenchmarkDetails.notes}
+                  </div>
+                ` : ''}
+              </div>
+
+              ${this.selectedBenchmarkDetails.hallucinations && this.selectedBenchmarkDetails.hallucinations.length > 0 ? html`
+                <div class="hallucination-warning-box">
+                  <div class="hallucination-warning-title">🛑 Hallucinations Flagged by Judge</div>
+                  ${this.selectedBenchmarkDetails.hallucinations.map(h => html`
+                    <div class="hallucination-warning-desc"><strong>${this.formatRoundName(h.round_name)}:</strong> ${h.description}</div>
+                  `)}
+                </div>
+              ` : ''}
+
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <h4 style="font-size: 0.9rem; margin: 0; color: white;">🏅 Score Breakdown</h4>
+                ${this.selectedBenchmarkDetails.rounds && this.selectedBenchmarkDetails.rounds.map(r => html`
+                  <div class="round-card">
+                    <div class="round-card-header">
+                      <span class="round-card-title">${this.formatRoundName(r.round_name)}</span>
+                      <span class="round-card-score">${r.score} pts</span>
+                    </div>
+                    ${r.reasoning ? html`<div class="round-card-reasoning">${r.reasoning}</div>` : ''}
+                    <div class="round-card-meta">${r.speed_tps > 0 ? html`<span style="margin-top: 2px;">⚡ Speed: <strong>${r.speed_tps.toFixed(1)} t/s</strong></span>` : ''}</div>
+                  </div>
+                `)}
+              </div>
+            `}
+          </div>
+          <div class="modal-actions" style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
+            <button class="btn btn-secondary" style="padding: 8px 16px;" @click="${() => this.showDetailsModal = false}">Close</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  formatRoundName(name) {
+    if (!name) return '';
+    const map = {
+      'speed_metric': '⚡ Speed Metric Round',
+      'knowledge_qa': '🧠 Round 1: Knowledge QA',
+      'technical_reasoning': '💻 Round 2: Technical Reasoning & Domain Knowledge',
+      'code_generation': '🛠️ Round 3: Code Generation',
+      'abstract_logic': '🧮 Round 4: Abstract Logic & Math',
+      'creative_writing': '✍️ Round 5: Creative Writing'
+    };
+    return map[name.toLowerCase()] || name;
+  }
+
   render() {
     return html`
       <div class="container">
@@ -1940,6 +2056,9 @@ export class MoreTab extends LitElement {
           </div>
         </div>
       ` : ''}
+
+      <!-- Benchmark Score Reasoning Modal -->
+      ${this.renderDetailsModal()}
     `;
   }
 }
