@@ -11,7 +11,9 @@ export class LlmApp extends LitElement {
     currentRoute: { type: String },
     sseData: { type: Object },
     sseConnected: { type: Boolean },
-    updateAvailable: { type: Boolean }
+    updateAvailable: { type: Boolean },
+    queue: { type: Array },
+    toastMessage: { type: String }
   };
 
   static styles = css`
@@ -227,6 +229,44 @@ export class LlmApp extends LitElement {
         display: none;
       }
     }
+
+    /* Toast Notification */
+    .toast-container {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+      width: 90%;
+      max-width: 380px;
+    }
+    
+    .toast {
+      background: rgba(17, 24, 39, 0.9);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      font-size: 0.85rem;
+      font-weight: 500;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      animation: toastSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      pointer-events: auto;
+    }
+    
+    @keyframes toastSlideUp {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
   `;
 
   constructor() {
@@ -236,6 +276,10 @@ export class LlmApp extends LitElement {
     this.sseConnected = false;
     this.updateAvailable = false;
     this.evtSource = null;
+    this.queue = [];
+    this.toastMessage = '';
+    this.queueSse = null;
+    this.toastTimeout = null;
   }
 
   connectedCallback() {
@@ -245,22 +289,31 @@ export class LlmApp extends LitElement {
     window.addEventListener('hashchange', this.handleRoute.bind(this));
     this.handleRoute();
 
-    // 2. Start SSE Stream
+    // 2. Start SSE Streams
     this.startSSEStream();
+    this.startQueueStream();
 
     // 3. Register visibility listeners to manage battery and socket lifecycle
     document.addEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
-    window.addEventListener('pagehide', this.stopSSEStream.bind(this));
+    window.addEventListener('pagehide', this.stopAllStreams.bind(this));
 
     // 4. Register PWA Service Worker & detect updates
     this.registerServiceWorker();
+
+    // 5. Request notifications permission
+    this.initNotifications();
+
+    // 6. Listen to offline operation queue events
+    window.addEventListener('op-queue-notification', (e) => {
+      this.showToast(e.detail.message);
+    });
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('hashchange', this.handleRoute.bind(this));
     document.removeEventListener('visibilitychange', this.handleVisibilityChange.bind(this));
-    this.stopSSEStream();
+    this.stopAllStreams();
   }
 
   handleRoute() {
@@ -305,11 +358,150 @@ export class LlmApp extends LitElement {
     }
   }
 
+  startQueueStream() {
+    if (this.queueSse) this.stopQueueStream();
+
+    this.queueSse = new EventSource('/events/queue');
+    
+    this.queueSse.addEventListener('queue', (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const newQueue = payload.queue || [];
+        this.checkQueueCompletions(this.queue, newQueue);
+        this.queue = newQueue;
+      } catch (err) {
+        console.error("Failed to parse queue SSE payload", err);
+      }
+    });
+
+    this.queueSse.onerror = () => {
+      if (this.queueSse) {
+        this.queueSse.close();
+        this.queueSse = null;
+      }
+      setTimeout(() => this.startQueueStream(), 5000);
+    };
+  }
+
+  stopQueueStream() {
+    if (this.queueSse) {
+      this.queueSse.close();
+      this.queueSse = null;
+    }
+  }
+
+  stopAllStreams() {
+    this.stopSSEStream();
+    this.stopQueueStream();
+  }
+
+  checkQueueCompletions(oldQueue, newQueue) {
+    if (!oldQueue || oldQueue.length === 0) return;
+    for (const newItem of newQueue) {
+      const oldItem = oldQueue.find(o => o.id === newItem.id);
+      if (oldItem && oldItem.status === 'running' && (newItem.status === 'completed' || newItem.status === 'error')) {
+        this.showLocalNotification(newItem);
+      }
+    }
+  }
+
+  showLocalNotification(item) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    
+    const isSuccess = item.status === 'completed';
+    const title = isSuccess ? '🎨 Image Generation Complete' : '⚠️ Image Generation Failed';
+    const body = isSuccess 
+      ? `Generated ${item.image_ids?.length || 0} images successfully.`
+      : `Error: ${item.error || 'Unknown error'}`;
+
+    new Notification(title, {
+      body: `${body}\nPrompt: ${item.prompt.substring(0, 60)}...`,
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      tag: 'task-generation',
+      data: { url: '/#/generate' }
+    });
+  }
+
+  async initNotifications() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+    if (Notification.permission === 'granted') {
+      this.subscribePush();
+    }
+  }
+
+  async subscribePush() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await this.sendSubscriptionToBackend(sub);
+        return;
+      }
+
+      const res = await fetch('/api/notifications/vapid-key');
+      const data = await res.json();
+      if (!data.public_key || data.public_key === 'BEl6mABClg1401306C9V8t-mC9c-L6121401306C9V8t-mC9c-L6121401306C') {
+        return; // Dev-fallback or public key missing
+      }
+
+      const convertedKey = this.urlBase64ToUint8Array(data.public_key);
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: convertedKey
+      });
+
+      await this.sendSubscriptionToBackend(sub);
+    } catch (err) {
+      console.warn('Push subscription failed:', err);
+    }
+  }
+
+  async sendSubscriptionToBackend(sub) {
+    try {
+      await fetch('/api/notifications/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub)
+      });
+    } catch (err) {
+      console.error('Failed to send push subscription to backend', err);
+    }
+  }
+
+  urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+      .replace(/\-/g, '+')
+      .replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  showToast(msg) {
+    this.toastMessage = msg;
+    if (this.toastTimeout) clearTimeout(this.toastTimeout);
+    this.toastTimeout = setTimeout(() => {
+      this.toastMessage = '';
+      this.requestUpdate();
+    }, 4000);
+    this.requestUpdate();
+  }
+
   handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
       this.startSSEStream(); // Re-establish and replay
+      this.startQueueStream();
     } else {
-      this.stopSSEStream(); // Hibernate to save battery and socket descriptors
+      this.stopAllStreams(); // Hibernate to save battery and socket descriptors
     }
   }
 
@@ -376,7 +568,7 @@ export class LlmApp extends LitElement {
       case '#/chat':
         return html`<chat-tab></chat-tab>`;
       case '#/generate':
-        return html`<generator-tab></generator-tab>`;
+        return html`<generator-tab .queue="${this.queue}"></generator-tab>`;
       case '#/gallery':
         return html`<gallery-tab></gallery-tab>`;
       case '#/more':
@@ -431,6 +623,15 @@ export class LlmApp extends LitElement {
           ${this.renderTabLink('#/more', '•••', 'More')}
         </nav>
       </div>
+
+      <!-- Toast Container -->
+      ${this.toastMessage ? html`
+        <div class="toast-container">
+          <div class="toast">
+            <span>ℹ️ ${this.toastMessage}</span>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

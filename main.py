@@ -21,7 +21,21 @@ from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+try:
+    from pywebpush import webpush, WebPushException
+    HAS_WEBPUSH = True
+except ImportError:
+    HAS_WEBPUSH = False
+
 app = FastAPI(title="LLM Mobile Manager")
+
+# --- Push Notification Globals ---
+VAPID_PUBLIC_KEY = ""
+VAPID_PRIVATE_KEY = ""
+VAPID_KEYS_FILE = os.path.join(IMAGE_GEN_OUTPUT, "vapid_keys.json")
+_push_subscriptions = []
+SUBS_FILE_PATH = os.path.join(IMAGE_GEN_OUTPUT, "push_subscriptions.json")
+QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
 
 # --- Constants ---
 MODELS_DIR          = "/models"
@@ -196,6 +210,18 @@ async def _local_stats_poller():
 async def startup_event():
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
+    _init_vapid_keys()
+    _load_subscriptions()
+    _load_persisted_queue()
+    # Resume queue worker if there are pending jobs
+    global _queue_running
+    has_queued = False
+    with _queue_lock:
+        if any(item["status"] == "queued" for item in _gen_queue):
+            has_queued = True
+    if has_queued and not _queue_running:
+        _queue_running = True
+        asyncio.create_task(_queue_worker())
 
 
 # ───────────────────────────────────────────────
@@ -506,6 +532,7 @@ def _write_sidecar(image_filename: str, prompt: str, resolution: str,
 async def _broadcast_queue():
     """Push full queue snapshot to all SSE subscribers."""
     snapshot = json.dumps({"queue": _get_queue_snapshot()})
+    _save_queue_to_disk()
     for q in list(_queue_sse_subscribers):
         try:
             await q.put(snapshot)
@@ -516,6 +543,134 @@ async def _broadcast_queue():
 def _get_queue_snapshot() -> list:
     with _queue_lock:
         return _deep_copy(_gen_queue)
+
+
+def _load_persisted_queue():
+    global _gen_queue
+    if os.path.exists(QUEUE_PERSIST_PATH):
+        try:
+            with open(QUEUE_PERSIST_PATH) as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    # Sanitize state at startup
+                    for item in data:
+                        if item.get("status") in ("running", "queued"):
+                            item["status"] = "queued"
+                            item["progress"] = 0.0
+                            item["started_at"] = None
+                    _gen_queue = data
+                    print(f"[Queue Persistence] Loaded {len(_gen_queue)} items from disk.")
+        except Exception as e:
+            print(f"[Queue Persistence] Failed to load queue: {e}")
+
+
+def _save_queue_to_disk():
+    try:
+        snapshot = _get_queue_snapshot()
+        os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+        with open(QUEUE_PERSIST_PATH, "w") as f:
+            json.dump(snapshot, f, indent=2)
+    except Exception as e:
+        print(f"[Queue Persistence] Failed to save queue: {e}")
+
+
+def _init_vapid_keys():
+    global VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY
+    if os.path.exists(VAPID_KEYS_FILE):
+        try:
+            with open(VAPID_KEYS_FILE) as f:
+                data = json.load(f)
+                VAPID_PUBLIC_KEY = data.get("public_key")
+                VAPID_PRIVATE_KEY = data.get("private_key")
+        except Exception:
+            pass
+            
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        if HAS_WEBPUSH:
+            try:
+                from cryptography.hazmat.primitives.asymmetric import ec
+                from cryptography.hazmat.primitives import serialization
+                import base64
+                
+                private_key = ec.generate_private_key(ec.SECP256R1())
+                private_der = private_key.private_bytes(
+                    encoding=serialization.Encoding.DER,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+                
+                public_key = private_key.public_key()
+                public_bytes = public_key.public_bytes(
+                    encoding=serialization.Encoding.X962,
+                    format=serialization.PublicFormat.UncompressedPoint
+                )
+                
+                VAPID_PUBLIC_KEY = base64.urlsafe_b64encode(public_bytes).decode().rstrip("=")
+                VAPID_PRIVATE_KEY = base64.urlsafe_b64encode(private_der).decode().rstrip("=")
+                
+                os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+                with open(VAPID_KEYS_FILE, "w") as f:
+                    json.dump({"public_key": VAPID_PUBLIC_KEY, "private_key": VAPID_PRIVATE_KEY}, f)
+                print("[VAPID] Generated and saved new VAPID keys.")
+            except Exception as e:
+                # Use a fallback key if generation fails (e.g. cryptography package missing)
+                print(f"[VAPID] Failed to generate VAPID keys programmatically: {e}. Using dev-fallback.")
+                VAPID_PUBLIC_KEY = "BEl6mABClg1401306C9V8t-mC9c-L6121401306C9V8t-mC9c-L6121401306C"
+                VAPID_PRIVATE_KEY = "DEV_FALLBACK_KEY"
+        else:
+            print("[VAPID] WebPush not available. Using dev-fallback keys.")
+            VAPID_PUBLIC_KEY = "BEl6mABClg1401306C9V8t-mC9c-L6121401306C9V8t-mC9c-L6121401306C"
+            VAPID_PRIVATE_KEY = "DEV_FALLBACK_KEY"
+
+
+def _load_subscriptions():
+    global _push_subscriptions
+    if os.path.exists(SUBS_FILE_PATH):
+        try:
+            with open(SUBS_FILE_PATH) as f:
+                _push_subscriptions = json.load(f)
+        except Exception:
+            _push_subscriptions = []
+
+
+def _save_subscriptions():
+    try:
+        os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+        with open(SUBS_FILE_PATH, "w") as f:
+            json.dump(_push_subscriptions, f)
+    except Exception:
+        pass
+
+
+def _send_push_notification(title: str, body: str):
+    global _push_subscriptions
+    if not HAS_WEBPUSH or VAPID_PRIVATE_KEY == "DEV_FALLBACK_KEY":
+        print(f"[Push Notifications] Push not configured/available. Logging: {title} - {body}")
+        return
+
+    vapid_claims = {
+        "sub": "mailto:admin@localhost"
+    }
+
+    for sub in list(_push_subscriptions):
+        try:
+            webpush(
+                subscription_info=sub,
+                data=json.dumps({"title": title, "body": body}),
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=vapid_claims
+            )
+            print(f"[Push Notifications] Sent push to {sub.get('endpoint')}")
+        except WebPushException as ex:
+            print(f"[Push Notifications] Failed to send push: {ex}")
+            if ex.response and ex.response.status_code in (404, 410):
+                try:
+                    _push_subscriptions.remove(sub)
+                    _save_subscriptions()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[Push Notifications] Error sending push: {e}")
 
 
 # ───────────────────────────────────────────────
@@ -612,6 +767,11 @@ async def _queue_worker():
                     item["image_ids"]    = image_ids
                     item["progress"]     = 1.0
                     item["completed_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+            
+            _send_push_notification(
+                title="Image Generation Complete",
+                body=f"Generated {len(image_ids)} images for: {prompt[:40]}..."
+            )
 
         except Exception as e:
             is_cancelled = False
@@ -626,6 +786,11 @@ async def _queue_worker():
                 with _queue_lock:
                     item["status"] = "error"
                     item["error"]  = error_msg
+                
+                _send_push_notification(
+                    title="Image Generation Failed",
+                    body=f"Error: {error_msg} for: {prompt[:40]}..."
+                )
 
         await _broadcast_queue()
 

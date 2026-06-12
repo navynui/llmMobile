@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { opQueue } from '../utils/op-queue.js';
 
 const RESOLUTIONS = [
   '1920x1088', '1088x1920', '1280x720', '720x1280',
@@ -150,6 +151,7 @@ export class GeneratorTab extends LitElement {
     .pill-completed { background: var(--success-glow);    color: var(--success); }
     .pill-error     { background: var(--danger-glow);     color: var(--danger); }
     .pill-cancelled { background: rgba(0,0,0,0.2);        color: var(--text-muted); }
+    .pill-offline   { background: rgba(245,158,11,0.15);  color: #f59e0b; }
 
     .qi-sub {
       font-size: 0.75rem;
@@ -376,32 +378,18 @@ export class GeneratorTab extends LitElement {
     this.submitting = false;
     this.errorMsg   = '';
     this._lightbox  = null; // { images: [...], index: 0 }
-    this._sse       = null;
     this.activeThumbnailMenu = null;
   }
 
   connectedCallback() {
     super.connectedCallback();
-    this._connectSSE();
+    this._onOpQueueChanged = () => this.requestUpdate();
+    window.addEventListener('op-queue-changed', this._onOpQueueChanged);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._sse) { this._sse.close(); this._sse = null; }
-  }
-
-  _connectSSE() {
-    if (this._sse) this._sse.close();
-    this._sse = new EventSource('/events/queue');
-    this._sse.addEventListener('queue', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        this.queue = data.queue || [];
-      } catch {}
-    });
-    this._sse.onerror = () => {
-      setTimeout(() => this._connectSSE(), 3000);
-    };
+    window.removeEventListener('op-queue-changed', this._onOpQueueChanged);
   }
 
   _savePrefs() {
@@ -415,20 +403,34 @@ export class GeneratorTab extends LitElement {
     this.errorMsg   = '';
     this.submitting = true;
     this._savePrefs();
+
+    const body = {
+      prompt:     this.prompt.trim(),
+      resolution: this.resolution,
+      num_images: this.numImages,
+    };
+
+    if (!navigator.onLine) {
+      opQueue.push('/api/generate/queue', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      this.prompt = '';
+      this.submitting = false;
+      return;
+    }
+
     try {
       const res = await fetch('/api/generate/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt:     this.prompt.trim(),
-          resolution: this.resolution,
-          num_images: this.numImages,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.detail || 'Unknown error');
       }
+      this.prompt = '';
     } catch (e) {
       this.errorMsg = e.message;
     } finally {
@@ -437,10 +439,27 @@ export class GeneratorTab extends LitElement {
   }
 
   async _cancelItem(id) {
+    if (id.startsWith('op_')) {
+      // Offline local item, remove directly
+      opQueue.queue = opQueue.queue.filter(op => op.id !== id);
+      localStorage.setItem('op_queue', JSON.stringify(opQueue.queue));
+      window.dispatchEvent(new CustomEvent('op-queue-changed', { detail: opQueue.queue }));
+      return;
+    }
+
+    if (!navigator.onLine) {
+      opQueue.push(`/api/generate/queue/${id}`, { method: 'DELETE' });
+      return;
+    }
+
     await fetch(`/api/generate/queue/${id}`, { method: 'DELETE' });
   }
 
   async _clearDone() {
+    if (!navigator.onLine) {
+      opQueue.push('/api/generate/queue', { method: 'DELETE' });
+      return;
+    }
     await fetch('/api/generate/queue', { method: 'DELETE' });
   }
 
@@ -521,13 +540,15 @@ export class GeneratorTab extends LitElement {
     this.requestUpdate();
   }
 
-  _pillClass(status) {
+  _pillClass(status, isOffline) {
+    if (isOffline) return 'pill-offline';
     return { queued: 'pill-queued', running: 'pill-running',
              completed: 'pill-completed', error: 'pill-error',
              cancelled: 'pill-cancelled' }[status] || 'pill-queued';
   }
 
   _subText(item) {
+    if (item.isOffline) return 'Queued offline · Awaiting connection';
     if (item.status === 'running') {
       return `Image ${item.image_num || 1}/${item.total_images} · ${Math.round((item.progress || 0) * 100)}%`;
     }
@@ -537,7 +558,32 @@ export class GeneratorTab extends LitElement {
   }
 
   render() {
-    const hasDone = this.queue.some(q => ['completed','error','cancelled'].includes(q.status));
+    const offlineOps = opQueue.getQueue().filter(op => op.url === '/api/generate/queue' && op.status === 'pending');
+    const offlineItems = offlineOps.map(op => {
+      let promptText = 'Generation Task';
+      let resVal = '1024x1024';
+      let numImgs = 1;
+      try {
+        const body = JSON.parse(op.body);
+        promptText = body.prompt;
+        resVal = body.resolution || resVal;
+        numImgs = body.num_images || numImgs;
+      } catch {}
+
+      return {
+        id: op.id,
+        prompt: promptText,
+        resolution: resVal,
+        num_images: numImgs,
+        status: 'queued',
+        isOffline: true,
+        image_ids: [],
+        progress: 0.0
+      };
+    });
+
+    const combinedQueue = [...offlineItems, ...(this.queue || [])];
+    const hasDone = combinedQueue.some(q => ['completed','error','cancelled'].includes(q.status));
 
     return html`
       <div class="container">
@@ -584,18 +630,18 @@ export class GeneratorTab extends LitElement {
         </div>
 
         <!-- Queue card -->
-        ${this.queue.length > 0 ? html`
+        ${combinedQueue.length > 0 ? html`
           <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
               <h2 style="margin:0;">Generation Queue</h2>
               ${hasDone ? html`<button class="clear-btn" @click="${this._clearDone}">Clear done</button>` : ''}
             </div>
             <div class="queue-list">
-              ${this.queue.map(item => html`
+              ${combinedQueue.map(item => html`
                 <div class="queue-item">
                   <div class="qi-header">
                     <div class="qi-prompt" title="${item.prompt}">${item.prompt}</div>
-                    <span class="status-pill ${this._pillClass(item.status)}">${item.status}</span>
+                    <span class="status-pill ${this._pillClass(item.status, item.isOffline)}">${item.isOffline ? 'offline' : item.status}</span>
                   </div>
                   <div class="qi-sub">${this._subText(item)}</div>
 
@@ -620,10 +666,10 @@ export class GeneratorTab extends LitElement {
                   ` : ''}
 
                   <div style="display:flex; gap:8px; margin-top:8px;">
-                    ${item.status === 'queued' || item.status === 'running' ? html`
+                    ${item.status === 'queued' || item.status === 'running' || item.isOffline ? html`
                       <button class="clear-btn" @click="${() => this._cancelItem(item.id)}">Cancel</button>
                     ` : ''}
-                    ${['completed', 'error', 'cancelled'].includes(item.status) ? html`
+                    ${['completed', 'error', 'cancelled'].includes(item.status) && !item.isOffline ? html`
                       <button class="clear-btn" @click="${() => this._rerunItem(item)}">Re-run</button>
                     ` : ''}
                   </div>
