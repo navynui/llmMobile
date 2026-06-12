@@ -1686,17 +1686,17 @@ export class MoreTab extends LitElement {
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
                             ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.65rem; padding: 1px 4px;">⚖️ Judge</span>` : ''}
                             ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.65rem; padding: 1px 4px;">Tested</span>` : ''}
+                            ${b.is_ready ? 
+                              html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.65rem; padding: 1px 4px;">🟢 Ready</span>` : 
+                              html`<span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); font-size: 0.65rem; padding: 1px 4px;">🔴 Offline</span>`
+                            }
                           </div>
                         </div>
                       </td>
                       <td class="td-plat">
-                        ${b.is_ready ? html`
-                          <span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: var(--success); font-weight: bold; border: 1px solid rgba(16, 185, 129, 0.2); font-size: 0.72rem; padding: 2px 6px;">
-                            Ready
-                          </span>
-                        ` : html`
-                          <span style="color: var(--text-secondary); font-size: 0.8rem;">${b.platform}</span>
-                        `}
+                        <span style="color: var(--text-secondary); font-size: 0.8rem;">
+                          ${b.is_tested ? b.platform : html`<span style="color: var(--text-muted); font-style: italic;">Untested</span>`}
+                        </span>
                       </td>
                       <td><span class="meta-badge">${b.quant}</span></td>
                       <td class="td-speed">${b.tokens_sec !== null ? `${b.tokens_sec} t/s` : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
