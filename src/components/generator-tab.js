@@ -13,6 +13,7 @@ export class GeneratorTab extends LitElement {
     queue:         { type: Array },
     submitting:    { type: Boolean },
     errorMsg:      { type: String },
+    activeThumbnailMenu: { type: Object },
   };
 
   static styles = css`
@@ -243,7 +244,7 @@ export class GeneratorTab extends LitElement {
     }
     .empty-state .icon { font-size: 2.5rem; margin-bottom: 8px; }
 
-    .clear-btn {
+     .clear-btn {
       align-self: flex-end;
       background: none;
       border: 1px solid var(--border-color);
@@ -255,6 +256,115 @@ export class GeneratorTab extends LitElement {
       transition: var(--transition);
     }
     .clear-btn:hover { color: var(--danger); border-color: var(--danger); }
+
+    /* Action Sheet / Context Menu */
+    .action-sheet-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 10000;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    
+    .action-sheet {
+      width: 100%;
+      max-width: 500px;
+      background: #111827;
+      border-top: 1px solid var(--border-color);
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 20px;
+      box-sizing: border-box;
+      box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5);
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    
+    .action-sheet-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    
+    .action-sheet-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    
+    .action-sheet-close {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      border-radius: var(--radius-full);
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    
+    .action-sheet-info {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    
+    .action-sheet-prompt {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      margin: 0 0 8px 0;
+      word-break: break-word;
+    }
+    
+    .action-sheet-meta {
+      display: flex;
+      gap: 12px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    
+    .action-sheet-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .action-btn {
+      width: 100%;
+      padding: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: var(--transition);
+    }
+    .action-btn:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: var(--border-active);
+    }
+    .action-btn.danger {
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+    .action-btn.danger:hover {
+      background: rgba(239, 68, 68, 0.1);
+    }
   `;
 
   constructor() {
@@ -267,6 +377,7 @@ export class GeneratorTab extends LitElement {
     this.errorMsg   = '';
     this._lightbox  = null; // { images: [...], index: 0 }
     this._sse       = null;
+    this.activeThumbnailMenu = null;
   }
 
   connectedCallback() {
@@ -331,6 +442,66 @@ export class GeneratorTab extends LitElement {
 
   async _clearDone() {
     await fetch('/api/generate/queue', { method: 'DELETE' });
+  }
+
+  _openThumbnailMenu(item, index) {
+    this.activeThumbnailMenu = { item, index };
+    this.requestUpdate();
+  }
+
+  _closeThumbnailMenu() {
+    this.activeThumbnailMenu = null;
+    this.requestUpdate();
+  }
+
+  async _regenerateSingleImage(item, index) {
+    this.errorMsg = '';
+    const seed = item.seeds && index < item.seeds.length ? item.seeds[index] : null;
+    try {
+      const res = await fetch('/api/generate/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt:     item.prompt,
+          resolution: item.resolution || '1024x1024',
+          num_images: 1,
+          seed:       seed,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Unknown error');
+      }
+    } catch (e) {
+      this.errorMsg = e.message;
+    }
+  }
+
+  async _copyPromptText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {}
+  }
+
+  async _rerunItem(item) {
+    this.errorMsg = '';
+    try {
+      const res = await fetch('/api/generate/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt:     item.prompt,
+          resolution: item.resolution || '1024x1024',
+          num_images: item.total_images || item.num_images || 1,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Unknown error');
+      }
+    } catch (e) {
+      this.errorMsg = e.message;
+    }
   }
 
   _openLightbox(images, index) {
@@ -441,15 +612,21 @@ export class GeneratorTab extends LitElement {
                           src="/images/${fname}"
                           alt="${fname}"
                           @click="${() => this._openLightbox(item.image_ids.map(f => `/images/${f}`), i)}"
+                          @contextmenu="${e => { e.preventDefault(); this._openThumbnailMenu(item, i); }}"
                           loading="lazy"
                         />
                       `)}
                     </div>
                   ` : ''}
 
-                  ${item.status === 'queued' ? html`
-                    <button class="clear-btn" @click="${() => this._cancelItem(item.id)}">Cancel</button>
-                  ` : ''}
+                  <div style="display:flex; gap:8px; margin-top:8px;">
+                    ${item.status === 'queued' || item.status === 'running' ? html`
+                      <button class="clear-btn" @click="${() => this._cancelItem(item.id)}">Cancel</button>
+                    ` : ''}
+                    ${['completed', 'error', 'cancelled'].includes(item.status) ? html`
+                      <button class="clear-btn" @click="${() => this._rerunItem(item)}">Re-run</button>
+                    ` : ''}
+                  </div>
                 </div>
               `)}
             </div>
@@ -478,6 +655,36 @@ export class GeneratorTab extends LitElement {
               <button @click="${() => this._lightboxNav(1)}">Next ▶</button>
             </div>
           ` : ''}
+        </div>
+      ` : ''}
+
+      <!-- Thumbnail Context Menu -->
+      ${this.activeThumbnailMenu ? html`
+        <div class="action-sheet-backdrop" @click="${this._closeThumbnailMenu}">
+          <div class="action-sheet" @click="${e => e.stopPropagation()}">
+            <div class="action-sheet-header">
+              <div class="action-sheet-title">Image Options</div>
+              <button class="action-sheet-close" @click="${this._closeThumbnailMenu}">✕</button>
+            </div>
+            
+            <div class="action-sheet-info">
+              <p class="action-sheet-prompt">${this.activeThumbnailMenu.item.prompt}</p>
+              <div class="action-sheet-meta">
+                ${this.activeThumbnailMenu.item.seeds && this.activeThumbnailMenu.index < this.activeThumbnailMenu.item.seeds.length ? html`
+                  <span>Seed: ${this.activeThumbnailMenu.item.seeds[this.activeThumbnailMenu.index]}</span>
+                ` : ''}
+              </div>
+            </div>
+
+            <div class="action-sheet-buttons">
+              <button class="action-btn" @click="${() => { this._copyPromptText(this.activeThumbnailMenu.item.prompt); this._closeThumbnailMenu(); }}">
+                📋 Copy Prompt
+              </button>
+              <button class="action-btn" @click="${() => { this._regenerateSingleImage(this.activeThumbnailMenu.item, this.activeThumbnailMenu.index); this._closeThumbnailMenu(); }}">
+                🔄 Regenerate Single Image
+              </button>
+            </div>
+          </div>
         </div>
       ` : ''}
     `;

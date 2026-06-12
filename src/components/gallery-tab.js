@@ -11,6 +11,7 @@ export class GalleryTab extends LitElement {
     loading:      { type: Boolean },
     selected:     { type: Object },   // Set of relative_path strings
     lightbox:     { type: Object },   // { images, index }
+    activeActionMenu: { type: Object },
   };
 
   static styles = css`
@@ -105,22 +106,32 @@ export class GalleryTab extends LitElement {
     .grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
+      gap: 12px;
     }
-    @media (min-width: 500px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (min-width: 600px) { .grid { grid-template-columns: repeat(3, 1fr); } }
     @media (min-width: 769px) { .grid { grid-template-columns: repeat(4, 1fr); } }
 
     .grid-cell {
       position: relative;
       border-radius: var(--radius-md);
       overflow: hidden;
-      aspect-ratio: 1;
+      display: flex;
+      flex-direction: column;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border-color);
       cursor: pointer;
-      border: 2px solid transparent;
       transition: var(--transition);
     }
     .grid-cell:hover { border-color: var(--primary); }
     .grid-cell.selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-glow); }
+
+    .grid-img-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1.1;
+      overflow: hidden;
+      background: rgba(0,0,0,0.2);
+    }
 
     .grid-img {
       width: 100%;
@@ -131,25 +142,26 @@ export class GalleryTab extends LitElement {
     }
     .grid-cell:hover .grid-img { transform: scale(1.03); }
 
-    /* Prompt overlay */
-    .img-overlay {
+    .group-badge {
       position: absolute;
-      bottom: 0; left: 0; right: 0;
-      background: linear-gradient(transparent, rgba(0,0,0,0.85));
-      padding: 24px 8px 8px;
-      font-size: 0.7rem;
-      color: rgba(255,255,255,0.8);
-      line-height: 1.3;
-      overflow: hidden;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 3px 6px;
+      border-radius: var(--radius-sm);
+      z-index: 2;
     }
 
     /* Selection checkbox overlay */
     .select-dot {
       position: absolute;
-      top: 6px; right: 6px;
+      top: 8px; right: 8px;
       width: 22px; height: 22px;
       border-radius: var(--radius-full);
       background: rgba(0,0,0,0.5);
@@ -158,10 +170,42 @@ export class GalleryTab extends LitElement {
       align-items: center;
       justify-content: center;
       font-size: 0.7rem;
+      z-index: 2;
     }
     .select-dot.checked {
       background: var(--primary);
       border-color: var(--primary);
+    }
+
+    .grid-info {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-grow: 1;
+    }
+
+    .grid-prompt {
+      font-size: 0.75rem;
+      color: var(--text-primary);
+      line-height: 1.35;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      min-height: 2.7em;
+    }
+
+    .grid-meta {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding-top: 6px;
+      margin-top: auto;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 4px;
     }
 
     /* Pagination */
@@ -197,12 +241,38 @@ export class GalleryTab extends LitElement {
       justify-content: center;
       padding: 20px;
     }
-    .lightbox img {
+    
+    .lightbox-carousel {
+      display: flex;
+      width: 100%;
+      max-width: 800px;
+      height: 60vh;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none;
+    }
+    .lightbox-carousel::-webkit-scrollbar {
+      display: none;
+    }
+    
+    .carousel-slide {
+      flex: 0 0 100%;
+      width: 100%;
+      height: 100%;
+      scroll-snap-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 0 10px;
+    }
+    .carousel-slide img {
       max-width: 100%;
-      max-height: 75vh;
+      max-height: 100%;
       object-fit: contain;
       border-radius: var(--radius-md);
     }
+
     .lb-close {
       position: absolute; top:16px; right:16px;
       background: rgba(255,255,255,0.1);
@@ -212,6 +282,7 @@ export class GalleryTab extends LitElement {
       border-radius: var(--radius-full);
       cursor: pointer;
       display: flex; align-items:center; justify-content:center;
+      z-index: 10;
     }
     .lb-meta {
       margin-top: 12px;
@@ -237,6 +308,115 @@ export class GalleryTab extends LitElement {
       cursor: pointer; font-size:0.9rem;
     }
 
+    /* Action Sheet / Context Menu */
+    .action-sheet-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      z-index: 10000;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    
+    .action-sheet {
+      width: 100%;
+      max-width: 500px;
+      background: #111827;
+      border-top: 1px solid var(--border-color);
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 20px;
+      box-sizing: border-box;
+      box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5);
+      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    
+    .action-sheet-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    
+    .action-sheet-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    
+    .action-sheet-close {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      border-radius: var(--radius-full);
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+    }
+    
+    .action-sheet-info {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    
+    .action-sheet-prompt {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      margin: 0 0 8px 0;
+      word-break: break-word;
+    }
+    
+    .action-sheet-meta {
+      display: flex;
+      gap: 12px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    
+    .action-sheet-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .action-btn {
+      width: 100%;
+      padding: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      border-radius: var(--radius-md);
+      font-size: 0.9rem;
+      font-weight: 500;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: var(--transition);
+    }
+    .action-btn:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: var(--border-active);
+    }
+    .action-btn.danger {
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+    .action-btn.danger:hover {
+      background: rgba(239, 68, 68, 0.1);
+    }
+
     /* Loading / empty */
     .center-msg {
       text-align: center;
@@ -259,6 +439,7 @@ export class GalleryTab extends LitElement {
     this.lightbox    = null;
     this._longPressTimer = null;
     this._selectMode     = false;
+    this.activeActionMenu = null;
   }
 
   connectedCallback() {
@@ -299,39 +480,154 @@ export class GalleryTab extends LitElement {
     ];
   }
 
-  _toggleSelect(img) {
+  _getGroupedItems() {
+    const grouped = [];
+    const seenGenIds = new Set();
+
+    for (const img of this.images) {
+      const genId = img.generation_id;
+      if (genId) {
+        if (!seenGenIds.has(genId)) {
+          seenGenIds.add(genId);
+          const groupMates = this.images.filter(i => i.generation_id === genId);
+          grouped.push({
+            type: 'group',
+            generation_id: genId,
+            primary: groupMates[0],
+            images: groupMates,
+            prompt: img.prompt,
+            seed: img.seed,
+            model: img.model,
+            timestamp: img.timestamp,
+          });
+        }
+      } else {
+        grouped.push({
+          type: 'single',
+          primary: img,
+          images: [img],
+          prompt: img.prompt,
+          seed: img.seed,
+          model: img.model,
+          timestamp: img.timestamp,
+        });
+      }
+    }
+    return grouped;
+  }
+
+  _toggleSelectGroup(group) {
     const s = new Set(this.selected);
-    if (s.has(img.relative_path)) s.delete(img.relative_path);
-    else s.add(img.relative_path);
+    const allSelected = group.images.every(img => s.has(img.relative_path));
+    if (allSelected) {
+      for (const img of group.images) {
+        s.delete(img.relative_path);
+      }
+    } else {
+      for (const img of group.images) {
+        s.add(img.relative_path);
+      }
+    }
     this.selected    = s;
     this._selectMode = s.size > 0;
     this.requestUpdate();
   }
 
-  _onImgClick(img) {
+  _isGroupSelected(group) {
+    return group.images.every(img => this.selected.has(img.relative_path));
+  }
+
+  _openActionMenu(group) {
+    this.activeActionMenu = group;
+    this.requestUpdate();
+  }
+
+  _closeActionMenu() {
+    this.activeActionMenu = null;
+    this.requestUpdate();
+  }
+
+  _onImgClick(group) {
     if (this._selectMode) {
-      this._toggleSelect(img);
+      this._toggleSelectGroup(group);
     } else {
-      // Open lightbox for this image and its group-mates (same generation_id)
-      const group = img.generation_id
-        ? this.images.filter(i => i.generation_id === img.generation_id)
-        : [img];
-      const idx = group.findIndex(i => i.relative_path === img.relative_path);
-      this.lightbox = { images: group, index: Math.max(0, idx) };
+      this.lightbox = { images: group.images, index: 0 };
       this.requestUpdate();
+      
+      // Auto scroll carousel to index 0 on load
+      setTimeout(() => {
+        const container = this.shadowRoot.querySelector('.lightbox-carousel');
+        if (container) {
+          container.scrollLeft = 0;
+        }
+      }, 50);
     }
   }
 
-  _onLongPress(img) {
-    this._selectMode = true;
-    this._toggleSelect(img);
+  _onLongPress(group) {
+    this._openActionMenu(group);
+  }
+
+  _onCarouselScroll(e) {
+    const container = e.currentTarget;
+    const width = container.clientWidth;
+    if (width <= 0) return;
+    const index = Math.round(container.scrollLeft / width);
+    if (this.lightbox && this.lightbox.index !== index) {
+      this.lightbox = { ...this.lightbox, index };
+      this.requestUpdate();
+    }
   }
 
   _lbNav(dir) {
     if (!this.lightbox) return;
     const len = this.lightbox.images.length;
-    this.lightbox = { ...this.lightbox, index: (this.lightbox.index + dir + len) % len };
+    const nextIdx = (this.lightbox.index + dir + len) % len;
+    this.lightbox = { ...this.lightbox, index: nextIdx };
+    
+    const container = this.shadowRoot.querySelector('.lightbox-carousel');
+    if (container) {
+      container.scrollTo({
+        left: nextIdx * container.clientWidth,
+        behavior: 'smooth'
+      });
+    }
     this.requestUpdate();
+  }
+
+  async _deleteGroup(group) {
+    const count = group.images.length;
+    if (!confirm(`Delete ${count} image(s)? This cannot be undone.`)) return;
+    const filenames = group.images.map(img => img.filename);
+    await fetch('/api/gallery/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_path: this.currentPath, filenames, folders: [] }),
+    });
+    this._load(this.currentPath, this.page);
+  }
+
+  async _regenerateImage(img) {
+    if (!img.prompt) return;
+    try {
+      const res = await fetch('/api/generate/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt:     img.prompt,
+          resolution: img.resolution ? img.resolution.join('x') : '1024x1024',
+          num_images: 1,
+          seed:       img.seed,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || 'Unknown error');
+      }
+      window.location.hash = '#/generate';
+    } catch (e) {
+      alert('Failed to regenerate: ' + e.message);
+    }
   }
 
   async _deleteSelected() {
@@ -355,6 +651,7 @@ export class GalleryTab extends LitElement {
   render() {
     const crumbs   = this._breadcrumbs();
     const lbImg    = this.lightbox?.images[this.lightbox.index];
+    const groupedItems = this._getGroupedItems();
 
     return html`
       <div class="root">
@@ -397,27 +694,39 @@ export class GalleryTab extends LitElement {
               <div class="icon">⏳</div>
               <p>Loading gallery…</p>
             </div>
-          ` : this.images.length === 0 ? html`
+          ` : groupedItems.length === 0 ? html`
             <div class="center-msg">
               <div class="icon">🖼️</div>
               <p>No images here yet. Generate some from the Generator tab!</p>
             </div>
           ` : html`
             <div class="grid">
-              ${this.images.map(img => html`
-                <div class="grid-cell ${this.selected.has(img.relative_path) ? 'selected' : ''}"
-                  @click="${() => this._onImgClick(img)}"
-                  @contextmenu="${e => { e.preventDefault(); this._onLongPress(img); }}"
+              ${groupedItems.map(group => html`
+                <div class="grid-cell ${this._isGroupSelected(group) ? 'selected' : ''}"
+                  @click="${() => this._onImgClick(group)}"
+                  @contextmenu="${e => { e.preventDefault(); this._onLongPress(group); }}"
                 >
-                  <img class="grid-img" src="${img.url}" alt="${img.filename}" loading="lazy" />
-                  ${img.prompt ? html`
-                    <div class="img-overlay">${img.prompt}</div>
-                  ` : ''}
-                  ${this._selectMode ? html`
-                    <div class="select-dot ${this.selected.has(img.relative_path) ? 'checked' : ''}">
-                      ${this.selected.has(img.relative_path) ? '✓' : ''}
+                  <div class="grid-img-wrapper">
+                    <img class="grid-img" src="${group.primary.url}" alt="${group.primary.filename}" loading="lazy" />
+                    
+                    ${group.type === 'group' ? html`
+                      <div class="group-badge">${group.images.length} images</div>
+                    ` : ''}
+                    
+                    ${this._selectMode ? html`
+                      <div class="select-dot ${this._isGroupSelected(group) ? 'checked' : ''}">
+                        ${this._isGroupSelected(group) ? '✓' : ''}
+                      </div>
+                    ` : ''}
+                  </div>
+
+                  <div class="grid-info">
+                    <div class="grid-prompt">${group.prompt || 'No prompt info'}</div>
+                    <div class="grid-meta">
+                      <span>Seed: ${group.seed || 'N/A'}</span>
+                      <span>${group.timestamp ? new Date(group.timestamp).toLocaleDateString() : ''}</span>
                     </div>
-                  ` : ''}
+                  </div>
                 </div>
               `)}
             </div>
@@ -440,7 +749,15 @@ export class GalleryTab extends LitElement {
       ${this.lightbox && lbImg ? html`
         <div class="lightbox" @click="${e => e.target === e.currentTarget && (this.lightbox = null, this.requestUpdate())}">
           <button class="lb-close" @click="${() => { this.lightbox = null; this.requestUpdate(); }}">✕</button>
-          <img src="${lbImg.url}" alt="${lbImg.filename}" />
+          
+          <div class="lightbox-carousel" @scroll="${this._onCarouselScroll}">
+            ${this.lightbox.images.map(img => html`
+              <div class="carousel-slide">
+                <img src="${img.url}" alt="${img.filename}" />
+              </div>
+            `)}
+          </div>
+          
           <div class="lb-meta">
             ${lbImg.prompt ? html`<div class="lb-prompt">${lbImg.prompt}</div>` : ''}
             <div>
@@ -462,6 +779,43 @@ export class GalleryTab extends LitElement {
               <button @click="${() => this._lbNav(1)}">Next ▶</button>
             </div>
           ` : ''}
+        </div>
+      ` : ''}
+
+      <!-- Bottom Action Sheet / Context Menu -->
+      ${this.activeActionMenu ? html`
+        <div class="action-sheet-backdrop" @click="${this._closeActionMenu}">
+          <div class="action-sheet" @click="${e => e.stopPropagation()}">
+            <div class="action-sheet-header">
+              <div class="action-sheet-title">Image Options</div>
+              <button class="action-sheet-close" @click="${this._closeActionMenu}">✕</button>
+            </div>
+            
+            <div class="action-sheet-info">
+              <p class="action-sheet-prompt">${this.activeActionMenu.prompt || 'No prompt info'}</p>
+              <div class="action-sheet-meta">
+                ${this.activeActionMenu.seed ? html`<span>Seed: ${this.activeActionMenu.seed}</span>` : ''}
+                ${this.activeActionMenu.model ? html`<span>Model: ${this.activeActionMenu.model}</span>` : ''}
+              </div>
+            </div>
+
+            <div class="action-sheet-buttons">
+              ${this.activeActionMenu.prompt ? html`
+                <button class="action-btn" @click="${() => { this._copyPrompt(this.activeActionMenu.primary); this._closeActionMenu(); }}">
+                  📋 Copy Prompt
+                </button>
+                <button class="action-btn" @click="${() => { this._regenerateImage(this.activeActionMenu.primary); this._closeActionMenu(); }}">
+                  🔄 Regenerate Image
+                </button>
+              ` : ''}
+              <button class="action-btn" @click="${() => { this._toggleSelectGroup(this.activeActionMenu); this._closeActionMenu(); }}">
+                ☑️ ${this._isGroupSelected(this.activeActionMenu) ? 'Deselect Item' : 'Select Item'}
+              </button>
+              <button class="action-btn danger" @click="${() => { this._deleteGroup(this.activeActionMenu); this._closeActionMenu(); }}">
+                🗑️ Delete Image(s)
+              </button>
+            </div>
+          </div>
         </div>
       ` : ''}
     `;

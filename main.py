@@ -549,12 +549,24 @@ async def _queue_worker():
         resolution = item.get("resolution", "1920x1088")
         num_images = item.get("num_images", 1)
         image_ids: list = []
+        seeds: list = []
         error_msg: Optional[str] = None
 
         try:
             for img_index in range(num_images):
-                import random
-                seed = random.randint(0, (2 ** 63) - 1)
+                # Check cancellation
+                with _queue_lock:
+                    if item["status"] == "cancelled":
+                        break
+
+                # Use original seed if provided for single image, otherwise generate random
+                if item.get("seed") is not None and num_images == 1:
+                    seed = item["seed"]
+                else:
+                    import random
+                    seed = random.randint(0, (2 ** 63) - 1)
+                
+                seeds.append(seed)
 
                 # Update progress
                 with _queue_lock:
@@ -562,6 +574,7 @@ async def _queue_worker():
                     item["total_images"] = num_images
                     item["progress"]     = 0.0
                     item["seed"]         = seed
+                    item["seeds"]        = seeds
                 await _broadcast_queue()
 
                 wf = _build_workflow(prompt, resolution, seed, queue_id, img_index)
@@ -579,6 +592,11 @@ async def _queue_worker():
                 prompt_id, _ = _queue_comfy(wf)
                 history = await asyncio.to_thread(_wait_comfy, prompt_id, on_progress)
 
+                # Check cancellation immediately after wait completes
+                with _queue_lock:
+                    if item["status"] == "cancelled":
+                        break
+
                 if not history or not history["images"]:
                     raise RuntimeError("ComfyUI returned no images — check ComfyUI logs.")
 
@@ -589,18 +607,25 @@ async def _queue_worker():
 
             # Completed
             with _queue_lock:
-                item["status"]       = "completed"
-                item["image_ids"]    = image_ids
-                item["progress"]     = 1.0
-                item["completed_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                if item["status"] != "cancelled":
+                    item["status"]       = "completed"
+                    item["image_ids"]    = image_ids
+                    item["progress"]     = 1.0
+                    item["completed_at"] = datetime.datetime.utcnow().isoformat() + "Z"
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            error_msg = str(e).split("\n")[0]
+            is_cancelled = False
             with _queue_lock:
-                item["status"] = "error"
-                item["error"]  = error_msg
+                if item["status"] == "cancelled":
+                    is_cancelled = True
+            
+            if not is_cancelled:
+                import traceback
+                traceback.print_exc()
+                error_msg = str(e).split("\n")[0]
+                with _queue_lock:
+                    item["status"] = "error"
+                    item["error"]  = error_msg
 
         await _broadcast_queue()
 
@@ -613,6 +638,7 @@ class GenerateRequest(BaseModel):
     prompt: str
     resolution: str = "1920x1088"
     num_images: int = 1
+    seed: Optional[int] = None
 
 
 @app.post("/api/generate/queue")
@@ -632,6 +658,8 @@ async def submit_to_queue(req: GenerateRequest):
         "progress":     0.0,
         "image_num":    0,
         "total_images": req.num_images,
+        "seed":         req.seed,
+        "seeds":        [],
     }
     with _queue_lock:
         _gen_queue.append(item)
@@ -655,7 +683,12 @@ def get_queue():
 async def cancel_queue_item(queue_id: str):
     with _queue_lock:
         for item in _gen_queue:
-            if item["id"] == queue_id and item["status"] == "queued":
+            if item["id"] == queue_id and item["status"] in ("queued", "running"):
+                if item["status"] == "running":
+                    try:
+                        _COMFY_HTTP.post("/interrupt")
+                    except Exception as e:
+                        print(f"[ComfyUI Interrupt] failed: {e}")
                 item["status"] = "cancelled"
                 break
     await _broadcast_queue()
