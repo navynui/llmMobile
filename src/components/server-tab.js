@@ -375,25 +375,28 @@ export class ServerTab extends LitElement {
     }
   }
 
-  async handleModelLoad() {
+  async handleModelLoad(modelName = '') {
     const selectEl = this.shadowRoot.querySelector('#model-select');
-    if (!selectEl || !selectEl.value) return;
+    const targetModel = modelName || (selectEl ? selectEl.value : '');
+    if (!targetModel) return;
 
     this.actionPending = true;
     this.loadingModel = true;
-    const modelName = selectEl.value;
-    this.showStatus(`Loading model ${modelName}...`);
+    this.showStatus(`Loading model ${targetModel}...`);
 
     try {
       const res = await fetch('/api/llm/models/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelName })
+        body: JSON.stringify({ model: targetModel })
       });
       const data = await res.json();
       if (res.ok) {
-        this.activeModel = modelName;
+        this.activeModel = targetModel;
         this.showStatus(`Loaded model successfully!`);
+        if (selectEl) {
+          selectEl.value = targetModel;
+        }
       } else {
         this.showStatus(`Failed: ${data.detail || 'Unknown error'}`, true);
       }
@@ -402,6 +405,13 @@ export class ServerTab extends LitElement {
     } finally {
       this.actionPending = false;
       this.loadingModel = false;
+    }
+  }
+
+  async handleSelectModelChange(e) {
+    const selected = e.target.value;
+    if (selected) {
+      await this.handleModelLoad(selected);
     }
   }
 
@@ -572,18 +582,20 @@ export class ServerTab extends LitElement {
             </div>
 
             ${isServerRunning ? html`
-              <div class="select-label">Select GGUF model from disk:</div>
-              <select id="model-select" ?disabled="${this.actionPending}">
+              <div class="select-label">Select GGUF model from models.ini:</div>
+              <select id="model-select" ?disabled="${this.actionPending}" @change="${this.handleSelectModelChange}">
                 <option value="">-- Choose a Model --</option>
                 ${this.models.map(m => html`
-                  <option value="${m}" ?selected="${this.activeModel === m}">${m}</option>
+                  <option value="${m.filename}" ?selected="${this.activeModel === m.filename}">
+                    ${m.filename} ${m.is_default ? '⭐ (Default)' : ''}
+                  </option>
                 `)}
               </select>
 
               <div class="btn-group">
                 <button 
                   class="btn-primary" 
-                  @click="${this.handleModelLoad}"
+                  @click="${() => this.handleModelLoad()}"
                   ?disabled="${this.actionPending || this.loadingModel}"
                 >
                   ${this.loadingModel ? 'Loading...' : 'Load Model'}

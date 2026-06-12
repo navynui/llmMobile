@@ -30,6 +30,7 @@ except ImportError:
 app = FastAPI(title="LLM Mobile Manager")
 
 # --- Constants ---
+MODES_INI_PATH      = "/models/models.ini"
 MODELS_DIR          = "/models"
 IMAGE_GEN_OUTPUT    = "/comfyui-output"
 WORKFLOW_PATH       = "/app/MyZimage_turbo.json"
@@ -305,9 +306,31 @@ def stop_llm():
 
 @app.get("/models")
 def list_models():
-    if not os.path.exists(MODELS_DIR):
+    if not os.path.exists(MODES_INI_PATH):
         return {"models": []}
-    return {"models": [os.path.basename(f) for f in glob.glob(os.path.join(MODELS_DIR, "*.gguf"))]}
+    models = []
+    try:
+        # Fallback parsing that is robust and doesn't depend on configparser strict rules
+        with open(MODES_INI_PATH) as f:
+            current_model = None
+            is_default = False
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(";"):
+                    continue
+                m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                if m:
+                    if current_model:
+                        models.append({"filename": current_model, "is_default": is_default})
+                    current_model = m.group(1) + ".gguf"
+                    is_default = False
+                elif "load-on-startup" in line and "true" in line.lower() and current_model:
+                    is_default = True
+            if current_model:
+                models.append({"filename": current_model, "is_default": is_default})
+    except Exception as e:
+        print(f"[Models INI] Failed to parse: {e}")
+    return {"models": models}
 
 
 @app.delete("/models/{filename}")
