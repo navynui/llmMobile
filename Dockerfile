@@ -1,3 +1,15 @@
+# Stage 1: Build frontend
+FROM node:20-slim AS builder
+WORKDIR /build
+COPY package*.json ./
+RUN npm install
+COPY src ./src
+COPY public ./public
+COPY index.html ./
+COPY vite.config.js* ./
+RUN npm run build
+
+# Stage 2: Python server container
 FROM python:3.11-slim
 
 # Install Docker CLI and Compose plugin
@@ -11,9 +23,14 @@ RUN apt-get update && apt-get install -y ca-certificates curl gnupg && \
 
 WORKDIR /app
 
+# Copy python requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy built frontend assets from Stage 1
+COPY --from=builder /build/dist ./dist
+
+# Copy the rest of the application
 COPY . .
 
 EXPOSE 8000

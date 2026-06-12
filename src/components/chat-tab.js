@@ -1,0 +1,485 @@
+import { LitElement, html, css } from 'lit';
+
+export class ChatTab extends LitElement {
+  static properties = {
+    messages: { type: Array },
+    inputActive: { type: Boolean },
+    isGenerating: { type: Boolean },
+    metadata: { type: Object }
+  };
+
+  static styles = css`
+    :host {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: var(--bg-color);
+      position: relative;
+    }
+
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      padding-bottom: 80px; /* Space for input */
+    }
+
+    /* Message Bubbles */
+    .message {
+      max-width: 85%;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      animation: messageSlideIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @keyframes messageSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user {
+      align-self: flex-end;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+    }
+
+    .bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius-lg);
+      font-size: 0.95rem;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .user .bubble {
+      background: var(--primary);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 4px 12px var(--primary-glow);
+    }
+
+    .assistant .bubble {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      border-bottom-left-radius: 4px;
+      box-shadow: var(--shadow-md);
+    }
+
+    /* Markdown styling inside bubbles */
+    .bubble p {
+      margin-bottom: 8px;
+    }
+    .bubble p:last-child {
+      margin-bottom: 0;
+    }
+    .bubble code {
+      font-family: var(--font-mono);
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+    }
+    .bubble pre {
+      font-family: var(--font-mono);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 12px;
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      margin: 8px 0;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .bubble pre code {
+      background: none;
+      padding: 0;
+      font-size: 0.85rem;
+    }
+    .bubble ul, .bubble ol {
+      margin-left: 20px;
+      margin-bottom: 8px;
+    }
+
+    /* Metadata label */
+    .meta-info {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      align-self: flex-start;
+      margin-left: 4px;
+    }
+
+    /* Input Bar */
+    .input-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(11, 15, 25, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border-color);
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      z-index: 10;
+    }
+
+    textarea {
+      flex: 1;
+      height: 40px;
+      max-height: 120px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-full);
+      padding: 10px 18px;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 0.95rem;
+      outline: none;
+      resize: none;
+      transition: var(--transition);
+      line-height: 1.25;
+    }
+
+    textarea:focus {
+      border-color: var(--primary);
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    .send-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-full);
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      transition: var(--transition);
+      box-shadow: 0 4px 10px var(--primary-glow);
+      flex-shrink: 0;
+    }
+
+    .send-btn:hover {
+      background: #4f46e5;
+    }
+
+    .send-btn:disabled {
+      background: var(--bg-card);
+      color: var(--text-muted);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* Typing indicator */
+    .typing-indicator {
+      display: flex;
+      gap: 4px;
+      padding: 8px 12px;
+      align-items: center;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      animation: dotPulse 1.4s infinite both;
+    }
+
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes dotPulse {
+      0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+      40% { transform: scale(1.1); opacity: 1; }
+    }
+  `;
+
+  constructor() {
+    super();
+    this.messages = [];
+    this.inputActive = false;
+    this.isGenerating = false;
+    this.metadata = null;
+    
+    // Load chat history from localStorage
+    const saved = localStorage.getItem('chat_history');
+    if (saved) {
+      try {
+        this.messages = JSON.parse(saved);
+      } catch (e) {
+        this.messages = [];
+      }
+    }
+  }
+
+  updated(changedProperties) {
+    if (changedProperties.has('messages')) {
+      this.scrollToBottom();
+      // Cache history (keep last 100)
+      if (this.messages.length > 100) {
+        this.messages = this.messages.slice(this.messages.length - 100);
+      }
+      localStorage.setItem('chat_history', JSON.stringify(this.messages));
+    }
+  }
+
+  scrollToBottom() {
+    setTimeout(() => {
+      const container = this.shadowRoot.querySelector('.chat-container');
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }, 50);
+  }
+
+  handleTextareaInput(e) {
+    const textarea = e.target;
+    textarea.style.height = '40px';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+  }
+
+  handleKeyDown(e) {
+    // Send message on Enter key without shift
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      this.sendMessage();
+    }
+  }
+
+  async sendMessage() {
+    const textarea = this.shadowRoot.querySelector('textarea');
+    if (!textarea || !textarea.value.trim() || this.isGenerating) return;
+
+    const text = textarea.value.trim();
+    textarea.value = '';
+    textarea.style.height = '40px';
+
+    // Add user message
+    this.messages = [...this.messages, { role: 'user', content: text }];
+    this.isGenerating = true;
+
+    // Create assistant message placeholder
+    const assistantMessageIndex = this.messages.length;
+    this.messages = [...this.messages, { role: 'assistant', content: '', done: false }];
+
+    try {
+      const response = await fetch('/api/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: this.messages.slice(0, assistantMessageIndex).map(m => ({
+            role: m.role,
+            content: m.content
+          })),
+          stream: true
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('API server returned error code ' + response.status);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let assistantText = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        
+        // Save the last partial line back to the buffer
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (!cleanLine) continue;
+
+          // Unified parsing of llama.cpp response stream format
+          if (cleanLine.startsWith('data: ')) {
+            const dataStr = cleanLine.substring(6).trim();
+            if (dataStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              
+              // 1. OpenAI Chat Completion format: choice delta
+              const deltaContent = parsed.choices?.[0]?.delta?.content || '';
+              // 2. OpenAI Completion format: choice text
+              const textContent = parsed.choices?.[0]?.text || '';
+              // 3. Llama.cpp native completion format: content
+              const nativeContent = parsed.content || '';
+              
+              const newText = deltaContent || textContent || nativeContent;
+              if (newText) {
+                assistantText += newText;
+                this.updateAssistantMessage(assistantMessageIndex, assistantText);
+              }
+
+              // Extract timings metadata if available (usually at final chunk)
+              const timings = parsed.timings || parsed.usage;
+              if (timings) {
+                this.updateAssistantMeta(assistantMessageIndex, timings);
+              }
+            } catch (e) {
+              // Ignore partial or parsing errors in chunk
+            }
+          }
+        }
+      }
+
+      // Finish generation
+      this.updateAssistantMessage(assistantMessageIndex, assistantText, true);
+
+    } catch (e) {
+      this.updateAssistantMessage(
+        assistantMessageIndex, 
+        `Error: Failed to fetch completion stream (${e.message}). Please ensure model is loaded.`, 
+        true
+      );
+    } finally {
+      this.isGenerating = false;
+    }
+  }
+
+  updateAssistantMessage(index, content, done = false) {
+    const updated = [...this.messages];
+    if (updated[index]) {
+      updated[index] = { ...updated[index], content, done };
+      this.messages = updated;
+    }
+  }
+
+  updateAssistantMeta(index, timings) {
+    const updated = [...this.messages];
+    if (updated[index]) {
+      let metaStr = '';
+      
+      // Calculate tokens per second if statistics are available
+      if (timings.predicted_n && timings.predicted_ms) {
+        const tps = (timings.predicted_n / (timings.predicted_ms / 1000)).toFixed(1);
+        const evalTime = (timings.prompt_ms / 1000).toFixed(2);
+        metaStr = `${tps} t/s · Eval: ${evalTime}s`;
+      } else if (timings.completion_tokens && timings.prompt_tokens) {
+        // OpenAI-style usage dict fallback
+        metaStr = `Tokens: ${timings.prompt_tokens} in / ${timings.completion_tokens} out`;
+      }
+      
+      if (metaStr) {
+        updated[index] = { ...updated[index], meta: metaStr };
+        this.messages = updated;
+      }
+    }
+  }
+
+  // Helper to clear conversation
+  clearConversation() {
+    if (confirm('Clear entire chat history?')) {
+      this.messages = [];
+      localStorage.removeItem('chat_history');
+    }
+  }
+
+  // Simple regex-based markdown formatter for HTML bubbles
+  formatMessage(text) {
+    if (!text) return '';
+    
+    // Escape HTML first
+    let htmlContent = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    // 1. Code blocks (```code```)
+    htmlContent = htmlContent.replace(/```([\s\S]*?)```/g, (match, code) => {
+      return `<pre><code>${code.trim()}</code></pre>`;
+    });
+
+    // 2. Inline code (`code`)
+    htmlContent = htmlContent.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // 3. Bold (**bold**)
+    htmlContent = htmlContent.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+    // 4. Bullet lists
+    htmlContent = htmlContent.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
+    htmlContent = htmlContent.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
+
+    // 5. Paragraphs & Line Breaks
+    const paragraphs = htmlContent.split('\n\n');
+    return paragraphs.map(p => {
+      if (p.startsWith('<pre>') || p.startsWith('<ul>')) return p;
+      return `<p>${p.replace(/\n/g, '<br/>')}</p>`;
+    }).join('');
+  }
+
+  render() {
+    return html`
+      <div class="chat-container">
+        ${this.messages.length === 0 ? html`
+          <div style="margin: auto; text-align: center; color: var(--text-muted); max-width: 280px; padding-bottom: 40px;">
+            <div style="font-size: 3rem; margin-bottom: 16px;">💬</div>
+            <h3 style="font-family: var(--font-title); color: var(--text-secondary); margin-bottom: 8px;">LLM Chatbox</h3>
+            <p style="font-size: 0.85rem; line-height: 1.4;">Send a message to interact with the currently loaded GGUF model in VRAM.</p>
+          </div>
+        ` : this.messages.map(m => html`
+          <div class="message ${m.role}">
+            <div class="bubble">
+              ${m.role === 'assistant' 
+                ? html`${m.content ? html`<div .innerHTML="${this.formatMessage(m.content)}"></div>` : html`
+                    <div class="typing-indicator">
+                      <div class="dot"></div>
+                      <div class="dot"></div>
+                      <div class="dot"></div>
+                    </div>
+                  `}`
+                : m.content
+              }
+            </div>
+            ${m.meta ? html`<div class="meta-info">${m.meta}</div>` : ''}
+          </div>
+        `)}
+      </div>
+
+      <div class="input-bar">
+        <button 
+          class="send-btn" 
+          style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted); box-shadow: none;"
+          @click="${this.clearConversation}"
+          title="Clear Conversation"
+        >
+          🗑️
+        </button>
+        <textarea 
+          placeholder="Type a message..." 
+          rows="1" 
+          @input="${this.handleTextareaInput}"
+          @keydown="${this.handleKeyDown}"
+          ?disabled="${this.isGenerating}"
+        ></textarea>
+        <button 
+          class="send-btn" 
+          @click="${this.sendMessage}"
+          ?disabled="${this.isGenerating}"
+        >
+          ➔
+        </button>
+      </div>
+    `;
+  }
+}
+
+customElements.define('chat-tab', ChatTab);
