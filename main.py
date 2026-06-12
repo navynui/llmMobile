@@ -1220,16 +1220,20 @@ async def get_hf_model_details(repo_id: str):
         try:
             r = await client.get(url, timeout=10.0)
             data = r.json()
-            # Extract .gguf files
+            # Extract .gguf files with size
             gguf_files = []
             sibling_list = data.get("siblings", [])
             for s in sibling_list:
                 fname = s.get("rfilename", "")
                 if fname.lower().endswith(".gguf"):
-                    gguf_files.append(fname)
+                    gguf_files.append({
+                        "filename": fname,
+                        "size": s.get("size")
+                    })
             return {"repo_id": repo_id, "gguf_files": gguf_files, "downloads": data.get("downloads", 0), "likes": data.get("likes", 0)}
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
+
 
 @app.post("/api/models/download")
 def download_model(req: DownloadRequest, background_tasks: BackgroundTasks):

@@ -1068,16 +1068,22 @@ export class MoreTab extends LitElement {
                 <p style="font-size: 0.85rem; color: var(--text-secondary);">No .gguf sibling files found in this repository.</p>
               ` : this.repoDetails.gguf_files.map(f => html`
                 <div class="repo-item" style="cursor: default; display: flex; flex-direction: row; justify-content: space-between; align-items: center;">
-                  <div style="flex: 1; margin-right: 12px;">
-                    <span style="font-size: 0.85rem; font-weight: 500; word-break: break-all;">${f}</span>
+                  <div style="flex: 1; margin-right: 12px; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 0.85rem; font-weight: 500; word-break: break-all;">${f.filename}</span>
+                    ${f.size ? html`
+                      <span style="font-size: 0.75rem; color: var(--text-secondary); display: flex; align-items: center; gap: 4px;">
+                        ⚖️ <span class="meta-badge">${(f.size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>
+                      </span>
+                    ` : ''}
                   </div>
-                  <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${() => this.triggerDownload(f)}">
+                  <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${() => this.triggerDownload(f.filename)}">
                     Download
                   </button>
                 </div>
               `)}
             </div>
           ` : ''}
+
         </div>
       </div>
     `;
