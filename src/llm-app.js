@@ -1,7 +1,10 @@
 import { LitElement, html, css } from 'lit';
 import './components/server-tab.js';
 import './components/chat-tab.js';
+import './components/generator-tab.js';
+import './components/gallery-tab.js';
 import './components/stub-tabs.js';
+
 
 export class LlmApp extends LitElement {
   static properties = {

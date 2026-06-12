@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy built frontend assets from Stage 1
 COPY --from=builder /build/dist ./dist
 
-# Copy the rest of the application
+# Copy the rest of the application (main.py, MyZimage_turbo.json, PROMPTS, etc.)
 COPY . .
 
 EXPOSE 8000
