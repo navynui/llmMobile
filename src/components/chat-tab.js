@@ -522,9 +522,12 @@ export class ChatTab extends LitElement {
       '\\\\mu': 'μ',
       '\\\\phi': 'φ',
       '\\\\tau': 'τ',
-      '\\\\epsilon': 'ε',
-      '\\\\sqrt': '√'
+      '\\\\epsilon': 'ε'
     };
+
+    // Square roots: \sqrt{x}
+    formatted = formatted.replace(/\\sqrt\{([^}]+)\}/g, '√<span style="border-top: 1px solid var(--text-primary); margin-left: 1px; padding-top: 1px; display: inline-block; line-height: 0.95;">$1</span>');
+    formatted = formatted.replace(/\\sqrt/g, '√');
 
     for (const [key, val] of Object.entries(symbols)) {
       formatted = formatted.replace(new RegExp(key, 'g'), val);
@@ -563,8 +566,11 @@ export class ChatTab extends LitElement {
     // Inline code `code`
     formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
     
-    // Inline Math: $ ... $
+    // Inline Math: $ ... $ or \( ... \)
     formatted = formatted.replace(/\$([^\$]+)\$/g, (match, math) => {
+      return `<span class="math-inline">${this.formatMath(math.trim())}</span>`;
+    });
+    formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, math) => {
       return `<span class="math-inline">${this.formatMath(math.trim())}</span>`;
     });
     
@@ -667,7 +673,7 @@ export class ChatTab extends LitElement {
     htmlContent = htmlContent.replace(/\$([^\$]+)\$/g, (match, math) => {
       return savePlaceholder(`<span class="math-inline">${this.formatMath(math.trim())}</span>`, 'MATH_INLINE');
     });
-    htmlContent = htmlContent.replace(/\\\\\((.*?)\\\\\)/g, (match, math) => {
+    htmlContent = htmlContent.replace(/\\\((.*?)\\\)/g, (match, math) => {
       return savePlaceholder(`<span class="math-inline">${this.formatMath(math.trim())}</span>`, 'MATH_INLINE');
     });
 
