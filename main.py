@@ -459,11 +459,40 @@ class ModelActionRequest(BaseModel):
     model: str
 
 
+async def _get_preset_id_for_model(model_id: str) -> str:
+    if not model_id:
+        return model_id
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get("http://llm-server:8080/models", timeout=3)
+            if res.status_code == 200:
+                presets = [m["id"] for m in res.json().get("data", [])]
+                # Search for a case-insensitive match (with or without extension)
+                norm_id = model_id.lower()
+                for preset in presets:
+                    p_low = preset.lower()
+                    if p_low == norm_id or p_low.replace(".gguf", "") == norm_id.replace(".gguf", ""):
+                        return preset
+    except Exception as e:
+        print(f"[Preset Matching] Failed to fetch active models: {e}")
+    # Fallback:
+    if model_id.lower() == "default":
+        return "default"
+    return model_id if model_id.lower().endswith(".gguf") else (model_id + ".gguf")
+
+
+def _clean_model_id(mid: str) -> str:
+    if not mid:
+        return ""
+    return os.path.basename(mid).lower().replace(".gguf", "")
+
+
 @app.post("/api/llm/models/load")
 async def proxy_llm_load(req: ModelActionRequest):
     async with httpx.AsyncClient() as c:
         try:
-            return (await c.post("http://llm-server:8080/models/load", json={"model": req.model}, timeout=30)).json()
+            preset_id = await _get_preset_id_for_model(req.model)
+            return (await c.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)).json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
 
@@ -472,7 +501,8 @@ async def proxy_llm_load(req: ModelActionRequest):
 async def proxy_llm_unload(req: ModelActionRequest):
     async with httpx.AsyncClient() as c:
         try:
-            return (await c.post("http://llm-server:8080/models/unload", json={"model": req.model}, timeout=10)).json()
+            preset_id = await _get_preset_id_for_model(req.model)
+            return (await c.post("http://llm-server:8080/models/unload", json={"model": preset_id}, timeout=10)).json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
 
@@ -1774,10 +1804,11 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             log_benchmark_progress(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
             
             # 1. Load the test model via the server API
-            log_benchmark_progress(f"Queue: Requesting server to load test model: {model_id}")
+            preset_id = await _get_preset_id_for_model(model_id)
+            log_benchmark_progress(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": model_id}, timeout=30)
+                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
                         log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}")
                         continue
@@ -1791,7 +1822,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             for _ in range(60): # wait up to 120 seconds
                 await asyncio.sleep(2)
                 curr_loaded = await _get_loaded_model()
-                if curr_loaded and os.path.basename(curr_loaded).lower() == os.path.basename(model_id).lower():
+                if curr_loaded and _clean_model_id(curr_loaded) == _clean_model_id(model_id):
                     loaded = True
                     break
             
@@ -1915,10 +1946,11 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             log_benchmark_progress(f"Saved raw test results.")
             
             # 4. Switch to Judge Model for evaluation
-            log_benchmark_progress(f"Queue: Requesting server to load Judge model: {judge_model_id}")
+            preset_id = await _get_preset_id_for_model(judge_model_id)
+            log_benchmark_progress(f"Queue: Requesting server to load Judge model: {judge_model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": judge_model_id}, timeout=30)
+                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
                         log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model")
                         continue
@@ -1932,7 +1964,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             for _ in range(60):
                 await asyncio.sleep(2)
                 curr_loaded = await _get_loaded_model()
-                if curr_loaded and os.path.basename(curr_loaded).lower() == os.path.basename(judge_model_id).lower():
+                if curr_loaded and _clean_model_id(curr_loaded) == _clean_model_id(judge_model_id):
                     judge_loaded = True
                     break
             
