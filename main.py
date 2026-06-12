@@ -1084,6 +1084,195 @@ def gallery_delete(req: DeleteRequest):
 
 
 # ───────────────────────────────────────────────
+# Phase 5 – Model Downloader & Benchmarks Backend
+# ───────────────────────────────────────────────
+
+_downloads_lock = threading.Lock()
+_active_downloads: Dict[str, Dict[str, Any]] = {}  # key: f"{repo_id}/{filename}"
+
+class DownloadRequest(BaseModel):
+    repo_id: str
+    filename: str
+
+async def _download_model_task(repo_id: str, filename: str):
+    key = f"{repo_id}/{filename}"
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    dest_path = os.path.join(MODELS_DIR, filename)
+    temp_path = dest_path + ".download"
+
+    current_bytes = 0
+    if os.path.exists(temp_path):
+        current_bytes = os.path.getsize(temp_path)
+
+    with _downloads_lock:
+        _active_downloads[key] = {
+            "repo_id": repo_id,
+            "filename": filename,
+            "status": "downloading",
+            "downloaded": current_bytes,
+            "total": 0,
+            "speed": "0 KB/s",
+            "progress": 0.0,
+            "error": None
+        }
+
+    headers = {}
+    if current_bytes > 0:
+        headers["Range"] = f"bytes={current_bytes}-"
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            async with client.stream("GET", url, headers=headers) as r:
+                if r.status_code == 416:
+                    # Range not satisfiable (might already be completed)
+                    r_head = await client.head(url)
+                    total_bytes = int(r_head.headers.get("content-length", 0))
+                    current_bytes = total_bytes
+                    shutil.move(temp_path, dest_path)
+                    with _downloads_lock:
+                        _active_downloads[key].update({
+                            "status": "completed",
+                            "downloaded": total_bytes,
+                            "total": total_bytes,
+                            "progress": 1.0
+                        })
+                    return
+                elif r.status_code == 206:
+                    # Partial content
+                    total_bytes = current_bytes + int(r.headers.get("content-length", 0))
+                    mode = "ab"
+                else:
+                    # Full download
+                    total_bytes = int(r.headers.get("content-length", 0))
+                    current_bytes = 0
+                    mode = "wb"
+
+                with _downloads_lock:
+                    _active_downloads[key]["total"] = total_bytes
+
+                start_time = time.time()
+                last_update = time.time()
+                bytes_since_update = 0
+
+                with open(temp_path, mode) as f:
+                    async for chunk in r.aiter_bytes(chunk_size=65536):
+                        f.write(chunk)
+                        current_bytes += len(chunk)
+                        bytes_since_update += len(chunk)
+
+                        now = time.time()
+                        if now - last_update >= 1.0:
+                            elapsed = now - last_update
+                            speed_val = bytes_since_update / elapsed
+                            if speed_val > 1024 * 1024:
+                                speed_str = f"{speed_val / (1024*1024):.1f} MB/s"
+                            else:
+                                speed_str = f"{speed_val / 1024:.1f} KB/s"
+
+                            progress_val = round(current_bytes / total_bytes, 4) if total_bytes > 0 else 0.0
+
+                            with _downloads_lock:
+                                _active_downloads[key].update({
+                                    "downloaded": current_bytes,
+                                    "speed": speed_str,
+                                    "progress": progress_val
+                                })
+                            
+                            last_update = now
+                            bytes_since_update = 0
+
+                # Check if fully downloaded
+                if current_bytes >= total_bytes:
+                    shutil.move(temp_path, dest_path)
+                    with _downloads_lock:
+                        _active_downloads[key].update({
+                            "status": "completed",
+                            "progress": 1.0,
+                            "speed": "0 KB/s"
+                        })
+                else:
+                    raise Exception("Download connection closed prematurely")
+
+    except Exception as e:
+        with _downloads_lock:
+            if key in _active_downloads:
+                _active_downloads[key].update({
+                    "status": "failed",
+                    "error": str(e),
+                    "speed": "0 KB/s"
+                })
+
+
+@app.get("/api/models/search")
+async def search_hf_models(q: str):
+    url = f"https://huggingface.co/api/models?search={urllib.parse.quote(q)}&filter=gguf&limit=10"
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(url, timeout=10.0)
+            return r.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+@app.get("/api/models/details")
+async def get_hf_model_details(repo_id: str):
+    url = f"https://huggingface.co/api/models/{repo_id}"
+    async with httpx.AsyncClient() as client:
+        try:
+            r = await client.get(url, timeout=10.0)
+            data = r.json()
+            # Extract .gguf files
+            gguf_files = []
+            sibling_list = data.get("siblings", [])
+            for s in sibling_list:
+                fname = s.get("rfilename", "")
+                if fname.lower().endswith(".gguf"):
+                    gguf_files.append(fname)
+            return {"repo_id": repo_id, "gguf_files": gguf_files, "downloads": data.get("downloads", 0), "likes": data.get("likes", 0)}
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+@app.post("/api/models/download")
+def download_model(req: DownloadRequest, background_tasks: BackgroundTasks):
+    key = f"{req.repo_id}/{req.filename}"
+    with _downloads_lock:
+        if key in _active_downloads and _active_downloads[key]["status"] == "downloading":
+            return {"detail": "Already downloading", "key": key}
+    background_tasks.add_task(_download_model_task, req.repo_id, req.filename)
+    return {"detail": "Download started in background", "key": key}
+
+@app.get("/api/models/downloads")
+def get_downloads_status():
+    with _downloads_lock:
+        return {"downloads": list(_active_downloads.values())}
+
+@app.get("/api/benchmarks")
+def get_benchmarks():
+    return {
+        "benchmarks": [
+            {"model": "Llama-3-8B-Instruct.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 38.5, "score": 82.1},
+            {"model": "Llama-3-8B-Instruct.Q8_0", "platform": "Tesla P100 (16GB)", "quant": "Q8_0", "tokens_sec": 26.2, "score": 83.4},
+            {"model": "Mistral-7B-v0.3.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 42.1, "score": 80.5},
+            {"model": "Phi-3-mini-128k.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 65.4, "score": 78.8},
+            {"model": "Llama-3-8B-Instruct.Q4_K_M", "platform": "RTX 3090 (24GB)", "quant": "Q4_K_M", "tokens_sec": 84.1, "score": 82.1},
+            {"model": "Gemma-2-9B-IT.Q4_K_M", "platform": "Tesla P100 (16GB)", "quant": "Q4_K_M", "tokens_sec": 31.8, "score": 84.2}
+        ]
+    }
+
+
+@app.get("/api/logs")
+def get_logs(container_name: str = "llm-server", lines: int = 100):
+    if not docker_client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized.")
+    try:
+        c = docker_client.containers.get(container_name)
+        logs = c.logs(tail=lines, stdout=True, stderr=True).decode("utf-8", errors="ignore")
+        return {"container": container_name, "logs": logs}
+    except Exception as e:
+        return {"container": container_name, "logs": f"Error fetching logs: {str(e)}"}
+
+
+
+# ───────────────────────────────────────────────
 # PWA manifest
 # ───────────────────────────────────────────────
 
