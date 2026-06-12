@@ -1434,10 +1434,12 @@ def get_benchmarks(show_all: bool = False):
                             continue
                         m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
                         if m:
-                            filename = m.group(1) + ".gguf"
+                            base_name = m.group(1)
+                            filename = base_name + ".gguf"
                             # Check if the file exists on disk
                             if os.path.exists(os.path.join(MODELS_DIR, filename)):
                                 local_ready_filenames.add(filename.lower())
+                                local_ready_filenames.add(base_name.lower())  # Support both with & without .gguf
             except Exception as e:
                 print(f"[Benchmarks API] Failed to parse models INI: {e}")
 
@@ -1480,7 +1482,14 @@ def get_benchmarks(show_all: bool = False):
             total_score = r["total_score"] or 0
             hallucinated = r["hallucination_count"] > 0
             model_name = r["name"]
-            tested_names_lower.add(model_name.lower())
+            
+            # Add both with and without .gguf versions of the tested model name
+            name_low = model_name.lower()
+            tested_names_lower.add(name_low)
+            if name_low.endswith(".gguf"):
+                tested_names_lower.add(name_low[:-5])
+            else:
+                tested_names_lower.add(name_low + ".gguf")
             
             # Apply strict filters if show_all is False
             if not show_all:
@@ -1494,7 +1503,7 @@ def get_benchmarks(show_all: bool = False):
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
                 "score": total_score,
-                "is_ready": model_name.lower() in local_ready_filenames,
+                "is_ready": name_low in local_ready_filenames,
                 "is_tested": True
             })
             
@@ -1508,7 +1517,8 @@ def get_benchmarks(show_all: bool = False):
                             continue
                         m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
                         if m:
-                            filename = m.group(1) + ".gguf"
+                            base_name = m.group(1)
+                            filename = base_name + ".gguf"
                             if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
                                 benchmarks.append({
                                     "model_id": filename,
