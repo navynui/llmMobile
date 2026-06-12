@@ -533,6 +533,8 @@ async def proxy_chat(request: Request):
         data = {}
     if not str(data.get("model", "")).strip():
         data["model"] = await _get_loaded_model() or "default"
+    else:
+        data["model"] = await _get_preset_id_for_model(data["model"])
     body = json.dumps(data).encode()
 
     async def _stream():
@@ -1677,8 +1679,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 _benchmark_progress["current_round"] = round_name
                 log_benchmark_progress(f"Executing {round_name}...")
                 
+                preset_id = await _get_preset_id_for_model(model_id)
                 payload = {
-                    "model": model_id,
+                    "model": preset_id,
                     "prompt": prompt_text,
                     "temperature": 0.7,
                     "stream": False,
@@ -1810,8 +1813,17 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                 try:
                     load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
-                        log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}")
-                        continue
+                        try:
+                            res_json = load_res.json()
+                            error_msg = res_json.get("error", {}).get("message", "")
+                            if "already running" in error_msg or "already loaded" in error_msg:
+                                log_benchmark_progress(f"Queue: {model_id} is already loaded and running.")
+                            else:
+                                log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}: {error_msg}")
+                                continue
+                        except Exception:
+                            log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}")
+                            continue
                 except Exception as e:
                     log_benchmark_progress(f"Queue Error: Exception loading {model_id}: {e}")
                     continue
@@ -1882,9 +1894,10 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
                     _benchmark_progress["rounds_completed"] = r_idx - 1
                     
-                    log_benchmark_progress(f"Executing {round_name} on {model_id}...")
+                    preset_id = await _get_preset_id_for_model(model_id)
+                    log_benchmark_progress(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
                     payload = {
-                        "model": model_id,
+                        "model": preset_id,
                         "prompt": prompt_text,
                         "temperature": 0.7,
                         "stream": False,
@@ -1952,8 +1965,17 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                 try:
                     load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
-                        log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model")
-                        continue
+                        try:
+                            res_json = load_res.json()
+                            error_msg = res_json.get("error", {}).get("message", "")
+                            if "already running" in error_msg or "already loaded" in error_msg:
+                                log_benchmark_progress(f"Queue: Judge model {judge_model_id} is already loaded and running.")
+                            else:
+                                log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model: {error_msg}")
+                                continue
+                        except Exception:
+                            log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model")
+                            continue
                 except Exception as e:
                     log_benchmark_progress(f"Queue Error: Exception loading Judge: {e}")
                     continue
@@ -2156,8 +2178,9 @@ def parse_judge_json(raw_text: str) -> dict:
 
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
     url = f"{get_llm_server_url()}/v1/chat/completions"
+    preset_id = await _get_preset_id_for_model(judge_model)
     payload = {
-        "model": judge_model,
+        "model": preset_id,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
