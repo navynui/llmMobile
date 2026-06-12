@@ -1356,6 +1356,25 @@ def get_downloads_status():
 @app.get("/api/benchmarks")
 def get_benchmarks(show_all: bool = False):
     try:
+        # 1. Parse models.ini and check what GGUF files exist on disk
+        local_ready_filenames = set()
+        if os.path.exists(MODES_INI_PATH):
+            try:
+                with open(MODES_INI_PATH) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith(";"):
+                            continue
+                        m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                        if m:
+                            filename = m.group(1) + ".gguf"
+                            # Check if the file exists on disk
+                            if os.path.exists(os.path.join(MODELS_DIR, filename)):
+                                local_ready_filenames.add(filename.lower())
+            except Exception as e:
+                print(f"[Benchmarks API] Failed to parse models INI: {e}")
+
+        # 2. Query database for tested models
         conn = get_db_conn()
         cursor = conn.cursor()
         
@@ -1387,10 +1406,14 @@ def get_benchmarks(show_all: bool = False):
         conn.close()
         
         benchmarks = []
+        tested_names_lower = set()
+        
         for r in rows:
             avg_tps = r["avg_tps"] or 0.0
             total_score = r["total_score"] or 0
             hallucinated = r["hallucination_count"] > 0
+            model_name = r["name"]
+            tested_names_lower.add(model_name.lower())
             
             # Apply strict filters if show_all is False
             if not show_all:
@@ -1398,13 +1421,39 @@ def get_benchmarks(show_all: bool = False):
                     continue
             
             benchmarks.append({
-                "model": r["name"],
+                "model": model_name,
                 "platform": "Tesla P100 (16GB)",
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
-                "score": total_score
+                "score": total_score,
+                "is_ready": model_name.lower() in local_ready_filenames,
+                "is_tested": True
             })
             
+        # 3. Append ready models that have NOT been tested yet
+        if os.path.exists(MODES_INI_PATH):
+            try:
+                with open(MODES_INI_PATH) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith(";"):
+                            continue
+                        m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                        if m:
+                            filename = m.group(1) + ".gguf"
+                            if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
+                                benchmarks.append({
+                                    "model": filename,
+                                    "platform": "Ready",
+                                    "quant": get_quantization_from_name(filename),
+                                    "tokens_sec": None,
+                                    "score": None,
+                                    "is_ready": True,
+                                    "is_tested": False
+                                })
+            except Exception as e:
+                print(f"[Benchmarks API] Failed to append ready models: {e}")
+                
         return {"benchmarks": benchmarks}
     except Exception as e:
         print(f"Error querying benchmarks database: {e}")
