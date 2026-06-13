@@ -221,6 +221,7 @@ async def _local_stats_poller():
 @app.on_event("startup")
 async def startup_event():
     consolidate_database()
+    asyncio.create_task(_download_queue_worker())
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
     asyncio.create_task(log_monitor_task())
@@ -1375,6 +1376,25 @@ def gallery_delete(req: DeleteRequest):
 
 _downloads_lock = threading.Lock()
 _active_downloads: Dict[str, Dict[str, Any]] = {}  # key: f"{repo_id}/{filename}"
+_download_queue = asyncio.Queue()
+
+async def _download_queue_worker():
+    print("[Download Queue] Asynchronous Sequential Download Worker started.")
+    while True:
+        try:
+            repo_id, filename = await _download_queue.get()
+            print(f"[Download Queue] Starting sequential download for: {repo_id}/{filename}")
+            try:
+                await _download_model_task(repo_id, filename)
+            except Exception as e:
+                print(f"[Download Queue] Exception in download task for {filename}: {e}")
+            finally:
+                _download_queue.task_done()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Download Queue] Queue worker error: {e}")
+            await asyncio.sleep(2)
 
 class DownloadRequest(BaseModel):
     repo_id: str
@@ -1402,6 +1422,20 @@ async def _download_model_task(repo_id: str, filename: str):
             "error": None
         }
 
+    model_id = _clean_model_id(filename)
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE models 
+            SET status = 'DOWNLOADING', notes = 'Downloading GGUF file...' 
+            WHERE model_id = ?
+        """, (model_id,))
+        conn.commit()
+        conn.close()
+    except Exception as db_err:
+        print(f"[Download DB] Failed to update status to DOWNLOADING: {db_err}")
+
     headers = {}
     if current_bytes > 0:
         headers["Range"] = f"bytes={current_bytes}-"
@@ -1423,6 +1457,18 @@ async def _download_model_task(repo_id: str, filename: str):
                             "total": total_bytes,
                             "progress": 1.0
                         })
+                    try:
+                        conn = get_db_conn()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE models 
+                            SET status = 'COMPLETED', notes = 'Download completed successfully' 
+                            WHERE model_id = ?
+                        """, (model_id,))
+                        conn.commit()
+                        conn.close()
+                    except Exception as db_err:
+                        print(f"[Download DB] Failed to update status to COMPLETED: {db_err}")
                     return
                 elif r.status_code == 206:
                     # Partial content
@@ -1478,6 +1524,18 @@ async def _download_model_task(repo_id: str, filename: str):
                             "progress": 1.0,
                             "speed": "0 KB/s"
                         })
+                    try:
+                        conn = get_db_conn()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE models 
+                            SET status = 'COMPLETED', notes = 'Download completed successfully' 
+                            WHERE model_id = ?
+                        """, (model_id,))
+                        conn.commit()
+                        conn.close()
+                    except Exception as db_err:
+                        print(f"[Download DB] Failed to update status to COMPLETED: {db_err}")
                 else:
                     raise Exception("Download connection closed prematurely")
 
@@ -1489,6 +1547,18 @@ async def _download_model_task(repo_id: str, filename: str):
                     "error": str(e),
                     "speed": "0 KB/s"
                 })
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE models 
+                SET status = 'FAILED', notes = ? 
+                WHERE model_id = ?
+            """, (f"Error: {str(e)}", model_id))
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            print(f"[Download DB] Failed to update status to FAILED: {db_err}")
 
 
 @app.get("/api/models/search")
@@ -1525,13 +1595,43 @@ async def get_hf_model_details(repo_id: str):
 
 
 @app.post("/api/models/download")
-def download_model(req: DownloadRequest, background_tasks: BackgroundTasks):
+def download_model(req: DownloadRequest):
     key = f"{req.repo_id}/{req.filename}"
     with _downloads_lock:
-        if key in _active_downloads and _active_downloads[key]["status"] == "downloading":
-            return {"detail": "Already downloading", "key": key}
-    background_tasks.add_task(_download_model_task, req.repo_id, req.filename)
-    return {"detail": "Download started in background", "key": key}
+        if key in _active_downloads and _active_downloads[key]["status"] in ["downloading", "queued"]:
+            return {"detail": "Already in download queue or actively downloading", "key": key}
+        
+        _active_downloads[key] = {
+            "repo_id": req.repo_id,
+            "filename": req.filename,
+            "status": "queued",
+            "downloaded": 0,
+            "total": 0,
+            "speed": "Pending",
+            "progress": 0.0,
+            "error": None
+        }
+    
+    # Save QUEUED state in DB
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        model_id = _clean_model_id(req.filename)
+        cursor.execute("""
+            INSERT INTO models (model_id, name, quantization, status, notes)
+            VALUES (?, ?, ?, 'QUEUED', ?)
+            ON CONFLICT(model_id) DO UPDATE SET
+                status = 'QUEUED',
+                notes = ?
+        """, (model_id, req.filename, get_quantization_from_name(req.filename), "Queued for download", "Queued for download"))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Download Queue] Failed to write QUEUED state to DB: {e}")
+
+    _download_queue.put_nowait((req.repo_id, req.filename))
+    broadcast_notification(f"📥 Added {req.filename} to download queue.")
+    return {"detail": "Added to download queue", "key": key}
 
 @app.get("/api/models/downloads")
 def get_downloads_status():
