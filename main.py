@@ -1550,9 +1550,15 @@ def get_benchmarks(show_all: bool = False):
                         line = line.strip()
                         if not line or line.startswith(";"):
                             continue
-                        m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                        m = re.match(r'^\[(.+?)\]$', line)
                         if m:
-                            base_name = m.group(1)
+                            raw_name = m.group(1)
+                            if raw_name == "*":
+                                continue
+                            if raw_name.lower().endswith(".gguf"):
+                                base_name = raw_name[:-5]
+                            else:
+                                base_name = raw_name
                             filename = base_name + ".gguf"
                             # Check if the file exists on disk
                             if os.path.exists(os.path.join(MODELS_DIR, filename)):
@@ -1609,10 +1615,18 @@ def get_benchmarks(show_all: bool = False):
             else:
                 tested_names_lower.add(name_low + ".gguf")
             
+            # Also add lowercase model_id to prevent duplicates with untested models
+            tested_names_lower.add(r["model_id"].lower())
+            
+            # Determine if this model is ready on disk
+            is_model_ready = (name_low in local_ready_filenames) or (r["model_id"].lower() in local_ready_filenames)
+            
             # Apply strict filters if show_all is False
             if not show_all:
                 if avg_tps < 20.0 or hallucinated or total_score < 50:
-                    continue
+                    # Do not filter out the model if it is currently ready on disk!
+                    if not is_model_ready:
+                        continue
             
             benchmarks.append({
                 "model_id": r["model_id"],
@@ -1621,7 +1635,7 @@ def get_benchmarks(show_all: bool = False):
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
                 "score": total_score,
-                "is_ready": name_low in local_ready_filenames,
+                "is_ready": is_model_ready,
                 "is_tested": True
             })
             
@@ -1633,9 +1647,15 @@ def get_benchmarks(show_all: bool = False):
                         line = line.strip()
                         if not line or line.startswith(";"):
                             continue
-                        m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                        m = re.match(r'^\[(.+?)\]$', line)
                         if m:
-                            base_name = m.group(1)
+                            raw_name = m.group(1)
+                            if raw_name == "*":
+                                continue
+                            if raw_name.lower().endswith(".gguf"):
+                                base_name = raw_name[:-5]
+                            else:
+                                base_name = raw_name
                             filename = base_name + ".gguf"
                             if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
                                 benchmarks.append({
