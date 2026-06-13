@@ -2622,7 +2622,7 @@ You must return a JSON object exactly matching this structure (do not output any
 }}"""
             
             print(f"Grading round: {gold_key} using judge {judge_model}...")
-            log_benchmark_progress(f"Grading round: {gold_key} using judge {preset_id or judge_model}")
+            log_benchmark_progress(f"Grading round: {gold_key} using judge {judge_model}")
             try:
                 judge_response = await query_judge_model(judge_model, system_prompt, user_prompt)
                 grades = parse_judge_json(judge_response)
