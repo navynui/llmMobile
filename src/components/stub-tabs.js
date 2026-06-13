@@ -39,13 +39,6 @@ export class MoreTab extends LitElement {
     logLimit: { type: Number },
     confirmAction: { type: String }, // 'start', 'stop', null
 
-    // Models config state
-    modelsIniText: { type: String },
-    modelsIniLoading: { type: Boolean },
-    localModels: { type: Array },
-    localModelsLoading: { type: Boolean },
-    modelToDelete: { type: String },
-
     // Benchmark details modal
     selectedBenchmarkDetails: { type: Object },
     detailsModalLoading: { type: Boolean },
@@ -749,13 +742,6 @@ export class MoreTab extends LitElement {
     this.logLimit = 50;
     this.confirmAction = null;
 
-    // Models config
-    this.modelsIniText = '';
-    this.modelsIniLoading = false;
-    this.localModels = [];
-    this.localModelsLoading = false;
-    this.modelToDelete = null;
-
     // Benchmark details modal state
     this.selectedBenchmarkDetails = null;
     this.detailsModalLoading = false;
@@ -767,8 +753,6 @@ export class MoreTab extends LitElement {
     this.startDownloadPolling();
     this.fetchBenchmarks();
     this.fetchServerStatus();
-    this.fetchLocalModels();
-    this.fetchModelsIni();
     this.fetchActiveModelId();
     this.startBenchmarkPolling();
   }
@@ -1178,107 +1162,6 @@ export class MoreTab extends LitElement {
     }
   }
 
-  async fetchLocalModels() {
-    this.localModelsLoading = true;
-    try {
-      const res = await fetch('/models');
-      if (res.ok) {
-        const data = await res.json();
-        this.localModels = data.models || [];
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      this.localModelsLoading = false;
-    }
-  }
-
-  async fetchModelsIni() {
-    this.modelsIniLoading = true;
-    try {
-      const res = await fetch('/api/models_ini');
-      if (res.ok) {
-        const data = await res.json();
-        this.modelsIniText = data.content || '';
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      this.modelsIniLoading = false;
-    }
-  }
-
-  async saveModelsIni() {
-    this.modelsIniLoading = true;
-    try {
-      const res = await fetch('/api/models_ini', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: this.modelsIniText })
-      });
-      if (res.ok) {
-        this.dispatchEvent(new CustomEvent('op-queue-notification', {
-          detail: { message: 'models.ini saved successfully' },
-          bubbles: true,
-          composed: true
-        }));
-        // Reload local models list since models.ini might have changed
-        this.fetchLocalModels();
-      } else {
-        const err = await res.text();
-        this.dispatchEvent(new CustomEvent('op-queue-notification', {
-          detail: { message: `Save failed: ${err}` },
-          bubbles: true,
-          composed: true
-        }));
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      this.modelsIniLoading = false;
-    }
-  }
-
-  showDeleteModelConfirm(filename) {
-    this.modelToDelete = filename;
-  }
-
-  closeDeleteModelConfirm() {
-    this.modelToDelete = null;
-  }
-
-  async executeDeleteModel() {
-    const filename = this.modelToDelete;
-    this.closeDeleteModelConfirm();
-    if (!filename) return;
-
-    try {
-      const res = await fetch(`/models/${encodeURIComponent(filename)}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        this.dispatchEvent(new CustomEvent('op-queue-notification', {
-          detail: { message: data.detail || `Deleted ${filename}` },
-          bubbles: true,
-          composed: true
-        }));
-        // Refresh both lists
-        this.fetchLocalModels();
-        this.fetchModelsIni();
-      } else {
-        const err = await res.text();
-        this.dispatchEvent(new CustomEvent('op-queue-notification', {
-          detail: { message: `Delete failed: ${err}` },
-          bubbles: true,
-          composed: true
-        }));
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
   handleToggleSetting(key, currentVal) {
     const newVal = !currentVal;
     if (key === 'autoLoadModel') {
@@ -1535,10 +1418,10 @@ export class MoreTab extends LitElement {
                 @change="${e => this.selectedJudgeModelId = e.target.value}"
               >
                 ${this.activeModelId ? html`<option value="${this.activeModelId}">(Recommended) Loaded Active Model: ${this.activeModelId.split('/').pop()}</option>` : ''}
-                ${this.localModels.filter(m => m.filename !== this.activeModelId).map(m => html`
-                  <option value="${m.filename}">${m.filename}</option>
+                ${this.benchmarks.filter(b => b.is_ready && b.model !== this.activeModelId).map(b => html`
+                  <option value="${b.model}">${b.model}</option>
                 `)}
-                ${!this.activeModelId && this.localModels.length === 0 ? html`<option value="">No local GGUF models available</option>` : ''}
+                ${!this.activeModelId && this.benchmarks.filter(b => b.is_ready).length === 0 ? html`<option value="">No local GGUF models available</option>` : ''}
               </select>
               <span style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic;">The Judge LLM is responsible for grading qualitative output from 0-25 per round using golden reference answers.</span>
             </div>
@@ -1788,85 +1671,6 @@ export class MoreTab extends LitElement {
                 <input type="checkbox" ?checked="${this.legacyBatch}" @change="${() => this.handleToggleSetting('legacyBatch', this.legacyBatch)}">
                 <span class="slider"></span>
               </label>
-            </div>
-          </div>
-        </div>
-
-        <div style="height: 16px;"></div>
-
-        <!-- Models Configuration & GGUF Manager -->
-        <div class="card">
-          <h2>📁 Models Config</h2>
-          <span class="card-subtitle">Inspect, edit, save, and reload your model configurations (<code>models.ini</code>), or delete unused GGUF files.</span>
-
-          <!-- GGUF File Manager -->
-          <div style="margin-top: 4px;">
-            <h3 style="font-size: 0.9rem; margin-bottom: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-              💾 Downloaded GGUF Files on Disk
-            </h3>
-            ${this.localModelsLoading ? html`
-              <div style="display: flex; align-items: center; justify-content: center; padding: 12px;">
-                <span class="loader"></span>
-              </div>
-            ` : ''}
-            ${!this.localModelsLoading && this.localModels.length === 0 ? html`
-              <p style="font-size: 0.85rem; color: var(--text-secondary); font-style: italic; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: var(--radius-sm);">
-                No downloaded GGUF files found on disk or listed in models.ini.
-              </p>
-            ` : ''}
-            ${!this.localModelsLoading && this.localModels.length > 0 ? html`
-              <div class="file-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px;">
-                ${this.localModels.map(m => html`
-                  <div class="repo-item" style="cursor: default; display: flex; flex-direction: row; justify-content: space-between; align-items: center; padding: 10px 14px;">
-                    <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
-                      <span style="font-size: 0.85rem; font-weight: 500; word-break: break-all; color: var(--text-primary);">${m.filename}</span>
-                      ${m.is_default ? html`<span class="meta-badge" style="background: var(--success-glow); color: var(--success); font-size: 0.7rem; font-weight: 600; border: 1px solid rgba(16, 185, 129, 0.3);">Startup</span>` : ''}
-                    </div>
-                    <button class="btn btn-secondary" style="padding: 6px; border-radius: 6px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: var(--danger); cursor: pointer;" title="Delete model" @click="${() => this.showDeleteModelConfirm(m.filename)}">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="3 6 5 3 21 3 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                        <line x1="10" y1="11" x2="10" y2="17"></line>
-                        <line x1="14" y1="11" x2="14" y2="17"></line>
-                      </svg>
-                    </button>
-                  </div>
-                `)}
-              </div>
-            ` : ''}
-          </div>
-
-          <!-- models.ini Editor -->
-          <div style="display: flex; flex-direction: column; gap: 8px;">
-            <h3 style="font-size: 0.9rem; color: var(--text-primary);">
-              📝 Edit models.ini
-            </h3>
-            <textarea 
-              class="text-input" 
-              style="font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; min-height: 250px; resize: vertical; background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border-color); color: #22c55e; padding: 12px; border-radius: var(--radius-md);" 
-              .value="${this.modelsIniText}"
-              @input="${e => this.modelsIniText = e.target.value}"
-              ?disabled="${this.modelsIniLoading}"
-              placeholder="Loading models.ini..."
-            ></textarea>
-            
-            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
-              <button 
-                class="btn btn-secondary" 
-                style="padding: 8px 14px; font-size: 0.8rem;" 
-                @click="${this.fetchModelsIni}"
-                ?disabled="${this.modelsIniLoading}"
-              >
-                Reload
-              </button>
-              <button 
-                class="btn" 
-                style="padding: 8px 14px; font-size: 0.8rem; background: var(--primary);" 
-                @click="${this.saveModelsIni}"
-                ?disabled="${this.modelsIniLoading}"
-              >
-                Save Changes
-              </button>
             </div>
           </div>
         </div>

@@ -9,7 +9,14 @@ export class ServerTab extends LitElement {
     loadingModel: { type: Boolean },
     switcherExpanded: { type: Boolean },
     actionPending: { type: Boolean },
-    statusMessage: { type: String }
+    statusMessage: { type: String },
+    
+    // Migrated Models Config & Edit models.ini States
+    modelsIniText: { type: String },
+    modelsIniLoading: { type: Boolean },
+    modelToDelete: { type: String },
+    configExpanded: { type: Boolean },
+    iniExpanded: { type: Boolean }
   };
 
   static styles = css`
@@ -140,7 +147,7 @@ export class ServerTab extends LitElement {
       grid-column: span 2;
     }
 
-    /* Model Switcher */
+    /* Collapsible Sections */
     .switcher-header {
       cursor: pointer;
       display: flex;
@@ -151,6 +158,7 @@ export class ServerTab extends LitElement {
     .arrow-icon {
       font-size: 0.8rem;
       transition: var(--transition);
+      color: var(--text-secondary);
     }
 
     .arrow-expanded {
@@ -164,7 +172,7 @@ export class ServerTab extends LitElement {
     }
 
     .switcher-body.expanded {
-      max-height: 400px;
+      max-height: 1000px;
       margin-top: 16px;
     }
 
@@ -266,6 +274,112 @@ export class ServerTab extends LitElement {
       background: rgba(239, 68, 68, 0.25);
     }
 
+    /* Text Inputs for edit models.ini */
+    .text-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      color: var(--text-primary);
+      font-size: 0.9rem;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: var(--transition);
+    }
+
+    .text-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-glow);
+    }
+
+    /* file list & downloaded items styling */
+    .file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .repo-item {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: var(--transition);
+    }
+
+    .repo-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .meta-badge {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      padding: 2px 6px;
+      font-size: 0.72rem;
+      font-weight: 500;
+    }
+
+    /* Modal dialog */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      max-width: 400px;
+      width: 100%;
+      box-shadow: var(--shadow-2xl);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .modal-title {
+      font-family: var(--font-title);
+      font-size: 1.15rem;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .modal-body {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      margin: 0;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+
+    @keyframes scaleIn {
+      from { transform: scale(0.95); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
     /* Toast/Message */
     .status-msg {
       margin-top: 12px;
@@ -274,6 +388,21 @@ export class ServerTab extends LitElement {
       color: var(--success);
       font-weight: 500;
       animation: fadeIn 0.2s ease-out;
+    }
+
+    /* Loader */
+    .loader {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     @keyframes fadeIn {
@@ -300,6 +429,13 @@ export class ServerTab extends LitElement {
     this.switcherExpanded = false;
     this.actionPending = false;
     this.statusMessage = '';
+    
+    // Migrated Config parameters
+    this.modelsIniText = '';
+    this.modelsIniLoading = false;
+    this.modelToDelete = null;
+    this.configExpanded = false;
+    this.iniExpanded = false;
   }
 
   connectedCallback() {
@@ -309,6 +445,9 @@ export class ServerTab extends LitElement {
         this.fetchActiveModel();
       }
     }, 4000);
+    
+    // Automatically load migrated configurations on mount
+    this.fetchModelsIni();
   }
 
   disconnectedCallback() {
@@ -383,6 +522,14 @@ export class ServerTab extends LitElement {
 
   toggleSwitcher() {
     this.switcherExpanded = !this.switcherExpanded;
+  }
+
+  toggleConfig() {
+    this.configExpanded = !this.configExpanded;
+  }
+
+  toggleIni() {
+    this.iniExpanded = !this.iniExpanded;
   }
 
   async handleServerToggle() {
@@ -475,6 +622,93 @@ export class ServerTab extends LitElement {
       this.showStatus('Error: ' + e.message, true);
     } finally {
       this.actionPending = false;
+    }
+  }
+
+  // --- Migrated config-manager methods ---
+  async fetchModelsIni() {
+    this.modelsIniLoading = true;
+    try {
+      const res = await fetch('/api/models_ini');
+      if (res.ok) {
+        const data = await res.json();
+        this.modelsIniText = data.content || '';
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      this.modelsIniLoading = false;
+    }
+  }
+
+  async saveModelsIni() {
+    this.modelsIniLoading = true;
+    try {
+      const res = await fetch('/api/models_ini', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: this.modelsIniText })
+      });
+      if (res.ok) {
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: 'models.ini saved successfully' },
+          bubbles: true,
+          composed: true
+        }));
+        // Reload local models lists
+        this.fetchModelsList();
+      } else {
+        const err = await res.text();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: `Save failed: ${err}` },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      this.modelsIniLoading = false;
+    }
+  }
+
+  showDeleteModelConfirm(filename) {
+    this.modelToDelete = filename;
+  }
+
+  closeDeleteModelConfirm() {
+    this.modelToDelete = null;
+  }
+
+  async executeDeleteModel() {
+    const filename = this.modelToDelete;
+    this.closeDeleteModelConfirm();
+    if (!filename) return;
+
+    try {
+      const res = await fetch(`/models/${encodeURIComponent(filename)}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: data.detail || `Deleted ${filename}` },
+          bubbles: true,
+          composed: true
+        }));
+        // Refresh local models and configuration editor
+        this.fetchModelsList();
+        this.fetchModelsIni();
+      } else {
+        const err = await res.text();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: `Delete failed: ${err}` },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
     }
   }
 
@@ -653,9 +887,113 @@ export class ServerTab extends LitElement {
           </div>
         </div>
 
+        <!-- Migrated Models Config (GGUF File Manager) Card -->
+        <div class="card">
+          <div class="switcher-header" @click="${this.toggleConfig}">
+            <div class="card-title" style="margin-bottom: 0;">📁 Models Config</div>
+            <div class="arrow-icon ${this.configExpanded ? 'arrow-expanded' : ''}">▼</div>
+          </div>
+
+          <div class="switcher-body ${this.configExpanded ? 'expanded' : ''}">
+            <span class="card-subtitle" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+              Inspect, edit, save, and reload your model configurations (<code>models.ini</code>), or delete unused GGUF files.
+            </span>
+            <div style="margin-top: 4px;">
+              <h3 style="font-size: 0.9rem; margin-bottom: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                💾 Downloaded GGUF Files on Disk
+              </h3>
+              ${this.models.length === 0 ? html`
+                <p style="font-size: 0.85rem; color: var(--text-secondary); font-style: italic; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: var(--radius-sm);">
+                  No downloaded GGUF files found on disk or listed in models.ini.
+                </p>
+              ` : html`
+                <div class="file-list">
+                  ${this.models.map(m => html`
+                    <div class="repo-item" style="cursor: default;">
+                      <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; margin-right: 12px;">
+                        <span style="font-size: 0.85rem; font-weight: 500; word-break: break-all;">${m.filename}</span>
+                        <div style="display: flex; gap: 6px; align-items: center;">
+                          ${m.size ? html`<span class="meta-badge">${m.size}</span>` : ''}
+                          ${m.is_default ? html`<span class="meta-badge" style="background: rgba(99,102,241,0.15); color: #a5b4fc; border-color: rgba(99,102,241,0.25);">⭐ Default</span>` : ''}
+                        </div>
+                      </div>
+                      <button 
+                        class="btn btn-danger" 
+                        style="padding: 6px 12px; font-size: 0.8rem;" 
+                        @click="${() => this.showDeleteModelConfirm(m.filename)}"
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
+                  `)}
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+
+        <!-- Migrated Edit models.ini Card -->
+        <div class="card">
+          <div class="switcher-header" @click="${this.toggleIni}">
+            <div class="card-title" style="margin-bottom: 0;">📝 Edit models.ini</div>
+            <div class="arrow-icon ${this.iniExpanded ? 'arrow-expanded' : ''}">▼</div>
+          </div>
+
+          <div class="switcher-body ${this.iniExpanded ? 'expanded' : ''}">
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              <textarea 
+                class="text-input" 
+                style="font-family: var(--font-mono); font-size: 0.8rem; line-height: 1.5; min-height: 250px; resize: vertical; background: rgba(0, 0, 0, 0.4); border: 1px solid var(--border-color); color: #22c55e; padding: 12px; border-radius: var(--radius-md);" 
+                .value="${this.modelsIniText}"
+                @input="${e => this.modelsIniText = e.target.value}"
+                ?disabled="${this.modelsIniLoading}"
+                placeholder="Loading models.ini..."
+              ></textarea>
+              
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
+                <button 
+                  class="btn btn-secondary" 
+                  style="padding: 8px 16px; font-size: 0.85rem;" 
+                  @click="${this.fetchModelsIni}"
+                  ?disabled="${this.modelsIniLoading}"
+                >
+                  ⟳ Reload
+                </button>
+                <button 
+                  class="btn btn-primary" 
+                  style="padding: 8px 16px; font-size: 0.85rem;" 
+                  @click="${this.saveModelsIni}"
+                  ?disabled="${this.modelsIniLoading}"
+                >
+                  💾 Save Config
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Notification Feed -->
         ${this.statusMessage ? html`<div class="status-msg">${this.statusMessage}</div>` : ''}
       </div>
+
+      <!-- Migrated GGUF Model Delete Confirmation Dialog -->
+      ${this.modelToDelete ? html`
+        <div class="modal-backdrop">
+          <div class="modal">
+            <h3 class="modal-title">Delete GGUF Model</h3>
+            <p class="modal-body">
+              Are you sure you want to delete <strong>${this.modelToDelete}</strong>?
+              This will permanently delete the GGUF file from disk and automatically remove its configuration block from <code>models.ini</code>.
+            </p>
+            <div class="modal-actions">
+              <button class="btn btn-secondary" style="padding: 8px 16px;" @click="${this.closeDeleteModelConfirm}">Cancel</button>
+              <button class="btn btn-danger" style="padding: 8px 16px;" @click="${this.executeDeleteModel}">
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     `;
   }
 }

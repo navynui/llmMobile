@@ -48,3 +48,21 @@ This document details the roadmap, architectural requirements, and design patter
     4. Write the updated config back to `MODELS_INI_PATH` safely.
     5. Delete the actual `.gguf` file from the host filesystem `/models/` directory.
     6. Prune relevant entries from the database to keep the system in sync.
+
+---
+
+### 4. Chat Tab: Interactive Model Thinking Rendering
+* **Objective:** Parse and render the model's `<think>...</think>` block in the chat tab dynamically while streaming, and hide or collapse it once the thinking phase is complete.
+* **Why:** Newer reasoning models (such as DeepSeek-R1) stream their chain-of-thought inside `<think>` tags. The chat tab should render this thinking segment in a distinct style (similar to a blockquote or terminal) to maintain transparency, and then smoothly hide/collapse it when the final response begins streaming.
+* **Technical Design:**
+  * Parse `<think>` and `</think>` tags on the fly during streaming inside `chat-tab.js`.
+  * Display a collapsible or styled "Thinking..." section in the UI during this state.
+  * Once `</think>` is received or completed, transition to rendering the standard markdown response and collapse/hide the thinking block.
+
+---
+
+### 5. Server Tab: Control Panel Layout Consolidation
+* **Objective:** Relocate the "Models Config" and "Edit models.ini" panels from Settings/Stub-Tabs to the primary Server tab, positioned below the "Active LLM Model" control card.
+* **UI Features:**
+  * Add the ability to expand and collapse (hide/show) both the **"Models Config"** and **"Edit models.ini"** cards individually, matching the look and feel of the "Active LLM Model" card.
+  * This keeps all server-related model configuration in a single unified view rather than splitting it between the "Settings" tab and other tabs.

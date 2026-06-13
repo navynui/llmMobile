@@ -71,6 +71,38 @@ export class ChatTab extends LitElement {
       box-shadow: var(--shadow-md);
     }
 
+    /* Thinking block styling */
+    .thinking-box {
+      background: rgba(17, 24, 39, 0.4);
+      border: 1px solid rgba(156, 163, 175, 0.15);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+    }
+    
+    .thinking-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .thinking-content {
+      border-left: 2px solid var(--primary);
+      padding-left: 10px;
+      margin-top: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      white-space: pre-wrap;
+      max-height: 150px;
+      overflow-y: auto;
+      color: var(--text-muted);
+    }
+
     /* Markdown styling inside bubbles */
     .bubble p {
       margin-bottom: 8px;
@@ -318,6 +350,29 @@ export class ChatTab extends LitElement {
       } catch (e) {
         this.messages = [];
       }
+    }
+  }
+
+  parseThinkingAndContent(content) {
+    if (!content) return { thinking: '', response: '', isThinking: false };
+    
+    const thinkStart = content.indexOf('<think>');
+    const thinkEnd = content.indexOf('</think>');
+    
+    if (thinkStart !== -1) {
+      if (thinkEnd !== -1) {
+        // Thinking has completed
+        const thinking = content.slice(thinkStart + 7, thinkEnd).trim();
+        const response = content.slice(thinkEnd + 8).trim();
+        return { thinking, response, isThinking: false };
+      } else {
+        // Thinking is currently in progress
+        const thinking = content.slice(thinkStart + 7).trim();
+        return { thinking, response: '', isThinking: true };
+      }
+    } else {
+      // No thinking block found
+      return { thinking: '', response: content, isThinking: false };
     }
   }
 
@@ -759,7 +814,29 @@ export class ChatTab extends LitElement {
           <div class="message ${m.role}">
             <div class="bubble">
               ${m.role === 'assistant' 
-                ? html`${m.content ? html`<div .innerHTML="${this.formatMessage(m.content)}"></div>` : html`
+                ? html`${m.content ? html`
+                    ${(() => {
+                      const { thinking, response, isThinking } = this.parseThinkingAndContent(m.content);
+                      return html`
+                        ${isThinking ? html`
+                          <div class="thinking-box">
+                            <div class="thinking-header">
+                              <span>🧠 Thinking Process...</span>
+                            </div>
+                            <div class="thinking-content">${thinking || 'Formulating thoughts...'}</div>
+                          </div>
+                        ` : ''}
+                        ${response ? html`<div .innerHTML="${this.formatMessage(response)}"></div>` : ''}
+                        ${!response && !isThinking ? html`
+                          <div class="typing-indicator">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                          </div>
+                        ` : ''}
+                      `;
+                    })()}
+                  ` : html`
                     <div class="typing-indicator">
                       <div class="dot"></div>
                       <div class="dot"></div>
