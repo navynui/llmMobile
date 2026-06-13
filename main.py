@@ -1671,7 +1671,10 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     
     rounds_list = []
     server_url = get_llm_server_url()
-    api_url = f"{server_url}/completion"
+    # Use chat completions endpoint so instruct models receive proper
+    # chat template formatting (raw /completion causes instruct models
+    # like Gemma-4 to output placeholder templates instead of real answers)
+    api_url = f"{server_url}/v1/chat/completions"
     
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -1682,10 +1685,10 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 preset_id = await _get_preset_id_for_model(model_id)
                 payload = {
                     "model": preset_id,
-                    "prompt": prompt_text,
+                    "messages": [{"role": "user", "content": prompt_text}],
                     "temperature": 0.7,
                     "stream": False,
-                    "n_predict": 4096
+                    "max_tokens": 4096
                 }
                 
                 start_time = time.time()
@@ -1695,14 +1698,18 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     
                     if response.status_code == 200:
                         res_data = response.json()
-                        tokens_predicted = res_data.get("tokens_predicted", 0)
+                        # Chat completions response structure
+                        choice = res_data.get("choices", [{}])[0]
+                        content = choice.get("message", {}).get("content", "")
+                        usage = res_data.get("usage", {})
+                        tokens_predicted = usage.get("completion_tokens", 0)
                         timings = res_data.get("timings", {})
                         speed_tps = timings.get("predicted_per_second", 0)
                         
-                        if tokens_predicted == 0 and "content" in res_data:
-                            tokens_predicted = len(res_data["content"]) // 4
+                        if tokens_predicted == 0 and content:
+                            tokens_predicted = len(content) // 4
                         
-                        if speed_tps == 0 and duration > 0:
+                        if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                             speed_tps = tokens_predicted / duration
                             
                         log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
@@ -1710,7 +1717,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
                             "prompt": prompt_text,
-                            "response": res_data.get("content", ""),
+                            "response": content,
                             "metrics": {
                                 "duration_seconds": round(duration, 2),
                                 "tokens_generated": tokens_predicted,
@@ -1718,7 +1725,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                             }
                         })
                     else:
-                        log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}")
+                        log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
                             "error": f"HTTP status {response.status_code}"
@@ -1850,6 +1857,11 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
             raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
             
+            # Normalize model_id: lowercase + strip .gguf to avoid duplicate DB records
+            # when the same model is loaded with different casing or suffix across runs
+            norm_model_id = _clean_model_id(model_id)
+            display_name = os.path.basename(model_id)
+            
             # Insert or update status in DB as TESTING
             try:
                 conn = get_db_conn()
@@ -1860,19 +1872,21 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                 ON CONFLICT(model_id) DO UPDATE SET
                     status = 'TESTING',
                     notes = ?
-                """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
+                """, (norm_model_id, display_name, get_quantization_from_name(model_id), f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
                 
-                # Delete old run records
-                cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
+                # Delete old run records (idempotent: wipe previous runs for same model)
+                cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (norm_model_id,))
                 for old_run in cursor.fetchall():
                     cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
                     
                 cursor.execute("""
                 INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
                 VALUES (?, ?, ?, ?)
-                """, (run_id, model_id, timestamp, raw_output_path))
+                """, (run_id, norm_model_id, timestamp, raw_output_path))
                 conn.commit()
                 conn.close()
+                # Use normalized id going forward so judge grading matches the DB record
+                model_id = norm_model_id
             except Exception as db_err:
                 log_benchmark_progress(f"Queue DB Error: {db_err}")
                 continue
@@ -1887,7 +1901,10 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             
             rounds_list = []
             server_url = get_llm_server_url()
-            api_url = f"{server_url}/completion"
+            # Use chat completions endpoint so instruct models receive proper
+            # chat template formatting (raw /completion causes instruct models
+            # like Gemma-4 to output placeholder templates instead of real answers)
+            api_url = f"{server_url}/v1/chat/completions"
             
             async with httpx.AsyncClient(timeout=600.0) as client:
                 for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
@@ -1898,10 +1915,10 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     log_benchmark_progress(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
                     payload = {
                         "model": preset_id,
-                        "prompt": prompt_text,
+                        "messages": [{"role": "user", "content": prompt_text}],
                         "temperature": 0.7,
                         "stream": False,
-                        "n_predict": 4096
+                        "max_tokens": 4096
                     }
                     start_time = time.time()
                     try:
@@ -1909,19 +1926,24 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                         duration = time.time() - start_time
                         if response.status_code == 200:
                             res_data = response.json()
-                            tokens_predicted = res_data.get("tokens_predicted", 0)
+                            # Chat completions response structure
+                            choice = res_data.get("choices", [{}])[0]
+                            content = choice.get("message", {}).get("content", "")
+                            usage = res_data.get("usage", {})
+                            tokens_predicted = usage.get("completion_tokens", 0)
+                            # Timings may be in top-level or per-choice depending on llama.cpp version
                             timings = res_data.get("timings", {})
                             speed_tps = timings.get("predicted_per_second", 0)
-                            if tokens_predicted == 0 and "content" in res_data:
-                                tokens_predicted = len(res_data["content"]) // 4
-                            if speed_tps == 0 and duration > 0:
+                            if tokens_predicted == 0 and content:
+                                tokens_predicted = len(content) // 4
+                            if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                                 speed_tps = tokens_predicted / duration
                             log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
                             
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
                                 "prompt": prompt_text,
-                                "response": res_data.get("content", ""),
+                                "response": content,
                                 "metrics": {
                                     "duration_seconds": round(duration, 2),
                                     "tokens_generated": tokens_predicted,
@@ -1929,7 +1951,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                                 }
                             })
                         else:
-                            log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}")
+                            log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
                                 "error": f"HTTP status {response.status_code}"
@@ -2054,12 +2076,16 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
         _benchmark_running = True
         
     try:
-        # Detect loaded model
-        model_id = await _get_loaded_model()
-        if not model_id:
+        # Detect loaded model and normalize ID to avoid duplicate DB records
+        raw_model_id = await _get_loaded_model()
+        if not raw_model_id:
             async with _benchmark_lock:
                 _benchmark_running = False
             raise HTTPException(status_code=400, detail="No active model is loaded in the server. Please load a model before running benchmarks.")
+        
+        # Normalize: lowercase + strip .gguf so every run of the same model merges
+        model_id = _clean_model_id(raw_model_id)
+        display_name = os.path.basename(raw_model_id)
             
         run_id = str(uuid.uuid4())
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2078,7 +2104,7 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
         ON CONFLICT(model_id) DO UPDATE SET
             status = 'TESTING',
             notes = ?
-        """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
+        """, (model_id, display_name, get_quantization_from_name(raw_model_id), f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
         
         # Clean any historical test run for this model so we keep only the latest
         cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
@@ -2094,7 +2120,7 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
         conn.commit()
         conn.close()
         
-        # Queue background task
+        # Queue background task (pass raw_model_id for preset lookup, normalized model_id for DB)
         background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id)
         
         return {
