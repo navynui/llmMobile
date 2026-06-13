@@ -1096,22 +1096,16 @@ export class MoreTab extends LitElement {
   getFilteredAndSortedBenchmarks() {
     let list = [...this.benchmarks];
 
-    // Filter by query
+    // Filter by query — only model name now (platform filter is separate)
     if (this.filterQuery.trim()) {
       const q = this.filterQuery.toLowerCase();
       list = list.filter(b => 
         b.model.toLowerCase().includes(q) || 
-        b.platform.toLowerCase().includes(q)
+        b.quant?.toLowerCase().includes(q)
       );
     }
 
-    // Filter by platform group
-    if (this.platformFilter !== 'all') {
-      const p = this.platformFilter.toLowerCase();
-      list = list.filter(b => b.platform.toLowerCase().includes(p));
-    }
-
-    // Sort
+    // Sort — only model name is sortable now
     list.sort((a, b) => {
       let valA = a[this.sortField];
       let valB = b[this.sortField];
@@ -1516,52 +1510,44 @@ export class MoreTab extends LitElement {
             <h2>🏆 LLM Benchmark Scores & Rankings</h2>
             <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${() => { this.fetchBenchmarks(); this.fetchActiveModelId(); }}">⟳ Refresh</button>
           </div>
-          <span class="card-subtitle">Inference speeds and efficiency scoring across local GGUF models and GPU configurations.</span>
+          <span class="card-subtitle">Inference speed, quantization, and quality scores for locally tested GGUF models.</span>
 
           <div class="input-group">
             <input 
               type="text" 
               class="text-input" 
-              placeholder="Search by model or platform..."
+              placeholder="Search by model name..."
               .value="${this.filterQuery}"
               @input="${e => this.filterQuery = e.target.value}"
             >
           </div>
 
           <div class="filter-pills">
-            <button class="pill ${this.platformFilter === 'all' ? 'active' : ''}" @click="${() => this.platformFilter = 'all'}">All Platforms</button>
-            <button class="pill ${this.platformFilter === 'tesla' ? 'active' : ''}" @click="${() => this.platformFilter = 'tesla'}">Tesla GPUs</button>
-            <button class="pill ${this.platformFilter === 'rtx' ? 'active' : ''}" @click="${() => this.platformFilter = 'rtx'}">RTX GPUs</button>
+            <button class="pill ${this.platformFilter === 'all' ? 'active' : ''}" @click="${() => this.platformFilter = 'all'}">All GPUs</button>
+            <button class="pill ${this.platformFilter === 'tesla' ? 'active' : ''}" @click="${() => this.platformFilter = 'tesla'}">Tesla</button>
+            <button class="pill ${this.platformFilter === 'rtx' ? 'active' : ''}" @click="${() => this.platformFilter = 'rtx'}">RTX</button>
           </div>
 
           <div class="table-wrapper">
-            <table>
+            <table style="width: 100%; border-collapse: separate; border-spacing: 0 6px;">
               <thead>
                 <tr>
-                  <th style="width: 40px; text-align: center;">
-                    <input 
-                      type="checkbox" 
-                      .checked="${list.filter(b => b.is_ready).length > 0 && list.filter(b => b.is_ready).every(b => this.benchmarkQueue.includes(b.model))}"
-                      @change="${() => this.toggleAllReadyModelsInQueue(list.filter(b => b.is_ready))}"
-                    >
+                  <th style="width: 36px; text-align: center; padding: 8px 4px;"></th>
+                  <th @click="${() => this.handleSort('model')}" style="text-align: left; padding: 8px 12px 8px 8px;">Model
+                    <span class="sort-indicator">${this.sortField === 'model' ? (this.sortAscending ? '▲' : '▼') : ''}</span>
                   </th>
-                  <th @click="${() => this.handleSort('model')}">Model ${this.sortField === 'model' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
-                  <th @click="${() => this.handleSort('platform')}">Platform ${this.sortField === 'platform' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
-                  <th @click="${() => this.handleSort('quant')}">Quant ${this.sortField === 'quant' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
-                  <th @click="${() => this.handleSort('tokens_sec')}">Speed ${this.sortField === 'tokens_sec' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
-                  <th @click="${() => this.handleSort('score')}">Score ${this.sortField === 'score' ? (this.sortAscending ? '▲' : '▼') : ''}</th>
                 </tr>
               </thead>
               <tbody>
                 ${this.benchmarksLoading ? html`
                   <tr>
-                    <td colspan="6" style="text-align: center; padding: 30px;">
+                    <td colspan="2" style="text-align: center; padding: 30px;">
                       <span class="loader" style="border-top-color: var(--primary);"></span> Loading benchmarking scores...
                     </td>
                   </tr>
                 ` : list.length === 0 ? html`
                   <tr>
-                    <td colspan="6" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <td colspan="2" style="text-align: center; padding: 30px; color: var(--text-secondary);">
                       No benchmark matches your criteria.
                     </td>
                   </tr>
@@ -1569,9 +1555,23 @@ export class MoreTab extends LitElement {
                   const isJudge = this.selectedJudgeModelId === b.model || (this.activeModelId === b.model && !this.selectedJudgeModelId);
                   const inQueue = this.benchmarkQueue.includes(b.model);
                   
+                  // Score color: low=danger, medium=warning/amber, high=success
+                  let scoreColor = 'var(--text-muted)';
+                  if (b.score !== null) {
+                    if (b.score >= 80) scoreColor = '#34d399';
+                    else if (b.score >= 50) scoreColor = '#fbbf24';
+                    else scoreColor = '#f87171';
+                  }
+                  let speedColor = 'var(--text-secondary)';
+                  if (b.tokens_sec !== null) {
+                    if (b.tokens_sec >= 30) speedColor = '#34d399';
+                    else if (b.tokens_sec >= 15) speedColor = '#fbbf24';
+                    else speedColor = '#f87171';
+                  }
+
                   return html`
-                    <tr class="${inQueue ? 'row-queued' : ''}" style="${inQueue ? 'background: rgba(99,102,241,0.04);' : ''}">
-                      <td style="text-align: center;">
+                    <tr class="${inQueue ? 'row-queued' : ''}" style="${inQueue ? 'background: rgba(99,102,241,0.03);' : ''}; border-radius: var(--radius-md);">
+                      <td style="text-align: center; padding: 8px 4px 8px 8px; vertical-align: middle;">
                         ${b.is_ready ? html`
                           <input 
                             type="checkbox" 
@@ -1579,30 +1579,42 @@ export class MoreTab extends LitElement {
                             @change="${() => this.toggleModelInQueue(b.model)}"
                           >
                         ` : html`
-                          <span style="font-size: 0.8rem; opacity: 0.3;" title="File not found or not in models.ini">❌</span>
+                          <span style="font-size: 0.8rem; opacity: 0.3;">❌</span>
                         `}
                       </td>
-                      <td class="td-model ${b.is_tested ? 'clickable-cell' : ''}" style="${b.is_tested ? 'cursor: pointer;' : ''}" @click="${() => b.is_tested && this.viewBenchmarkDetails(b.model_id)}">
-                        <div style="display: flex; flex-direction: column; gap: 2px;">
-                          <span style="word-break: break-all;">${b.model}</span>
-                          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
-                            ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.65rem; padding: 1px 4px;">⚖️ Judge</span>` : ''}
-                            ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.65rem; padding: 1px 4px;">Tested</span>` : ''}
+                      <td style="padding: 12px; vertical-align: middle;">
+                        <!-- Model name row -->
+                        <div class="bench-model-row" @click="${() => b.is_tested && this.viewBenchmarkDetails(b.model_id)}" style="cursor: ${b.is_tested ? 'pointer' : 'default'}; display: flex; flex-direction: column; gap: 4px;">
+                          <!-- Name + status badges -->
+                          <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px;">
+                            ${b.is_tested ? html`
+                              <span class="bench-model-name" style="color: var(--text-primary); font-weight: 600; font-size: 0.85rem;">${b.model}</span>
+                            ` : html`
+                              <span style="color: var(--text-muted); font-style: italic; font-size: 0.82rem;">${b.model}</span>
+                            `}
+                            ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.6rem; padding: 1px 5px;">⚖️ Judge</span>` : ''}
+                            ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>` : ''}
                             ${b.is_ready ? 
-                              html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.65rem; padding: 1px 4px;">🟢 Ready</span>` : 
-                              html`<span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); font-size: 0.65rem; padding: 1px 4px;">🔴 Offline</span>`
+                              html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">🟢 Ready</span>` : 
+                              html`<span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">🔴 Offline</span>`
                             }
                           </div>
+                          <!-- Quant / Speed / Score chips -->
+                          ${b.is_tested ? html`
+                            <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
+                              <span class="bench-chip" style="background: rgba(99,102,241,0.08); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
+                              <span class="bench-chip" style="background: rgba(16,185,129,0.08); color: ${speedColor}; border: 1px solid rgba(16,185,129,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ ${b.tokens_sec} t/s</span>
+                              <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">★ ${b.score}</span>
+                            </div>
+                          ` : html`
+                            <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
+                              <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
+                              <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
+                              <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
+                            </div>
+                          `}
                         </div>
                       </td>
-                      <td class="td-plat">
-                        <span style="color: var(--text-secondary); font-size: 0.8rem;">
-                          ${b.is_tested ? b.platform : html`<span style="color: var(--text-muted); font-style: italic;">Untested</span>`}
-                        </span>
-                      </td>
-                      <td><span class="meta-badge">${b.quant}</span></td>
-                      <td class="td-speed">${b.tokens_sec !== null ? `${b.tokens_sec} t/s` : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
-                      <td class="td-score ${b.is_tested ? 'clickable-cell' : ''}" style="${b.is_tested ? 'cursor: pointer;' : ''}" @click="${() => b.is_tested && this.viewBenchmarkDetails(b.model_id)}">${b.score !== null ? b.score : html`<span style="color: var(--text-secondary); font-style: italic;">Pending</span>`}</td>
                     </tr>
                   `;
                 })}
@@ -1822,6 +1834,21 @@ export class MoreTab extends LitElement {
 
   render() {
     return html`
+      <style>
+        .bench-chip {
+          display: inline-block;
+          white-space: nowrap;
+        }
+        .bench-model-row:hover .bench-model-name,
+        .bench-model-row.clickable-cell:hover .bench-model-name {
+          color: var(--primary) !important;
+        }
+        .sort-indicator {
+          opacity: 0.4;
+          font-size: 0.7rem;
+          margin-left: 2px;
+        }
+      </style>
       <div class="container">
         <!-- Sub-tab pill selectors -->
         <nav class="sub-tab-nav">
