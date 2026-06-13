@@ -1894,6 +1894,8 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             log_benchmark_progress(f"Failed to record failure in DB: {db_err}")
     finally:
         async with _benchmark_lock:
+            global _benchmark_running
+            _benchmark_running = False
             _benchmark_progress["running"] = False
         _benchmark_progress["current_round"] = "Finished"
 

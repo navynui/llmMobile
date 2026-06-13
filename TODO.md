@@ -29,18 +29,8 @@ This document details the roadmap, architectural requirements, and design patter
   * **Configuration Presets:**
     ```ini
     [gemma-2-9b-it-Q4_K_M.gguf]
-    mlock = 1
-    mmap = 0
-    repeat-penalty = 1.1
-    ctx-size = 8192
-    cache-type-k = turbo4
-    cache-type-v = turbo2
-    flash-attn = on
     model = /models/gemma-2-9b-it-Q4_K_M.gguf
     n-gpu-layers = -1
-    parallel = 1
-    threads = 7
-    ubatch-size = 2048
     ```
   * **Critical Setting:** `n-gpu-layers = -1` is mandatory to offload all computational layers to the active GPU automatically.
   * **Implementation:** Use Python's built-in `configparser` (with case-sensitive option names) or direct line-by-line block writing to append the section cleanly to `MODELS_INI_PATH`.
