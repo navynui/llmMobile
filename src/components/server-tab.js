@@ -672,6 +672,35 @@ export class ServerTab extends LitElement {
     }
   }
 
+  async handleScanAndRegister() {
+    this.modelsIniLoading = true;
+    try {
+      const res = await fetch('/api/models/scan_and_register', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: data.detail || 'Scan complete!' },
+          bubbles: true,
+          composed: true
+        }));
+        // Reload models list and editor content
+        this.fetchModelsList();
+        this.fetchModelsIni();
+      } else {
+        const err = await res.text();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: `Scan failed: ${err}` },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      this.modelsIniLoading = false;
+    }
+  }
+
   showDeleteModelConfirm(filename) {
     this.modelToDelete = filename;
   }
@@ -950,7 +979,15 @@ export class ServerTab extends LitElement {
                 placeholder="Loading models.ini..."
               ></textarea>
               
-              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;">
+              <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; flex-wrap: wrap;">
+                <button 
+                  class="btn btn-secondary" 
+                  style="padding: 8px 16px; font-size: 0.85rem; border-color: rgba(99,102,241,0.25); color: #a5b4fc; background: rgba(99,102,241,0.04);" 
+                  @click="${this.handleScanAndRegister}"
+                  ?disabled="${this.modelsIniLoading}"
+                >
+                  🔍 Scan & Auto-Add Missing
+                </button>
                 <button 
                   class="btn btn-secondary" 
                   style="padding: 8px 16px; font-size: 0.85rem;" 

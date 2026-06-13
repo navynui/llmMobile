@@ -339,9 +339,15 @@ def _add_to_models_ini(filename: str):
 
     if not already_present:
         try:
+            block = f"""
+
+[{filename}]
+model = /models/{filename}
+n-gpu-layers = -1
+"""
             with open(MODES_INI_PATH, "a") as f:
-                f.write(f"\n\n[{filename}]\n; Auto-added on download completion\n")
-            print(f"[Models INI] Auto-added {filename} to models.ini")
+                f.write(block)
+            print(f"[Models INI] Auto-registered preset config block for {filename}")
         except Exception as e:
             print(f"[Models INI] Failed to auto-add {filename}: {e}")
 
@@ -355,13 +361,17 @@ def _remove_from_models_ini(filename: str):
 
         new_lines = []
         skip_section = False
-        target_section = f"[{filename.lower()}]"
+        target_lower = filename.lower()
+        target_base = target_lower[:-5] if target_lower.endswith(".gguf") else target_lower
 
         for line in lines:
             line_stripped = line.strip()
             # Check if line is a section header
             if line_stripped.startswith("[") and line_stripped.endswith("]"):
-                if line_stripped.lower() == target_section:
+                section_name = line_stripped[1:-1].lower()
+                section_base = section_name[:-5] if section_name.endswith(".gguf") else section_name
+                
+                if section_base == target_base:
                     skip_section = True
                     continue
                 else:
@@ -422,6 +432,18 @@ def delete_model(filename: str):
     
     # Also clean up models.ini configuration
     _remove_from_models_ini(filename)
+    
+    # Prune from SQLite Database to keep system in sync
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        clean_id = _clean_model_id(filename)
+        cursor.execute("DELETE FROM models WHERE model_id = ?", (clean_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Delete] Failed to prune {filename} from DB: {e}")
+        
     return {"detail": f"Deleted {filename} and updated models.ini"}
 
 
@@ -1637,6 +1659,53 @@ def download_model(req: DownloadRequest):
 def get_downloads_status():
     with _downloads_lock:
         return {"downloads": list(_active_downloads.values())}
+
+@app.post("/api/models/scan_and_register")
+def scan_and_register_models():
+    try:
+        # 1. Get all GGUF files in MODELS_DIR
+        if not os.path.exists(MODELS_DIR):
+            return {"detail": "Models directory not found.", "registered": []}
+            
+        gguf_files = []
+        for filename in os.listdir(MODELS_DIR):
+            if filename.lower().endswith(".gguf"):
+                if "mmproj" not in filename.lower():
+                    gguf_files.append(filename)
+                    
+        # 2. Check what is already present in models.ini
+        registered_in_ini = set()
+        if os.path.exists(MODES_INI_PATH):
+            try:
+                with open(MODES_INI_PATH, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith(";"):
+                            continue
+                        m = re.match(r'^\[(.+?)\]$', line)
+                        if m:
+                            raw_name = m.group(1)
+                            if raw_name == "*":
+                                continue
+                            if raw_name.lower().endswith(".gguf"):
+                                registered_in_ini.add(raw_name.lower())
+                                registered_in_ini.add(raw_name[:-5].lower())
+                            else:
+                                registered_in_ini.add(raw_name.lower())
+                                registered_in_ini.add(f"{raw_name.lower()}.gguf")
+            except Exception as e:
+                print(f"[Scan] Failed to parse models.ini: {e}")
+                
+        # 3. Add missing models
+        added = []
+        for filename in gguf_files:
+            if filename.lower() not in registered_in_ini:
+                _add_to_models_ini(filename)
+                added.append(filename)
+                
+        return {"detail": f"Scan complete. Registered {len(added)} new models.", "registered": added}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/benchmarks")
 def get_benchmarks(show_all: bool = False):

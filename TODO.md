@@ -21,23 +21,14 @@ This document details the roadmap, architectural requirements, and design patter
 
 ---
 
-### 2. Automatic `models.ini` Preset Registration
+### ~~2. Automatic `models.ini` Preset Registration~~ (Done)
 * **Objective:** Once a model file is successfully downloaded, automatically write its custom configuration block into `models/models.ini` to register it as an active preset.
 * **Why:** This ensures downloaded models are immediately loadable by `llama-server` without manual configuration editing.
-* **Parameters to Write:**
-  * **Section Name:** `[<model_filename>]` (e.g., `[gemma-2-9b-it-Q4_K_M.gguf]`)
-  * **Configuration Presets:**
-    ```ini
-    [gemma-2-9b-it-Q4_K_M.gguf]
-    model = /models/gemma-2-9b-it-Q4_K_M.gguf
-    n-gpu-layers = -1
-    ```
-  * **Critical Setting:** `n-gpu-layers = -1` is mandatory to offload all computational layers to the active GPU automatically.
-  * **Implementation:** Use Python's built-in `configparser` (with case-sensitive option names) or direct line-by-line block writing to append the section cleanly to `MODELS_INI_PATH`.
+* **Added Automation:** "Scan & Auto-Add Missing Presets" button implemented to batch register orphaned/unregistered models.
 
 ---
 
-### 3. Automated `models.ini` Cleanup on Deletion
+### ~~3. Automated `models.ini` Cleanup on Deletion~~ (Done)
 * **Objective:** Remove corresponding preset blocks from `models/models.ini` when a model is deleted through the web interface.
 * **Why:** Prevents `llama-server` from keeping obsolete references to missing model files, which would otherwise result in load failures.
 * **Implementation Flow:**
@@ -51,7 +42,7 @@ This document details the roadmap, architectural requirements, and design patter
 
 ---
 
-### 4. Chat Tab: Interactive Model Thinking Rendering
+### ~~4. Chat Tab: Interactive Model Thinking Rendering~~ (Done)
 * **Objective:** Parse and render the model's `<think>...</think>` block in the chat tab dynamically while streaming, and hide or collapse it once the thinking phase is complete.
 * **Why:** Newer reasoning models (such as DeepSeek-R1) stream their chain-of-thought inside `<think>` tags. The chat tab should render this thinking segment in a distinct style (similar to a blockquote or terminal) to maintain transparency, and then smoothly hide/collapse it when the final response begins streaming.
 * **Technical Design:**
@@ -61,7 +52,7 @@ This document details the roadmap, architectural requirements, and design patter
 
 ---
 
-### 5. Server Tab: Control Panel Layout Consolidation
+### ~~5. Server Tab: Control Panel Layout Consolidation~~ (Done)
 * **Objective:** Relocate the "Models Config" and "Edit models.ini" panels from Settings/Stub-Tabs to the primary Server tab, positioned below the "Active LLM Model" control card.
 * **UI Features:**
   * Add the ability to expand and collapse (hide/show) both the **"Models Config"** and **"Edit models.ini"** cards individually, matching the look and feel of the "Active LLM Model" card.
