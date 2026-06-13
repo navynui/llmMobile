@@ -539,6 +539,11 @@ export class MoreTab extends LitElement {
       font-family: var(--font-sans);
     }
 
+    option {
+      background: #0f172a;
+      color: #ffffff;
+    }
+
     /* Logs Terminal */
     .logs-header {
       display: flex;

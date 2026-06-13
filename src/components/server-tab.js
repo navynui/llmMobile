@@ -213,6 +213,11 @@ export class ServerTab extends LitElement {
       transition: var(--transition);
     }
 
+    option {
+      background: #0f172a;
+      color: #ffffff;
+    }
+
     select:focus {
       border-color: var(--primary);
     }
