@@ -353,9 +353,20 @@ export class ChatTab extends LitElement {
     }
   }
 
-  parseThinkingAndContent(content) {
-    if (!content) return { thinking: '', response: '', isThinking: false };
+  parseThinkingAndContent(m) {
+    if (!m) return { thinking: '', response: '', isThinking: false };
     
+    // 1. If the message already has reasoning_content populated during streaming
+    if (m.thinking !== undefined) {
+      return { 
+        thinking: m.thinking, 
+        response: m.content || '', 
+        isThinking: m.isThinking || false 
+      };
+    }
+    
+    // 2. Fallback to parsing inline <think> tags for backward compatibility or loaded history
+    const content = m.content || '';
     const thinkStart = content.indexOf('<think>');
     const thinkEnd = content.indexOf('</think>');
     
@@ -393,6 +404,11 @@ export class ChatTab extends LitElement {
       if (container) {
         container.scrollTop = container.scrollHeight;
       }
+      // Auto-scroll any active thinking content boxes
+      const thinkingBoxes = this.shadowRoot.querySelectorAll('.thinking-content');
+      thinkingBoxes.forEach(box => {
+        box.scrollTop = box.scrollHeight;
+      });
     }, 50);
   }
 
@@ -422,7 +438,7 @@ export class ChatTab extends LitElement {
 
     // Create assistant message placeholder
     const assistantMessageIndex = this.messages.length;
-    this.messages = [...this.messages, { role: 'assistant', content: '', done: false }];
+    this.messages = [...this.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false }];
 
     try {
       const response = await fetch('/api/chat/completions', {
@@ -444,6 +460,8 @@ export class ChatTab extends LitElement {
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let assistantText = '';
+      let assistantReasoning = '';
+      let isThinking = false;
       let buffer = '';
 
       while (true) {
@@ -470,15 +488,24 @@ export class ChatTab extends LitElement {
               
               // 1. OpenAI Chat Completion format: choice delta
               const deltaContent = parsed.choices?.[0]?.delta?.content || '';
+              const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content || '';
               // 2. OpenAI Completion format: choice text
               const textContent = parsed.choices?.[0]?.text || '';
               // 3. Llama.cpp native completion format: content
               const nativeContent = parsed.content || '';
               
-              const newText = deltaContent || textContent || nativeContent;
-              if (newText) {
-                assistantText += newText;
-                this.updateAssistantMessage(assistantMessageIndex, assistantText);
+              if (deltaReasoning) {
+                assistantReasoning += deltaReasoning;
+                isThinking = true;
+                this.updateAssistantMessage(assistantMessageIndex, assistantText, assistantReasoning, isThinking, false);
+              } else {
+                const newText = deltaContent || textContent || nativeContent;
+                if (newText) {
+                  assistantText += newText;
+                  // Once standard output starts, if we were thinking, complete the thinking block
+                  isThinking = false;
+                  this.updateAssistantMessage(assistantMessageIndex, assistantText, assistantReasoning, isThinking, false);
+                }
               }
 
               // Extract timings metadata if available (usually at final chunk)
@@ -494,12 +521,14 @@ export class ChatTab extends LitElement {
       }
 
       // Finish generation
-      this.updateAssistantMessage(assistantMessageIndex, assistantText, true);
+      this.updateAssistantMessage(assistantMessageIndex, assistantText, assistantReasoning, false, true);
 
     } catch (e) {
       this.updateAssistantMessage(
         assistantMessageIndex, 
         `Error: Failed to fetch completion stream (${e.message}). Please ensure model is loaded.`, 
+        '',
+        false,
         true
       );
     } finally {
@@ -507,10 +536,10 @@ export class ChatTab extends LitElement {
     }
   }
 
-  updateAssistantMessage(index, content, done = false) {
+  updateAssistantMessage(index, content, thinking = '', isThinking = false, done = false) {
     const updated = [...this.messages];
     if (updated[index]) {
-      updated[index] = { ...updated[index], content, done };
+      updated[index] = { ...updated[index], content, thinking, isThinking, done };
       this.messages = updated;
     }
   }
@@ -814,9 +843,9 @@ export class ChatTab extends LitElement {
           <div class="message ${m.role}">
             <div class="bubble">
               ${m.role === 'assistant' 
-                ? html`${m.content ? html`
+                ? html`${m.content || m.thinking ? html`
                     ${(() => {
-                      const { thinking, response, isThinking } = this.parseThinkingAndContent(m.content);
+                      const { thinking, response, isThinking } = this.parseThinkingAndContent(m);
                       return html`
                         ${isThinking ? html`
                           <div class="thinking-box">
