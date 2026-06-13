@@ -687,7 +687,7 @@ async def log_monitor_task():
                         model_name = os.path.basename(loaded_model)
                 except Exception:
                     pass
-                broadcast_notification(f"🎉 {model_name} loaded successfully!")
+                broadcast_notification(f"🎉 {model_name} loaded and ready!")
         except Exception as e:
             print(f"[Log Monitor] Task encountered unexpected error: {e}")
 
