@@ -433,16 +433,8 @@ def delete_model(filename: str):
     # Also clean up models.ini configuration
     _remove_from_models_ini(filename)
     
-    # Prune from SQLite Database to keep system in sync
-    try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        clean_id = _clean_model_id(filename)
-        cursor.execute("DELETE FROM models WHERE model_id = ?", (clean_id,))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"[Delete] Failed to prune {filename} from DB: {e}")
+    # Do NOT delete the model's row from SQLite - keep historical benchmark results intact
+    # Deleting a model file should preserve test runs, scores, and hallucinations for audit purposes
         
     return {"detail": f"Deleted {filename} and updated models.ini"}
 
@@ -2483,6 +2475,7 @@ def parse_judge_json(raw_text: str) -> dict:
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
     url = f"{get_llm_server_url()}/v1/chat/completions"
     preset_id = await _get_preset_id_for_model(judge_model)
+    log_benchmark_progress(f"Grading round using Judge model: {preset_id}...")
     payload = {
         "model": preset_id,
         "messages": [
@@ -2496,6 +2489,7 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         response = await client.post(url, json=payload)
         response.raise_for_status()
         res_data = response.json()
+        log_benchmark_progress(f"Grading round completed for Judge model: {preset_id}")
         return res_data["choices"][0]["message"]["content"]
 
 
@@ -2628,6 +2622,7 @@ You must return a JSON object exactly matching this structure (do not output any
 }}"""
             
             print(f"Grading round: {gold_key} using judge {judge_model}...")
+            log_benchmark_progress(f"Grading round: {gold_key} using judge {preset_id or judge_model}")
             try:
                 judge_response = await query_judge_model(judge_model, system_prompt, user_prompt)
                 grades = parse_judge_json(judge_response)
@@ -2654,6 +2649,7 @@ You must return a JSON object exactly matching this structure (do not output any
                     })
             except Exception as grading_err:
                 print(f"Failed to grade round {gold_key}: {grading_err}")
+                log_benchmark_progress(f"Grading round failed for {gold_key}: {str(grading_err)}")
                 # Fallback to zero points on failure to avoid blocking
                 graded_rounds.append({
                     "round_name": gold_key,
@@ -2706,7 +2702,8 @@ You must return a JSON object exactly matching this structure (do not output any
             INSERT INTO model_hallucinations (model_id, round_name, description, severity)
             VALUES (?, ?, ?, 'warning')
             """, (model_id, h["round_name"], h["description"]))
-            
+        
+        log_benchmark_progress(f"All {len(graded_rounds)} qualitative rounds graded. Hallucinations: {len(hallucinations)}")
         conn.commit()
         conn.close()
         
@@ -2720,6 +2717,7 @@ You must return a JSON object exactly matching this structure (do not output any
             "hallucinations_detected": len(hallucinations)
         }
     except Exception as e:
+        log_benchmark_progress(f"Judge grading error for model {model_id}: {e}")
         print(f"Error in judge_benchmark: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

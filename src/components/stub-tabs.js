@@ -768,6 +768,20 @@ export class MoreTab extends LitElement {
     this.stopBenchmarkPolling();
   }
 
+  updated(changedProperties) {
+    if (changedProperties.has('benchmarkProgress')) {
+      const oldLogs = changedProperties.get('benchmarkProgress')?.logs || [];
+      const newLogs = this.benchmarkProgress?.logs || [];
+      // Auto-scroll the Live Runner Logs when new log entries appear
+      if (newLogs.length > oldLogs.length) {
+        requestAnimationFrame(() => {
+          const terminal = this.shadowRoot.querySelector('#benchmark-terminal');
+          if (terminal) terminal.scrollTop = terminal.scrollHeight;
+        });
+      }
+    }
+  }
+
   // --- Downloader Logic ---
   startDownloadPolling() {
     this.pollDownloads();
