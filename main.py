@@ -1907,11 +1907,85 @@ _benchmark_progress = {
     "queue_current_index": 0
 }
 
+# Persistent benchmark log file path
+BENCHMARK_LOG_DIR = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
+BENCHMARK_EXECUTION_LOG = os.path.join(BENCHMARK_LOG_DIR, "benchmark_execution.log")
+
+_log_rotation_lock = threading.Lock()
+
+def _rotate_benchmark_log_if_needed():
+    """Keep the benchmark execution log under ~10MB by rotating it."""
+    try:
+        with _log_rotation_lock:
+            if os.path.exists(BENCHMARK_EXECUTION_LOG):
+                size = os.path.getsize(BENCHMARK_EXECUTION_LOG)
+                max_size = 10 * 1024 * 1024  # 10 MB
+                if size > max_size:
+                    ts = time.strftime("%Y%m%d_%H%M%S")
+                    rotated_name = BENCHMARK_EXECUTION_LOG.replace(
+                        ".log", f"_{ts}.bak"
+                    )
+                    shutil.move(BENCHMARK_EXECUTION_LOG, rotated_name)
+    except Exception:
+        pass  # best-effort rotation
+
+
 def log_benchmark_progress(msg: str):
     print(msg)
     _benchmark_progress["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
     if len(_benchmark_progress["logs"]) > 200:
         _benchmark_progress["logs"].pop(0)
+
+    # Also write to persistent log file (best-effort, never fail the app for this)
+    try:
+        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
+        _rotate_benchmark_log_if_needed()
+        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+
+def log_benchmark_error(msg: str):
+    """Write an error-level benchmark log with full traceback."""
+    import traceback as _tb
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] ERROR: {msg}"
+    print(line)
+    
+    try:
+        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
+        _rotate_benchmark_log_if_needed()
+        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{line}\n")
+            tb_lines = traceback.format_exc().split("\n")
+            # Skip the last line (it's just the exception name, already in 'msg')
+            if len(tb_lines) > 1 and tb_lines[-1].strip() == "":
+                f.write(f"Traceback:\n")
+                for l in tb_lines[:-1]:
+                    f.write(f"  {l}\n")
+            else:
+                for l in tb_lines:
+                    if l.strip():
+                        f.write(f"  {l}\n")
+    except Exception:
+        pass
+
+
+def log_benchmark(msg: str):
+    """Write a benchmark progress message to both console and persistent file."""
+    print(msg)
+    _benchmark_progress["logs"] = getattr(_benchmark_progress, "logs", [])  # ensure backwards compat
+    if isinstance(_benchmark_progress.get("logs"), list) and len(_benchmark_progress["logs"]) < 200:
+        _benchmark_progress["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+    try:
+        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
+        _rotate_benchmark_log_if_needed()
+        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
 
 
 class BenchmarkRunRequest(BaseModel):
@@ -1927,7 +2001,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     _benchmark_progress["rounds_completed"] = 0
     _benchmark_progress["logs"] = []
     
-    log_benchmark_progress(f"Starting benchmark sequence for model: {model_id}")
+    log_benchmark(f"Starting benchmark sequence for model: {model_id}")
     
     prompts = {
         "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
@@ -1948,7 +2022,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         async with httpx.AsyncClient(timeout=600.0) as client:
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
-                log_benchmark_progress(f"Executing {round_name}...")
+                log_benchmark(f"Executing {round_name}...")
                 
                 preset_id = await _get_preset_id_for_model(model_id)
                 payload = {
@@ -1980,7 +2054,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                         if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                             speed_tps = tokens_predicted / duration
                             
-                        log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                        log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
                         
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
@@ -1993,13 +2067,14 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                             }
                         })
                     else:
-                        log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
+                        log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
                             "error": f"HTTP status {response.status_code}"
                         })
                 except Exception as round_err:
-                    log_benchmark_progress(f"Exception in {round_name}: {round_err}")
+                    tb = traceback.format_exc()
+                    log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
                     rounds_list.append({
                         "round_name": get_gold_key(round_name) or round_name,
                         "error": str(round_err)
@@ -2008,7 +2083,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 _benchmark_progress["rounds_completed"] = idx
                 
                 if idx < len(prompts):
-                    log_benchmark_progress("Cooling down for 10 seconds to prevent VRAM locks...")
+                    log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
                     await asyncio.sleep(10)
                     
         # Compile and save JSON
@@ -2026,19 +2101,23 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         with open(raw_output_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=4, ensure_ascii=False)
             
-        log_benchmark_progress(f"Saved raw results to {raw_output_path}")
+        log_benchmark(f"Saved raw results to {raw_output_path}")
         
         # Trigger judge
-        log_benchmark_progress("Starting AI Judge grading sequence...")
+        log_benchmark("Starting AI Judge grading sequence...")
         _benchmark_progress["current_round"] = "AI Judge Grading..."
         
         req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
-        judge_res = await judge_benchmark(req)
-        
-        log_benchmark_progress("AI Judge grading sequence completed successfully!")
+        try:
+            await judge_benchmark(req)
+            log_benchmark("AI Judge grading sequence completed successfully!")
+        except Exception as j_err:
+            tb = traceback.format_exc()
+            log_benchmark_error(f"Judge grading failed: {j_err}")
         
     except Exception as run_err:
-        log_benchmark_progress(f"Benchmark run failed: {run_err}")
+        tb = traceback.format_exc()
+        log_benchmark_error(f"Model: {model_id}, Benchmark failed: {run_err}")
         try:
             conn = get_db_conn()
             cursor = conn.cursor()
@@ -2052,7 +2131,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             conn.commit()
             conn.close()
         except Exception as db_err:
-            log_benchmark_progress(f"Failed to record failure in DB: {db_err}")
+            log_benchmark_error(f"Model: {model_id}, Failed to record failure in DB: {db_err}")
     finally:
         async with _benchmark_lock:
             global _benchmark_running
@@ -2076,16 +2155,16 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
     _benchmark_progress["queue_current_index"] = 0
     _benchmark_progress["logs"] = []
     
-    log_benchmark_progress(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
+    log_benchmark(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
     
     try:
         for idx, model_id in enumerate(models):
             _benchmark_progress["queue_current_index"] = idx
-            log_benchmark_progress(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
+            log_benchmark(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
             
             # 1. Load the test model via the server API
             preset_id = await _get_preset_id_for_model(model_id)
-            log_benchmark_progress(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
+            log_benchmark(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
                     load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
@@ -2094,19 +2173,22 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                             res_json = load_res.json()
                             error_msg = res_json.get("error", {}).get("message", "")
                             if "already running" in error_msg or "already loaded" in error_msg:
-                                log_benchmark_progress(f"Queue: {model_id} is already loaded and running.")
+                                log_benchmark(f"Queue: {model_id} is already loaded and running.")
                             else:
-                                log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}: {error_msg}")
+                                tb = traceback.format_exc()
+                                log_benchmark_error(f"Model: {model_id}, Server returned {load_res.status_code}: {error_msg}")
                                 continue
-                        except Exception:
-                            log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} while loading {model_id}")
+                        except Exception as e:
+                            tb = traceback.format_exc()
+                            log_benchmark_error(f"Model: {model_id}, Server HTTP error {load_res.status_code}")
                             continue
                 except Exception as e:
-                    log_benchmark_progress(f"Queue Error: Exception loading {model_id}: {e}")
+                    tb = traceback.format_exc()
+                    log_benchmark_error(f"Model: {model_id}, Exception loading: {e}")
                     continue
             
             # 2. Wait for model to load successfully
-            log_benchmark_progress(f"Queue: Waiting for {model_id} to load...")
+            log_benchmark(f"Queue: Waiting for {model_id} to load...")
             loaded = False
             for _ in range(60): # wait up to 120 seconds
                 await asyncio.sleep(2)
@@ -2116,10 +2198,10 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     break
             
             if not loaded:
-                log_benchmark_progress(f"Queue Error: Timeout loading model {model_id}. Skipping.")
+                log_benchmark_error(f"Model: {model_id}, Timeout loading model")
                 continue
                 
-            log_benchmark_progress(f"Queue: Success! {model_id} loaded. Running benchmark...")
+            log_benchmark(f"Queue: Success! {model_id} loaded. Running benchmark...")
             
             # 3. Create run_id and run the benchmark rounds on the test model
             run_id = str(uuid.uuid4())
@@ -2158,7 +2240,8 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                 # Use normalized id going forward so judge grading matches the DB record
                 model_id = norm_model_id
             except Exception as db_err:
-                log_benchmark_progress(f"Queue DB Error: {db_err}")
+                tb = traceback.format_exc()
+                log_benchmark_error(f"Model: {model_id}, Queue DB Error: {db_err}")
                 continue
                 
             prompts = {
@@ -2182,7 +2265,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     _benchmark_progress["rounds_completed"] = r_idx - 1
                     
                     preset_id = await _get_preset_id_for_model(model_id)
-                    log_benchmark_progress(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
+                    log_benchmark(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
                     payload = {
                         "model": preset_id,
                         "messages": [{"role": "user", "content": prompt_text}],
@@ -2208,7 +2291,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                                 tokens_predicted = len(content) // 4
                             if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                                 speed_tps = tokens_predicted / duration
-                            log_benchmark_progress(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                            log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
                             
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
@@ -2221,13 +2304,14 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                                 }
                             })
                         else:
-                            log_benchmark_progress(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
+                            log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
                                 "error": f"HTTP status {response.status_code}"
                             })
                     except Exception as round_err:
-                        log_benchmark_progress(f"Exception in {round_name}: {round_err}")
+                        tb = traceback.format_exc()
+                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
                             "error": str(round_err)
@@ -2235,7 +2319,7 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     
                     _benchmark_progress["rounds_completed"] = r_idx
                     if r_idx < len(prompts):
-                        log_benchmark_progress("Cooling down for 10 seconds to prevent VRAM locks...")
+                        log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
                         await asyncio.sleep(10)
                         
             # Save raw JSON results
@@ -2248,11 +2332,11 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
             os.makedirs(out_dir, exist_ok=True)
             with open(raw_output_path, "w", encoding="utf-8") as f:
                 json.dump(results, f, indent=4, ensure_ascii=False)
-            log_benchmark_progress(f"Saved raw test results.")
+            log_benchmark("Saved raw test results.")
             
             # 4. Switch to Judge Model for evaluation
             preset_id = await _get_preset_id_for_model(judge_model_id)
-            log_benchmark_progress(f"Queue: Requesting server to load Judge model: {judge_model_id} (preset: {preset_id})")
+            log_benchmark(f"Queue: Requesting server to load Judge model: {judge_model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
                     load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
@@ -2261,19 +2345,22 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                             res_json = load_res.json()
                             error_msg = res_json.get("error", {}).get("message", "")
                             if "already running" in error_msg or "already loaded" in error_msg:
-                                log_benchmark_progress(f"Queue: Judge model {judge_model_id} is already loaded and running.")
+                                log_benchmark(f"Queue: Judge model {judge_model_id} is already loaded and running.")
                             else:
-                                log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model: {error_msg}")
+                                tb = traceback.format_exc()
+                                log_benchmark_error(f"Judge: Server returned {load_res.status_code}: {error_msg}")
                                 continue
-                        except Exception:
-                            log_benchmark_progress(f"Queue Error: Server returned {load_res.status_code} loading Judge model")
+                        except Exception as e:
+                            tb = traceback.format_exc()
+                            log_benchmark_error(f"Judge: HTTP error {load_res.status_code}")
                             continue
                 except Exception as e:
-                    log_benchmark_progress(f"Queue Error: Exception loading Judge: {e}")
+                    tb = traceback.format_exc()
+                    log_benchmark_error(f"Judge: Exception loading: {e}")
                     continue
                     
             # Wait for Judge model to load
-            log_benchmark_progress(f"Queue: Waiting for Judge model to load...")
+            log_benchmark(f"Queue: Waiting for Judge model to load...")
             judge_loaded = False
             for _ in range(60):
                 await asyncio.sleep(2)
@@ -2283,29 +2370,31 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                     break
             
             if not judge_loaded:
-                log_benchmark_progress(f"Queue Error: Timeout loading Judge model {judge_model_id}. Skipping grading.")
+                log_benchmark_error(f"Judge: Timeout loading model {judge_model_id}")
                 continue
                 
             # 5. Execute AI Judge evaluation
-            log_benchmark_progress("Queue: Starting AI Judge grading sequence...")
+            log_benchmark("Queue: Starting AI Judge grading sequence...")
             _benchmark_progress["current_round"] = "AI Judge Grading..."
             try:
                 req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
                 await judge_benchmark(req)
-                log_benchmark_progress(f"Queue: AI Judge grading completed successfully for {model_id}!")
+                log_benchmark(f"Queue: AI Judge grading completed successfully for {model_id}!")
                 _benchmark_progress["queue_completed"].append(model_id)
             except Exception as judge_err:
-                log_benchmark_progress(f"Queue Judge Error: {judge_err}")
+                tb = traceback.format_exc()
+                log_benchmark_error(f"Judge: Grading failed for model {model_id}: {judge_err}")
                 
             # Wait 10s cooldown between models
             if idx < len(models) - 1:
-                log_benchmark_progress("Cooling down 10 seconds before next model in queue...")
+                log_benchmark("Cooling down 10 seconds before next model in queue...")
                 await asyncio.sleep(10)
-                
-        log_benchmark_progress("--- Automated Benchmark Queue Completed Successfully! ---")
+        
+        log_benchmark("--- Automated Benchmark Queue Completed Successfully! ---")
         
     except Exception as queue_err:
-        log_benchmark_progress(f"Queue execution failed: {queue_err}")
+        tb = traceback.format_exc()
+        log_benchmark_error(f"Benchmark queue execution failed: {queue_err}")
     finally:
         async with _benchmark_lock:
             _benchmark_running = False
@@ -2410,6 +2499,47 @@ def get_benchmark_status():
     return _benchmark_progress
 
 
+@app.get("/api/benchmarks/logs")
+def get_benchmark_logs(lines: int = 200):
+    """Return the persistent benchmark execution log file."""
+    try:
+        if not os.path.exists(BENCHMARK_EXECUTION_LOG):
+            return {"logs": ""}
+        with open(BENCHMARK_EXECUTION_LOG, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+        # Return last N lines
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {"logs": "".join(tail)}
+    except Exception as e:
+        print(f"[Logs] Error reading benchmark log file: {e}")
+        return {"logs": f"Error: {str(e)}"}
+
+
+@app.get("/api/benchmarks/outputs")
+def get_benchmark_outputs():
+    """List all saved raw JSON output files and the execution log."""
+    try:
+        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
+        outputs = []
+        for f_name in sorted(os.listdir(BENCHMARK_LOG_DIR)):
+            full_path = os.path.join(BENCHMARK_LOG_DIR, f_name)
+            if not os.path.isfile(full_path):
+                continue
+            stat_info = os.stat(full_path)
+            # Skip the execution log itself from this listing
+            if f_name == "benchmark_execution.log":
+                continue
+            outputs.append({
+                "filename": f_name,
+                "size_bytes": stat_info.st_size,
+                "modified_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(stat_info.st_mtime)),
+            })
+        return {"outputs": outputs}
+    except Exception as e:
+        print(f"[Outputs] Error listing benchmark outputs: {e}")
+        return {"outputs": [], "error": str(e) + ": " + traceback.format_exc() if 'traceback' in dir(__builtins__) else str(e)}
+
+
 class JudgeRequest(BaseModel):
     run_id: Optional[str] = None
     judge_model_id: Optional[str] = None
@@ -2475,7 +2605,7 @@ def parse_judge_json(raw_text: str) -> dict:
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
     url = f"{get_llm_server_url()}/v1/chat/completions"
     preset_id = await _get_preset_id_for_model(judge_model)
-    log_benchmark_progress(f"Grading round using Judge model: {preset_id}...")
+    log_benchmark(f"Grading round using Judge model: {preset_id}...")
     payload = {
         "model": preset_id,
         "messages": [
@@ -2489,7 +2619,7 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         response = await client.post(url, json=payload)
         response.raise_for_status()
         res_data = response.json()
-        log_benchmark_progress(f"Grading round completed for Judge model: {preset_id}")
+        log_benchmark(f"Grading round completed for Judge model: {preset_id}")
         return res_data["choices"][0]["message"]["content"]
 
 
@@ -2622,7 +2752,7 @@ You must return a JSON object exactly matching this structure (do not output any
 }}"""
             
             print(f"Grading round: {gold_key} using judge {judge_model}...")
-            log_benchmark_progress(f"Grading round: {gold_key} using judge {judge_model}")
+            log_benchmark(f"Grading round: {gold_key} using judge {judge_model}")
             try:
                 judge_response = await query_judge_model(judge_model, system_prompt, user_prompt)
                 grades = parse_judge_json(judge_response)
@@ -2648,8 +2778,9 @@ You must return a JSON object exactly matching this structure (do not output any
                         "description": hallucination_desc
                     })
             except Exception as grading_err:
+                tb = traceback.format_exc()
                 print(f"Failed to grade round {gold_key}: {grading_err}")
-                log_benchmark_progress(f"Grading round failed for {gold_key}: {str(grading_err)}")
+                log_benchmark_error(f"Judge: Grading failed for round {gold_key}: {str(grading_err)}")
                 # Fallback to zero points on failure to avoid blocking
                 graded_rounds.append({
                     "round_name": gold_key,
@@ -2703,7 +2834,7 @@ You must return a JSON object exactly matching this structure (do not output any
             VALUES (?, ?, ?, 'warning')
             """, (model_id, h["round_name"], h["description"]))
         
-        log_benchmark_progress(f"All {len(graded_rounds)} qualitative rounds graded. Hallucinations: {len(hallucinations)}")
+        log_benchmark(f"All {len(graded_rounds)} qualitative rounds graded. Hallucinations: {len(hallucinations)}")
         conn.commit()
         conn.close()
         
@@ -2717,7 +2848,8 @@ You must return a JSON object exactly matching this structure (do not output any
             "hallucinations_detected": len(hallucinations)
         }
     except Exception as e:
-        log_benchmark_progress(f"Judge grading error for model {model_id}: {e}")
+        tb = traceback.format_exc()
+        log_benchmark_error(f"Judge grading error for model {model_id}: {e}")
         print(f"Error in judge_benchmark: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -38,6 +38,11 @@ export class MoreTab extends LitElement {
     logsLoading: { type: Boolean },
     logLimit: { type: Number },
     confirmAction: { type: String }, // 'start', 'stop', null
+    
+    // Benchmark execution logs state
+    benchmarkLogsText: { type: String },
+    benchmarkLogsLoading: { type: Boolean },
+    benchmarkLogLimit: { type: Number },
 
     // Benchmark details modal
     selectedBenchmarkDetails: { type: Object },
@@ -589,6 +594,12 @@ export class MoreTab extends LitElement {
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-all;
+    }
+
+    .benchmark-logs-terminal {
+      background: rgba(99, 102, 241, 0.03);
+      border-color: var(--primary-glow);
+      color: #a5b4fc;
     }
 
     /* Confirmation Modal */
@@ -1235,6 +1246,34 @@ export class MoreTab extends LitElement {
     this.fetchLogs();
   }
 
+  async fetchBenchmarkLogs() {
+    this.benchmarkLogsLoading = true;
+    this.benchmarkLogsText = 'Fetching benchmark logs...';
+    try {
+      const res = await fetch(`/api/benchmarks/logs?lines=${this.benchmarkLogLimit}`);
+      if (res.ok) {
+        const data = await res.json();
+        this.benchmarkLogsText = data.logs || '';
+        // Auto-scroll the terminal block
+        setTimeout(() => {
+          const terminal = this.shadowRoot?.querySelector('.benchmark-logs-terminal');
+          if (terminal) terminal.scrollTop = terminal.scrollHeight;
+        }, 100);
+      } else {
+        this.benchmarkLogsText = 'Failed to fetch benchmark logs.';
+      }
+    } catch (err) {
+      this.benchmarkLogsText = `Error: ${err.message}`;
+    } finally {
+      this.benchmarkLogsLoading = false;
+    }
+  }
+
+  handleBenchmarkLogLimitChange(e) {
+    this.benchmarkLogLimit = parseInt(e.target.value);
+    this.fetchBenchmarkLogs();
+  }
+
   // --- Renders ---
   renderDownloaderView() {
     return html`
@@ -1735,6 +1774,29 @@ export class MoreTab extends LitElement {
           </div>
 
           <div class="logs-terminal">${this.logsText || 'Click refresh to pull container logs...'}</div>
+        </div>
+
+        <!-- Benchmark Execution Logs -->
+        <div class="card">
+          <h2>📋 Benchmark Execution Logs</h2>
+          <span class="card-subtitle">Persistent, timestamped log of benchmark runs including errors and stack traces.</span>
+
+          <div style="display: flex; gap: 8px; align-items: center; justify-content: space-between;">
+            <div style="display: flex; gap: 6px; align-items: center; font-size: 0.8rem;">
+              <span>Lines:</span>
+              <select class="select-input" style="padding: 4px 8px;" .value="${this.benchmarkLogLimit.toString()}" @change="${this.handleBenchmarkLogLimitChange}">
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </div>
+            <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${this.fetchBenchmarkLogs}" ?disabled="${this.benchmarkLogsLoading}">
+              ${this.benchmarkLogsLoading ? html`<span class="loader"></span>` : '⟳ Refresh Logs'}
+            </button>
+          </div>
+
+          <div class="logs-terminal benchmark-logs-terminal">${this.benchmarkLogsText || 'Click refresh to pull benchmark execution logs...'}</div>
         </div>
       </div>
     `;
