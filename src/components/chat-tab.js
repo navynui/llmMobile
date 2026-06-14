@@ -533,6 +533,7 @@ export class ChatTab extends LitElement {
       );
     } finally {
       this.isGenerating = false;
+      this.shadowRoot.querySelector('textarea')?.focus();
     }
   }
 
