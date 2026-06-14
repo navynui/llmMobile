@@ -2700,7 +2700,7 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         "temperature": 0.1,
         "stream": False
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         response = await client.post(url, json=payload)
         response.raise_for_status()
         res_data = response.json()
