@@ -69,12 +69,17 @@ To prevent orphaned scores and hallucinations, any new benchmark run or import f
 * Rely on foreign key cascading constraints (`ON DELETE CASCADE` on `round_scores` and `model_hallucinations`) to automatically prune related tables.
 * Execute database updates in a clean, committed transaction.
 
-### 4. GPU Cooldown Protection
+### 4. Empty Response Retry Logic
+If a model returns an empty response (typically hitting its token limit during long-form reasoning), the system retries the same prompt up to **3 times** with a 5-second pause between attempts in both `run_benchmark_task` and `run_benchmark_queue_task`.
+* Server errors (non-200 HTTP responses) are **not retried** — they result in an error entry like `{"error": "Server error (non-200 response), no content"}` instead of empty strings.
+* After exhausting retries, the round is saved with `"error": "Empty response after 3 retries"` to prevent silent empty-string scoring by the AI Judge.
+
+### 5. GPU Cooldown Protection
 Evaluating LLMs or swapping models on a single GPU can trigger cascading VRAM locks or memory segmentation faults if requests hit the server too fast.
 * Always maintain a **10-second cooldown** (`await asyncio.sleep(10)`) between qualitative rounds and between test models in a queue.
 * This allows the driver to release allocated memory handlers and prevents server locks.
 
-### 5. Docker Rebuilds are Required for Code Updates
+### 6. Docker Rebuilds are Required for Code Updates
 The `llm-mobile` container is built using a multi-stage Docker image where Vite pre-builds the static bundle and Python copies the workspace.
 * Changes in `main.py` or `src/` are **not** fully hot-reloaded inside the production Docker stack automatically.
 * To apply code changes, navigate to the compose directory `/home/nui/llmaCPP` and execute:
@@ -82,6 +87,10 @@ The `llm-mobile` container is built using a multi-stage Docker image where Vite 
   docker compose build llm-mobile
   docker compose up -d --no-deps llm-mobile
   ```
+
+### 7. `traceback` Must Be Imported at Module Top
+The `traceback` module **must** be imported at the top of `main.py`. If it is missing, any secondary error handler (e.g., during exception re-raising or logging) will fail with `NameError: name 'traceback' is not defined`, causing cascading failures that mask the real underlying issue.
+* Always verify `import traceback` exists on line 12 of `main.py`. If it's missing, error traces inside `except` blocks are swallowed.
 
 ---
 

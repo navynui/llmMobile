@@ -9,6 +9,7 @@ import asyncio
 import datetime
 import subprocess
 import threading
+import traceback
 import urllib.parse
 import psutil
 import docker
@@ -2034,13 +2035,15 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 }
                 
                 start_time = time.time()
-                try:
-                    response = await client.post(api_url, json=payload)
-                    duration = time.time() - start_time
-                    
+                content = ""
+                tokens_predicted = 0
+                speed_tps = 0.0
+                duration = 0.0
+                
+                def _parse_response(response):
+                    nonlocal content, tokens_predicted, speed_tps, duration
                     if response.status_code == 200:
                         res_data = response.json()
-                        # Chat completions response structure
                         choice = res_data.get("choices", [{}])[0]
                         content = choice.get("message", {}).get("content", "")
                         usage = res_data.get("usage", {})
@@ -2053,31 +2056,74 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                         
                         if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                             speed_tps = tokens_predicted / duration
-                            
-                        log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
-                        
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "prompt": prompt_text,
-                            "response": content,
-                            "metrics": {
-                                "duration_seconds": round(duration, 2),
-                                "tokens_generated": tokens_predicted,
-                                "tokens_per_second": round(speed_tps, 2)
-                            }
-                        })
                     else:
                         log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "error": f"HTTP status {response.status_code}"
-                        })
+                
+                # Track whether we got a server error (non-200) so retries don't loop on persistent errors
+                has_server_error = False
+                try:
+                    response = await client.post(api_url, json=payload)
+                    _parse_response(response)
+                    if response.status_code != 200:
+                        content = ""  # Mark as empty for retry logic
+                        has_server_error = True
                 except Exception as round_err:
                     tb = traceback.format_exc()
                     log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
+                    content = ""
+                    has_server_error = True
+                
+                # Retry if content is empty (model hit token limit while thinking).
+                # Skip retries on server errors since they won't help.
+                retry_count = 0
+                max_retries = 3
+                while not content and retry_count < max_retries and not has_server_error:
+                    retry_count += 1
+                    log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
+                    await asyncio.sleep(5)  # brief pause before retry
+                    try:
+                        start_time = time.time()
+                        response = await client.post(api_url, json=payload)
+                        _parse_response(response)
+                        if not content and response.status_code == 200 and tokens_predicted > 0:
+                            log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
+                    except Exception as retry_err:
+                        tb = traceback.format_exc()
+                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                
+                # Determine final outcome
+                if not content and has_server_error:
+                    # Don't retry on persistent server errors (retries won't help)
+                    log_benchmark(f"{round_name}: Server error — no retries")
                     rounds_list.append({
                         "round_name": get_gold_key(round_name) or round_name,
-                        "error": str(round_err)
+                        "error": f"Server error (non-200 response), no content"
+                    })
+                elif not content and retry_count >= max_retries:
+                    # Exhausted all retries with empty responses
+                    log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                    rounds_list.append({
+                        "round_name": get_gold_key(round_name) or round_name,
+                        "error": f"Empty response after {max_retries} retries"
+                    })
+                elif not content and retry_count >= max_retries:
+                    log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                    rounds_list.append({
+                        "round_name": get_gold_key(round_name) or round_name,
+                        "error": f"Empty response after {max_retries} retries"
+                    })
+                elif content:
+                    duration = time.time() - start_time
+                    log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                    rounds_list.append({
+                        "round_name": get_gold_key(round_name) or round_name,
+                        "prompt": prompt_text,
+                        "response": content,
+                        "metrics": {
+                            "duration_seconds": round(duration, 2),
+                            "tokens_generated": tokens_predicted,
+                            "tokens_per_second": round(speed_tps, 2)
+                        }
                     })
                 
                 _benchmark_progress["rounds_completed"] = idx
@@ -2274,12 +2320,15 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                         "max_tokens": 4096
                     }
                     start_time = time.time()
-                    try:
-                        response = await client.post(api_url, json=payload)
-                        duration = time.time() - start_time
+                    content = ""
+                    tokens_predicted = 0
+                    speed_tps = 0.0
+                    duration = 0.0
+                    
+                    def _parse_response(response):
+                        nonlocal content, tokens_predicted, speed_tps, duration
                         if response.status_code == 200:
                             res_data = response.json()
-                            # Chat completions response structure
                             choice = res_data.get("choices", [{}])[0]
                             content = choice.get("message", {}).get("content", "")
                             usage = res_data.get("usage", {})
@@ -2291,30 +2340,66 @@ async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
                                 tokens_predicted = len(content) // 4
                             if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
                                 speed_tps = tokens_predicted / duration
-                            log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
-                            
-                            rounds_list.append({
-                                "round_name": get_gold_key(round_name) or round_name,
-                                "prompt": prompt_text,
-                                "response": content,
-                                "metrics": {
-                                    "duration_seconds": round(duration, 2),
-                                    "tokens_generated": tokens_predicted,
-                                    "tokens_per_second": round(speed_tps, 2)
-                                }
-                            })
                         else:
                             log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
-                            rounds_list.append({
-                                "round_name": get_gold_key(round_name) or round_name,
-                                "error": f"HTTP status {response.status_code}"
-                            })
+                    
+                    # Track whether we got a server error (non-200) so retries don't loop on persistent errors
+                    has_server_error = False
+                    try:
+                        response = await client.post(api_url, json=payload)
+                        _parse_response(response)
+                        if response.status_code != 200:
+                            content = ""
+                            has_server_error = True
                     except Exception as round_err:
                         tb = traceback.format_exc()
                         log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
+                        content = ""
+                        has_server_error = True
+                    
+                    # Retry if content is empty (model hit token limit while thinking).
+                    # Skip retries on server errors since they won't help.
+                    retry_count = 0
+                    max_retries = 3
+                    while not content and retry_count < max_retries and not has_server_error:
+                        retry_count += 1
+                        log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
+                        await asyncio.sleep(5)  # brief pause before retry
+                        try:
+                            start_time = time.time()
+                            response = await client.post(api_url, json=payload)
+                            _parse_response(response)
+                            if not content and response.status_code == 200 and tokens_predicted > 0:
+                                log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
+                        except Exception as retry_err:
+                            tb = traceback.format_exc()
+                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                    
+                    # Determine final outcome
+                    if not content and has_server_error:
+                        log_benchmark(f"{round_name}: Server error — no retries")
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
-                            "error": str(round_err)
+                            "error": f"Server error (non-200 response), no content"
+                        })
+                    elif not content and retry_count >= max_retries:
+                        log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "error": f"Empty response after {max_retries} retries"
+                        })
+                    elif content:
+                        duration = time.time() - start_time
+                        log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "prompt": prompt_text,
+                            "response": content,
+                            "metrics": {
+                                "duration_seconds": round(duration, 2),
+                                "tokens_generated": tokens_predicted,
+                                "tokens_per_second": round(speed_tps, 2)
+                            }
                         })
                     
                     _benchmark_progress["rounds_completed"] = r_idx
