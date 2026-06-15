@@ -756,6 +756,9 @@ export class MoreTab extends LitElement {
     this.logsText = '';
     this.logsLoading = false;
     this.logLimit = 50;
+    this.benchmarkLogLimit = 100;
+    this.benchmarkLogsText = '';
+    this.benchmarkLogsLoading = false;
     this.confirmAction = null;
 
     // Benchmark details modal state
@@ -1723,7 +1726,7 @@ export class MoreTab extends LitElement {
                 <span class="settings-label">Metrics Polling Interval</span>
                 <span class="settings-desc">Specify fallback polling duration when live SSE events drop.</span>
               </div>
-              <select class="select-input" .value="${this.pollingInterval.toString()}" @change="${this.handlePollingChange}">
+              <select class="select-input" .value="${(this.pollingInterval ?? '').toString()}" @change="${this.handlePollingChange}">
                 <option value="1">1 Second (Real-Time)</option>
                 <option value="2">2 Seconds (Default)</option>
                 <option value="5">5 Seconds (Balanced)</option>
@@ -1761,7 +1764,7 @@ export class MoreTab extends LitElement {
           <div style="display: flex; gap: 8px; align-items: center; justify-content: space-between;">
             <div style="display: flex; gap: 6px; align-items: center; font-size: 0.8rem;">
               <span>Lines:</span>
-              <select class="select-input" style="padding: 4px 8px;" .value="${this.logLimit.toString()}" @change="${this.handleLogLimitChange}">
+              <select class="select-input" style="padding: 4px 8px;" .value="${(this.logLimit ?? '').toString()}" @change="${this.handleLogLimitChange}">
                 <option value="20">20</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
@@ -1784,7 +1787,7 @@ export class MoreTab extends LitElement {
           <div style="display: flex; gap: 8px; align-items: center; justify-content: space-between;">
             <div style="display: flex; gap: 6px; align-items: center; font-size: 0.8rem;">
               <span>Lines:</span>
-              <select class="select-input" style="padding: 4px 8px;" .value="${this.benchmarkLogLimit.toString()}" @change="${this.handleBenchmarkLogLimitChange}">
+              <select class="select-input" style="padding: 4px 8px;" .value="${(this.benchmarkLogLimit ?? '').toString()}" @change="${this.handleBenchmarkLogLimitChange}">
                 <option value="50">50</option>
                 <option value="100">100</option>
                 <option value="200">200</option>
