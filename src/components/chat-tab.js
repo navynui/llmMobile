@@ -5,7 +5,8 @@ export class ChatTab extends LitElement {
     messages: { type: Array },
     inputActive: { type: Boolean },
     isGenerating: { type: Boolean },
-    metadata: { type: Object }
+    metadata: { type: Object },
+    visionCapable: { type: Boolean }
   };
 
   static styles = css`
@@ -82,7 +83,7 @@ export class ChatTab extends LitElement {
       color: var(--text-secondary);
       font-family: var(--font-sans);
     }
-    
+
     .thinking-header {
       display: flex;
       justify-content: space-between;
@@ -282,9 +283,31 @@ export class ChatTab extends LitElement {
       background: rgba(0, 0, 0, 0.3);
     }
 
+    /* Send image button (conditional) */
+    .send-image-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+      border: none;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      transition: var(--transition);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .send-image-btn:hover {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
     .send-btn {
-      width: 40px;
-      height: 40px;
+      width: 36px;
+      height: 36px;
       border-radius: var(--radius-full);
       background: var(--primary);
       color: #fff;
@@ -341,7 +364,8 @@ export class ChatTab extends LitElement {
     this.inputActive = false;
     this.isGenerating = false;
     this.metadata = null;
-    
+    this.visionCapable = false;
+
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');
     if (saved) {
@@ -351,25 +375,32 @@ export class ChatTab extends LitElement {
         this.messages = [];
       }
     }
+  
+    this.imageAttachment = null;
+    this.imageSent = false;
+  }
+
+  async firstUpdated() {
+    await this.checkVisionSupport();
   }
 
   parseThinkingAndContent(m) {
     if (!m) return { thinking: '', response: '', isThinking: false };
-    
+
     // 1. If the message already has reasoning_content populated during streaming
     if (m.thinking !== undefined) {
-      return { 
-        thinking: m.thinking, 
-        response: m.content || '', 
-        isThinking: m.isThinking || false 
+      return {
+        thinking: m.thinking,
+        response: m.content || '',
+        isThinking: m.isThinking || false
       };
     }
-    
+
     // 2. Fallback to parsing inline <think> tags for backward compatibility or loaded history
     const content = m.content || '';
     const thinkStart = content.indexOf('<think>');
     const thinkEnd = content.indexOf('</think>');
-    
+
     if (thinkStart !== -1) {
       if (thinkEnd !== -1) {
         // Thinking has completed
@@ -396,6 +427,11 @@ export class ChatTab extends LitElement {
       }
       localStorage.setItem('chat_history', JSON.stringify(this.messages));
     }
+    
+    // Check vision capability when metadata changes
+    if (changedProperties.has('metadata')) {
+      this.checkVisionSupport();
+    }
   }
 
   scrollToBottom() {
@@ -412,6 +448,94 @@ export class ChatTab extends LitElement {
     }, 50);
   }
 
+  /** Check vision support by identifying the currently loaded model */
+  async checkVisionSupport() {
+    try {
+      // 1. Find out which model is currently loaded on the server
+      const modelsResp = await fetch('/api/llm/models');
+      if (!modelsResp.ok) return;
+      const modelsData = await modelsResp.json();
+      
+      const loadedModel = modelsData.data?.find(m => 
+        m.status === 'loaded' || 
+        (typeof m.status === 'object' && m.status?.value === 'loaded')
+      );
+
+      if (!loadedModel) {
+        this.visionCapable = false;
+        return;
+      }
+
+      const modelId = loadedModel.id;
+
+      // 2. Check vision capabilities for that specific model
+      const visionResp = await fetch('/models/vision-capabilities');
+      if (!visionResp.ok) return;
+      const visionData = await visionResp.json();
+      
+      const capability = visionData.models[modelId];
+      if (capability) {
+        const wasCapable = this.visionCapable;
+        this.visionCapable = !!capability.vision_capable;
+        if (wasCapable !== this.visionCapable) {
+          console.log('[Vision] Vision support changed:', capability);
+        }
+      }
+    } catch (err) {
+      console.warn('[Vision] Failed to check capability:', err);
+    }
+  }
+
+  handleImageUpload(e) {
+    const file = e.target.files[0];
+    if (!file || !this.visionCapable || this.isGenerating) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1]; // strip data:image/jpeg;base64,
+      
+      // Store the image as pending attachment (not yet sent)
+      this.imageAttachment = { base64, mimeType: file.type };
+      console.log('[Vision] Image captured:', file.name);
+    };
+
+    if (file.type.startsWith('image/')) {
+      reader.readAsDataURL(file);
+    }
+  }
+
+  /** Build user message content in OpenAI-compatible multimodal format */
+  _buildUserContent(m) {
+    const textPart = { type: 'text', text: m.content || '' };
+    if (m.base64_image || (m.images && m.images.length > 0)) {
+      const images = m.images ? m.images : [m.base64_image];
+      return {
+        role: 'user',
+        content: [
+          textPart,
+          ...images.map(img => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } }))
+        ]
+      };
+    }
+    return {
+      role: 'user',
+      content: m.content || ''
+    };
+  }
+
+  /** Send current image attachment with the text message */
+  sendWithImage() {
+    if (!this.imageAttachment || !this.visionCapable) return;
+    this.imageSent = true;
+    
+    // Remove attachment after sending
+    setTimeout(() => {
+      delete this.imageAttachment;
+      this.imageSent = false;
+      this.requestUpdate();
+    }, 500);
+  }
+
   handleTextareaInput(e) {
     // Keep height strictly fixed at 40px
   }
@@ -426,17 +550,53 @@ export class ChatTab extends LitElement {
 
   async sendMessage() {
     const textarea = this.shadowRoot.querySelector('textarea');
-    if (!textarea || !textarea.value.trim() || this.isGenerating) return;
+    if (this.isGenerating) return;
 
-    const text = textarea.value.trim();
+    let text = (textarea ? textarea.value?.trim() : '') || '';
+    let base64Image = null;
+
+    // If there's a pending image attachment, send it with the message
+    if (this.imageAttachment && this.visionCapable && !this.imageSent) {
+      base64Image = this.imageAttachment.base64;
+      this.sendWithImage();
+    }
+
+    // Only proceed if there's text or an image
+    if (!text && !base64Image) return;
+
     textarea.value = '';
     textarea.style.height = '40px';
 
-    // Add user message
-    this.messages = [...this.messages, { role: 'user', content: text }];
-    this.isGenerating = true;
+    // Build the messages array for the API, including image data if present
+    let apiMessages = [];
+    
+    // Add all previous messages up to but not including this one (skip our own placeholder)
+    const prevCount = Math.min(this.messages.length - 2, this.messages.length);
+    for (let i = 0; i < prevCount; i++) {
+      const m = this.messages[i];
+      if (m.role === 'user') {
+        apiMessages.push(this._buildUserContent(m));
+      } else if (m.role === 'assistant' && !this.isGenerating) {
+        // Only include completed assistant messages
+        if (m.content || m.thinking) {
+          const contentParts = [];
+          if (m.thinking) contentParts.push({ type: 'text', text: `<think>${m.thinking}</think>\n${m.content}` });
+          else contentParts.push({ type: 'text', text: m.content || '' });
+          apiMessages.push({ role: 'assistant', content: contentParts.length === 1 ? contentParts[0].text : contentParts });
+        }
+      }
+    }
 
-    // Create assistant message placeholder
+    // Add current user message (with image if present)
+    const currentMsg = this._buildUserContent({ role: 'user', content: text, base64_image: base64Image });
+    apiMessages.push(currentMsg);
+
+    // Now add the messages to local history and create assistant placeholder
+    this.messages = [...this.messages, { 
+      role: 'user', 
+      content: text,
+      ...(base64Image ? { images: [base64Image] } : {})
+    }];
     const assistantMessageIndex = this.messages.length;
     this.messages = [...this.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false }];
 
@@ -445,10 +605,7 @@ export class ChatTab extends LitElement {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: this.messages.slice(0, assistantMessageIndex).map(m => ({
-            role: m.role,
-            content: m.content
-          })),
+          messages: apiMessages,
           stream: true
         })
       });
@@ -470,7 +627,7 @@ export class ChatTab extends LitElement {
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        
+
         // Save the last partial line back to the buffer
         buffer = lines.pop();
 
@@ -485,7 +642,7 @@ export class ChatTab extends LitElement {
 
             try {
               const parsed = JSON.parse(dataStr);
-              
+
               // 1. OpenAI Chat Completion format: choice delta
               const deltaContent = parsed.choices?.[0]?.delta?.content || '';
               const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content || '';
@@ -493,7 +650,7 @@ export class ChatTab extends LitElement {
               const textContent = parsed.choices?.[0]?.text || '';
               // 3. Llama.cpp native completion format: content
               const nativeContent = parsed.content || '';
-              
+
               if (deltaReasoning) {
                 assistantReasoning += deltaReasoning;
                 isThinking = true;
@@ -525,8 +682,8 @@ export class ChatTab extends LitElement {
 
     } catch (e) {
       this.updateAssistantMessage(
-        assistantMessageIndex, 
-        `Error: Failed to fetch completion stream (${e.message}). Please ensure model is loaded.`, 
+        assistantMessageIndex,
+        `Error: Failed to fetch completion stream (${e.message}). Please ensure model is loaded.`,
         '',
         false,
         true
@@ -549,7 +706,7 @@ export class ChatTab extends LitElement {
     const updated = [...this.messages];
     if (updated[index]) {
       let metaStr = '';
-      
+
       // Calculate tokens per second if statistics are available
       if (timings.predicted_n && timings.predicted_ms) {
         const tps = (timings.predicted_n / (timings.predicted_ms / 1000)).toFixed(1);
@@ -559,7 +716,7 @@ export class ChatTab extends LitElement {
         // OpenAI-style usage dict fallback
         metaStr = `Tokens: ${timings.prompt_tokens} in / ${timings.completion_tokens} out`;
       }
-      
+
       if (metaStr) {
         updated[index] = { ...updated[index], meta: metaStr };
         this.messages = updated;
@@ -577,7 +734,7 @@ export class ChatTab extends LitElement {
 
   formatMath(mathText) {
     if (!mathText) return '';
-    
+
     let formatted = mathText;
 
     // Greek letters and math symbols
@@ -622,8 +779,8 @@ export class ChatTab extends LitElement {
     formatted = formatted.replace(/\\mathbf\{([^}]+)\}/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\\mathit\{([^}]+)\}/g, '<em>$1</em>');
     formatted = formatted.replace(/\\mathrm\{([^}]+)\}/g, '<span style="font-style: normal;">$1</span>');
-    formatted = formatted.replace(/\\dots/g, '…');
-    formatted = formatted.replace(/\\ldots/g, '…');
+    formatted = formatted.replace(/\\dots/g, '...');
+    formatted = formatted.replace(/\\ldots/g, '...');
 
     // Fractions \frac{num}{den} -> <span class="frac"><sup>num</sup><sub>den</sub></span>
     formatted = formatted.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '<span class="frac"><sup>$1</sup><sub>$2</sub></span>');
@@ -647,10 +804,10 @@ export class ChatTab extends LitElement {
   formatTableCell(cell) {
     if (!cell) return '';
     let formatted = cell;
-    
+
     // Inline code `code`
     formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-    
+
     // Inline Math: $ ... $ or \( ... \)
     formatted = formatted.replace(/\$([^\$]+)\$/g, (match, math) => {
       return `<span class="math-inline">${this.formatMath(math.trim())}</span>`;
@@ -658,13 +815,13 @@ export class ChatTab extends LitElement {
     formatted = formatted.replace(/\\\((.*?)\\\)/g, (match, math) => {
       return `<span class="math-inline">${this.formatMath(math.trim())}</span>`;
     });
-    
+
     // Bold (**bold**)
     formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    
+
     // Italic (*italic*)
     formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    
+
     return formatted;
   }
 
@@ -682,7 +839,7 @@ export class ChatTab extends LitElement {
 
     const headerCells = parseRow(rows[0]);
     const separatorRow = rows[1];
-    
+
     const alignmentCells = parseRow(separatorRow);
     const alignments = alignmentCells.map(cell => {
       if (cell.startsWith(':') && cell.endsWith(':')) return 'center';
@@ -691,7 +848,7 @@ export class ChatTab extends LitElement {
     });
 
     let html = '<div class="table-container"><table>';
-    
+
     // Header
     html += '<thead><tr>';
     headerCells.forEach((cell, idx) => {
@@ -720,7 +877,7 @@ export class ChatTab extends LitElement {
   // Simple regex-based markdown formatter for HTML bubbles
   formatMessage(text) {
     if (!text) return '';
-    
+
     // Escape HTML first
     let htmlContent = text
       .replace(/&/g, '&amp;')
@@ -840,67 +997,106 @@ export class ChatTab extends LitElement {
             <h3 style="font-family: var(--font-title); color: var(--text-secondary); margin-bottom: 8px;">LLM Chatbox</h3>
             <p style="font-size: 0.85rem; line-height: 1.4;">Send a message to interact with the currently loaded GGUF model in VRAM.</p>
           </div>
-        ` : this.messages.map(m => html`
-          <div class="message ${m.role}">
-            <div class="bubble">
-              ${m.role === 'assistant' 
-                ? html`${m.content || m.thinking ? html`
-                    ${(() => {
-                      const { thinking, response, isThinking } = this.parseThinkingAndContent(m);
-                      return html`
-                        ${isThinking ? html`
-                          <div class="thinking-box">
-                            <div class="thinking-header">
-                              <span>🧠 Thinking Process...</span>
-                            </div>
-                            <div class="thinking-content">${thinking || 'Formulating thoughts...'}</div>
-                          </div>
-                        ` : ''}
-                        ${response ? html`<div .innerHTML="${this.formatMessage(response)}"></div>` : ''}
-                        ${!response && !isThinking ? html`
-                          <div class="typing-indicator">
-                            <div class="dot"></div>
-                            <div class="dot"></div>
-                            <div class="dot"></div>
-                          </div>
-                        ` : ''}
-                      `;
-                    })()}
-                  ` : html`
-                    <div class="typing-indicator">
-                      <div class="dot"></div>
-                      <div class="dot"></div>
-                      <div class="dot"></div>
-                    </div>
-                  `}`
-                : m.content
-              }
-            </div>
-            ${m.meta ? html`<div class="meta-info">${m.meta}</div>` : ''}
-          </div>
-        `)}
+        ` : this.messages.map((m, idx) => {
+            const hasImages = m.images && m.images.length > 0;
+            return html`
+              ${hasImages ? html`
+                <div class="message ${m.role}" style="margin-bottom: 4px;">
+                  <div class="bubble" style="padding: 8px; max-width: 256px;">
+                    <img src="data:image/jpeg;base64,${m.images[0]}" alt="User uploaded image"
+                      style="max-width: 100%; border-radius: var(--radius-md); display: block; object-fit: cover; max-height: 256px;"
+                    />
+                  </div>
+                </div>
+              ` : ''}
+              <div class="message ${m.role}" style="${hasImages ? 'margin-top: -4px;' : ''}">
+                <div class="bubble">
+                  ${m.role === 'assistant'
+                    ? html`${m.content || m.thinking ? html`
+                        ${(() => {
+                          const { thinking, response, isThinking } = this.parseThinkingAndContent(m);
+                          return html`
+                            ${isThinking ? html`
+                              <div class="thinking-box">
+                                <div class="thinking-header">
+                                  <span>🧠 Thinking Process...</span>
+                                </div>
+                                <div class="thinking-content">${thinking || 'Formulating thoughts...'}</div>
+                              </div>
+                            ` : ''}
+                            ${response ? html`<div .innerHTML="${this.formatMessage(response)}"></div>` : ''}
+                            ${!response && !isThinking ? html`
+                              <div class="typing-indicator">
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                                <div class="dot"></div>
+                              </div>
+                            ` : ''}
+                          `;
+                        })()}
+                      `
+                    : html`
+                        <div class="typing-indicator">
+                          <div class="dot"></div>
+                          <div class="dot"></div>
+                          <div class="dot"></div>
+                        </div>
+                      `}`
+                  : m.content
+                }
+              </div>
+              ${m.meta ? html`<div class="meta-info">${m.meta}</div>` : ''}
+            `;
+          })}
       </div>
 
       <div class="input-bar">
-        <button 
-          class="send-btn" 
-          style="background: rgba(255, 255, 255, 0.05); color: var(--text-muted); box-shadow: none;"
+        <!-- Image upload button (hidden when not vision-capable) -->
+        ${this.visionCapable ? html`
+          <button
+            class="send-image-btn"
+            title="Choose file"
+            @click="${() => { const inp = this.shadowRoot.querySelector('input[type=file]'); if (inp) inp.click(); }}"
+            style="width: 36px; height: 36px; background: rgba(255,255,255,0.08); font-size: 18px; color: var(--text-muted); box-shadow: none; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;"
+          >
+            📎
+          </button>
+        ` : ''}
+
+        <!-- Hidden file input (visible only when vision-capable) -->
+        ${this.visionCapable ? html`<input type="file" accept="image/*" style="position:absolute;width:0;height:0;overflow:hidden;margin:-1px;padding:0;border:0" @change="${this.handleImageUpload}" />` : ''}
+        
+        ${this.imageAttachment ? html`
+          <button
+            class="send-image-btn"
+            title="Send image with text (press Enter to send)"
+            @click="${() => this.sendMessage()}"
+          >
+            ➔
+          </button>
+        ` : ''}
+        
+        <button
+          class="send-btn"
+          style="background: rgba(255, 255, 255, 0.08); color: var(--text-muted); box-shadow: none; font-size: 16px;"
           @click="${this.clearConversation}"
           title="Clear Conversation"
         >
           🗑️
         </button>
-        <textarea 
-          placeholder="Type a message..." 
-          rows="1" 
+        <textarea
+          placeholder="${!this.visionCapable ? 'Type a message...' : this.imageAttachment ? 'Describe the image...'
+            : 'Type a message or upload an image...'}"
+          rows="1"
           @input="${this.handleTextareaInput}"
           @keydown="${this.handleKeyDown}"
           ?disabled="${this.isGenerating}"
         ></textarea>
-        <button 
-          class="send-btn" 
+        <button
+          class="send-btn"
+          style="font-size: 16px;"
           @click="${this.sendMessage}"
-          ?disabled="${this.isGenerating}"
+          ?disabled="${this.isGenerating || (this.imageAttachment && !this.shadowRoot.querySelector('textarea')?.value.trim())}"
         >
           ➔
         </button>

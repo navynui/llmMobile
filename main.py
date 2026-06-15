@@ -613,6 +613,57 @@ async def proxy_llm_unload(req: ModelActionRequest):
 # REST endpoints – chat
 # ───────────────────────────────────────────────
 
+@app.get("/models/vision-capabilities")
+async def get_vision_capabilities():
+    """Check which currently loaded models support vision/multimodal input."""
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get("http://llm-server:8080/models", timeout=3)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Failed to fetch model metadata")
+            data = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    # Map model IDs to vision support.
+    # llama-server exposes --mmproj in the args array for multimodal models,
+    # or may include `vision_enabled`/`vision_model_loaded` keys in the status dict.
+    models_metadata = {}
+    for m in data.get("data", []):
+        mid = m.get("id") or str(m.get("model_id", ""))
+        status_dict = m.get("status") if isinstance(m.get("status"), dict) else None
+
+        vision_capable = False
+        has_mmproj = False
+
+        # Check explicit flags in the status dict (may be present on newer llama.cpp)
+        if status_dict:
+            vis_enabled = status_dict.get("vision_enabled", False)
+            vis_loaded  = status_dict.get("vision_model_loaded", False)
+            vision_capable = bool(vis_enabled or vis_loaded)
+
+            # Check for --mmproj in the args array (most reliable indicator)
+            args_raw = status_dict.get("args")
+            if isinstance(args_raw, list):
+                has_mmproj = "--mmproj" in args_raw
+            elif isinstance(args_raw, str):
+                has_mmproj = "--mmproj" in args_raw
+
+        if not vision_capable:
+            # Fallback: check for common llama.cpp multimodal model IDs
+            mid_lower = mid.lower()
+            vision_capable = any(
+                x in mid_lower
+                for x in ["mmproj", "clip_l", "llava", "moondream"]
+            )
+
+        models_metadata[mid] = {
+            "model_id": mid,
+            "vision_capable": vision_capable or has_mmproj,
+            "has_mmproj": has_mmproj
+        }
+    return {"models": models_metadata}
+
 async def _get_loaded_model() -> Optional[str]:
     try:
         async with httpx.AsyncClient() as c:
