@@ -564,6 +564,32 @@ export class ServerTab extends LitElement {
     }
   }
 
+  async handleRestart() {
+    if (!this.status?.server?.status || this.status.server.status !== 'running') return;
+
+    this.actionPending = true;
+    this.showStatus('Stopping LLM server...');
+
+    try {
+      // Step 1: stop
+      const res1 = await fetch('/stop', { method: 'POST' });
+      if (!res1.ok) throw new Error('Failed to stop server');
+      
+      this.showStatus('Starting LLM server...');
+      
+      // Step 2: start (with 10s cooldown as per AGENTS.md)
+      await new Promise(r => setTimeout(r, 10000));
+      const res2 = await fetch('/start', { method: 'POST' });
+      if (!res2.ok) throw new Error('Failed to start server');
+      
+      this.showStatus('Server restarted successfully!');
+    } catch (e) {
+      this.showStatus('Error restarting server: ' + e.message, true);
+    } finally {
+      this.actionPending = false;
+    }
+  }
+
   async handleModelLoad(modelName = '') {
     const selectEl = this.shadowRoot.querySelector('#model-select');
     const targetModel = modelName || (selectEl ? selectEl.value : '');
@@ -779,13 +805,24 @@ export class ServerTab extends LitElement {
             <div><strong>Image:</strong> ${serverStatus.image || 'N/A'}</div>
             ${isServerRunning ? html`<div><strong>Uptime:</strong> ${serverStatus.uptime || 'N/A'}</div>` : ''}
           </div>
-          <button 
-            class="${isServerRunning ? 'btn-danger' : 'btn-primary'}" 
-            @click="${this.handleServerToggle}"
-            ?disabled="${this.actionPending}"
-          >
-            ${isServerRunning ? 'Stop Server' : 'Start Server'}
-          </button>
+          <div style="display: grid; gap: 8px; margin-top: 12px;">
+            <button 
+              class="${isServerRunning ? 'btn-danger' : 'btn-primary'}" 
+              @click="${this.handleServerToggle}"
+              ?disabled="${this.actionPending}"
+              style="width: 100%; justify-content: center; padding: 12px 8px;"
+            >
+              ${isServerRunning ? 'Stop Server' : 'Start Server'}
+            </button>
+            <button 
+              class="${isServerRunning ? 'btn-secondary' : 'btn-primary'}" 
+              @click="${this.handleRestart}"
+              ?disabled="${this.actionPending || !isServerRunning}"
+              style="width: 100%; justify-content: center; padding: 12px 8px; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.04); color: var(--text-primary);"
+            >
+              ⟳ Restart Server
+            </button>
+          </div>
         </div>
 
         <!-- Telemetry Stats Card -->
