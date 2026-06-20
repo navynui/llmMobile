@@ -155,3 +155,8 @@ The mobile portal will be live at `http://localhost:8000`.
 * Always keep the frontend build-safe. Verify changes by executing `npm run build` locally or inside the multi-stage Docker workflow.
 * Always preserve database transaction safety when performing idempotent upserts or cascading deletions during re-testing.
 * Ensure all database locks inside Python are handled using asynchronous primitives (`asyncio.Lock()`) to prevent deadlock starvation during sequential model swaps.
+
+## 🏗️ Architectural Evolution (Phase G)
+
+The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic now resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns. Phase H verification tests have been added to ensure endpoint contract compliance.
+

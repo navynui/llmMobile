@@ -111,3 +111,7 @@ Always use the Python fallback routines already present in `main.py` to auto-det
 DB_PATH = "/app/llm_bench.db" if os.path.exists("/app") else "/home/nui/llmaCPP/llm_bench.db"
 ```
 Do not hardcode a single path without checking for fallback options.
+
+### 9. Repository Architecture Evolution (Phase G)
+The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns. Phase H verification tests have been added to ensure endpoint contract compliance.
+
