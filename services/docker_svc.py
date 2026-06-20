@@ -131,3 +131,19 @@ async def _local_stats_poller():
         except Exception as e:
             print(f"Stats poller error: {e}")
         await asyncio.sleep(2)
+
+
+def get_logs(container_name: str = "llm-server", lines: int = 100):
+    cli = get_docker_client()
+    if not cli:
+        raise HTTPException(status_code=500, detail="Docker client not initialized.")
+    try:
+        c = cli.containers.get(container_name)
+        logs = c.logs(tail=lines, stdout=True, stderr=True).decode("utf-8", errors="ignore")
+        return {
+            "container": container_name,
+            "logs": logs
+        }
+    except Exception as e:
+        return {"container": container_name, "logs": f"Error fetching logs: {str(e)}"}
+

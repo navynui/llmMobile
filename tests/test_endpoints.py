@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 def test_routes_exist(mock_docker):
-    from main import app
+    from app.main import app
     client = TestClient(app)
     
     # List of endpoints to verify
@@ -51,7 +51,7 @@ def test_routes_exist(mock_docker):
         assert path in actual_paths, f"Route {path} is missing!"
 
 def test_static_routes(mock_docker):
-    from main import app
+    from app.main import app
     client = TestClient(app)
     
     # Test manifest.json route
@@ -60,7 +60,7 @@ def test_static_routes(mock_docker):
     assert resp.json()["name"] == "LLM Server Manager Mobile"
 
 def test_status_endpoint(mock_docker):
-    from main import app
+    from app.main import app
     client = TestClient(app)
     resp = client.get("/status")
     assert resp.status_code == 200
