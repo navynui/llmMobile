@@ -4,57 +4,29 @@ from fastapi.testclient import TestClient
 def test_routes_exist(mock_docker):
     from app.main import app
     client = TestClient(app)
-    
-    # List of endpoints to verify
     expected_paths = {
-        "/status",
-        "/system_stats",
-        "/start",
-        "/stop",
-        "/models",
-        "/models/{filename}",
-        "/api/models_ini",
-        "/api/llm/models",
-        "/api/llm/models/load",
-        "/api/llm/models/unload",
-        "/models/vision-capabilities",
-        "/api/chat/completions",
+        "/status", "/system_stats", "/start", "/stop",
+        "/models", "/models/{filename}",
+        "/api/models_ini", "/api/llm/models", "/api/llm/models/load", "/api/llm/models/unload",
+        "/models/vision-capabilities", "/api/chat/completions",
         "/events/status",
-        "/api/generate/queue",
-        "/api/generate/queue/{queue_id}",
-        "/events/queue",
-        "/api/gallery/browse",
-        "/api/gallery/all_folders",
-        "/api/gallery/mkdir",
-        "/api/gallery/move",
-        "/api/gallery/delete",
-        "/api/models/search",
-        "/api/models/details",
-        "/api/models/download",
-        "/api/models/downloads",
-        "/api/models/scan_and_register",
-        "/api/benchmarks",
-        "/api/benchmarks/details",
-        "/api/benchmarks/queue/run",
-        "/api/benchmarks/run",
-        "/api/benchmarks/status",
-        "/api/benchmarks/logs",
-        "/api/benchmarks/outputs",
-        "/api/benchmarks/judge",
-        "/api/logs",
-        "/manifest.json"
+        "/api/generate/queue", "/api/generate/queue/{queue_id}", "/events/queue",
+        "/api/gallery/browse", "/api/gallery/all_folders", "/api/gallery/mkdir",
+        "/api/gallery/move", "/api/gallery/delete",
+        "/api/models/search", "/api/models/details", "/api/models/download",
+        "/api/models/downloads", "/api/models/scan_and_register",
+        "/api/benchmarks", "/api/benchmarks/details", "/api/benchmarks/queue/run",
+        "/api/benchmarks/run", "/api/benchmarks/status", "/api/benchmarks/logs",
+        "/api/benchmarks/outputs", "/api/benchmarks/judge",
+        "/api/logs", "/manifest.json",
     }
-    
     actual_paths = {route.path for route in app.routes}
-    
     for path in expected_paths:
         assert path in actual_paths, f"Route {path} is missing!"
 
 def test_static_routes(mock_docker):
     from app.main import app
     client = TestClient(app)
-    
-    # Test manifest.json route
     resp = client.get("/manifest.json")
     assert resp.status_code == 200
     assert resp.json()["name"] == "LLM Server Manager Mobile"
@@ -67,3 +39,47 @@ def test_status_endpoint(mock_docker):
     data = resp.json()
     assert "server" in data
     assert "manager" in data
+
+def test_models_endpoints(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    assert client.get("/models").status_code == 200
+    assert client.get("/api/models_ini").status_code == 200
+    assert client.delete("/models/nonexistent-model.gguf").status_code == 200
+
+def test_chat_endpoint(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    resp = client.post("/api/chat/completions", json={})
+    assert resp.status_code in (200, 400, 422, 502)
+
+def test_queue_endpoints(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    assert client.get("/api/generate/queue").status_code == 200
+    assert "queue" in client.get("/api/generate/queue").json()
+
+def test_gallery_endpoints(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    assert client.get("/api/gallery/browse").status_code in (200, 404)
+    assert client.get("/api/gallery/all_folders").status_code in (200, 404)
+    resp = client.post("/api/gallery/mkdir", json={"current_path": "", "folder_name": "test-verify"})
+    assert resp.status_code in (200, 400, 409, 422)
+    resp = client.post("/api/gallery/move", json={"current_path": "", "filenames": ["?"], "destination": "?"})
+    assert resp.status_code in (200, 400, 404, 422)
+    resp = client.post("/api/gallery/delete", json={"current_path": "", "filenames": [], "folders": []})
+    assert resp.status_code in (200, 400, 404, 422)
+
+def test_model_search_endpoints(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    resp = client.get("/api/models/search", params={"q": "phi"})
+    assert resp.status_code in (200, 400, 422, 500, 502)
+
+def test_logs_endpoint(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    resp = client.get("/api/logs")
+    assert resp.status_code == 200
+    assert "logs" in resp.json()

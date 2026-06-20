@@ -39,7 +39,7 @@ from services.chat_svc import proxy_chat
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
 from services.comfy_svc import (
     queue_worker, broadcast_queue, get_queue_snapshot, load_persisted_queue,
-    is_queue_running, set_queue_running, get_queue,
+    is_queue_running, set_queue_running, get_queue as svc_get_queue,
     submit_to_queue as svc_submit_to_queue,
     cancel_queue_item as svc_cancel_queue_item,
     clear_completed as svc_clear_completed,
@@ -176,7 +176,7 @@ async def submit_to_queue(req: GenerateRequest):
 
 @app.get("/api/generate/queue")
 def get_queue():
-    return get_queue()
+    return svc_get_queue()
 
 @app.delete("/api/generate/queue/{queue_id}")
 async def cancel_queue_item(queue_id: str):

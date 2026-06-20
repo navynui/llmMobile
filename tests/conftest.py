@@ -21,6 +21,9 @@ def mock_docker():
     container_mock = MagicMock()
     container_mock.logs.return_value = b"container log output\n"
     container_mock.status = "running"
+    container_mock.image.tags = ["llama-server:latest"]
+    container_mock.image.id = "sha256:mockimage"
+    container_mock.attrs = {"State": {"StartedAt": "2021-01-01T00:00:00Z"}}
     docker_mock.containers.get.return_value = container_mock
     with patch.dict(sys.modules, {'docker': MagicMock(DockerClient=lambda *a, **k: docker_mock)}):
         yield docker_mock
