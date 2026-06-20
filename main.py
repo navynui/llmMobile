@@ -67,6 +67,8 @@ from services.model_svc import (
     proxy_llm_models, proxy_llm_load, proxy_llm_unload, get_vision_capabilities,
     _get_preset_id_for_model, _add_to_models_ini, _remove_from_models_ini
 )
+from services.chat_svc import proxy_chat
+from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
 
 # --- HTTP client for ComfyUI ---
 _COMFY_HTTP = httpx.Client(base_url=f"http://{COMFYUI_HOST}", timeout=60)
@@ -92,7 +94,7 @@ async def startup_event():
     asyncio.create_task(_download_queue_worker())
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
-    asyncio.create_task(log_monitor_task())
+    sse_startup()
     _init_vapid_keys()
     _load_subscriptions()
     _load_persisted_queue()
@@ -174,138 +176,18 @@ async def route_proxy_llm_unload(req: ModelActionRequest):
 async def route_get_vision_capabilities():
     return await get_vision_capabilities()
 
-async def _get_loaded_model() -> Optional[str]:
-    try:
-        async with httpx.AsyncClient() as c:
-            data = (await c.get("http://llm-server:8080/models", timeout=3)).json()
-            for m in data.get("data", []):
-                s = m.get("status")
-                if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
-                    return m.get("id")
-    except Exception:
-        pass
-    return None
-
-
 @app.post("/api/chat/completions")
-async def proxy_chat(request: Request):
-    body = await request.body()
-    try:
-        data = json.loads(body) if body else {}
-    except Exception:
-        data = {}
-    if not str(data.get("model", "")).strip():
-        data["model"] = await _get_loaded_model() or "default"
-    else:
-        data["model"] = await _get_preset_id_for_model(data["model"])
-    body = json.dumps(data).encode()
-
-    async def _stream():
-        async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as c:
-            try:
-                async with c.stream("POST", "http://llm-server:8080/v1/chat/completions",
-                                    content=body, headers={"Content-Type": "application/json"}) as r:
-                    async for chunk in r.aiter_bytes():
-                        yield chunk
-            except Exception as e:
-                yield json.dumps({"error": {"message": str(e), "type": "proxy_error"}}).encode()
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
+async def route_proxy_chat(request: Request):
+    return await proxy_chat(request)
 
 
 # ───────────────────────────────────────────────
 # SSE – /events/status
 # ───────────────────────────────────────────────
 
-_sse_subscribers = []
-
-def broadcast_notification(message: str):
-    print(f"[Log Monitor] Broadcasting notification: {message}")
-    for q in list(_sse_subscribers):
-        try:
-            q.put_nowait(message)
-        except Exception:
-            pass
-
-
-async def log_monitor_task():
-    global docker_client
-    # Start tracking from current time to avoid historical log spam
-    last_log_time = int(time.time())
-    print("[Log Monitor] Started background log monitor task")
-    while True:
-        try:
-            await asyncio.sleep(2)
-            if not docker_client:
-                continue
-            try:
-                c = docker_client.containers.get("llm-server")
-                if c.status != "running":
-                    continue
-            except Exception:
-                continue
-            
-            # Fetch logs since last_log_time
-            now = int(time.time())
-            try:
-                logs_bytes = c.logs(since=last_log_time, stdout=True, stderr=True)
-                logs = logs_bytes.decode("utf-8", errors="ignore")
-            except Exception as e:
-                print(f"[Log Monitor] Error fetching container logs: {e}")
-                continue
-                
-            last_log_time = now
-            
-            if "update_slots: all slots are idle" in logs or "all slots are idle" in logs:
-                model_name = "Model"
-                try:
-                    loaded_model = await _get_loaded_model()
-                    if loaded_model:
-                        model_name = os.path.basename(loaded_model)
-                except Exception:
-                    pass
-                broadcast_notification(f"🎉 {model_name} loaded and ready!")
-        except Exception as e:
-            print(f"[Log Monitor] Task encountered unexpected error: {e}")
-
-
 @app.get("/events/status")
-async def stream_status(request: Request, since: str = "0"):
-    last_id_hdr = request.headers.get("last-event-id") or since
-    counter = int(last_id_hdr) if last_id_hdr.isdigit() else 0
-
-    q = asyncio.Queue()
-    _sse_subscribers.append(q)
-
-    async def _gen():
-        nonlocal counter
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                
-                while not q.empty():
-                    msg = q.get_nowait()
-                    counter += 1
-                    notif_payload = json.dumps({"message": msg})
-                    yield f"id: {counter}\nevent: notification\ndata: {notif_payload}\n\n"
-
-                counter += 1
-                with _stats_lock:
-                    stats = dict(_stats_cache["data"])
-                try:
-                    status = get_status()
-                except Exception:
-                    status = {}
-                payload = json.dumps({"stats": stats, "status": status,
-                                      "timestamp": datetime.datetime.utcnow().isoformat() + "Z"})
-                yield f"id: {counter}\nevent: stats\nretry: 3000\ndata: {payload}\n\n"
-                await asyncio.sleep(2)
-        finally:
-            if q in _sse_subscribers:
-                _sse_subscribers.remove(q)
-
-    return StreamingResponse(_gen(), media_type="text/event-stream")
+async def route_stream_status(request: Request, since: str = "0"):
+    return await stream_status(request, since)
 
 
 # ───────────────────────────────────────────────
