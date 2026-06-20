@@ -115,3 +115,18 @@ Do not hardcode a single path without checking for fallback options.
 ### 9. Repository Architecture Evolution (Phase G)
 The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns. Phase H verification tests have been added to ensure endpoint contract compliance.
 
+
+## 📜 Full Roadmap (TODO3)
+
+This repository implements the complete **TODO3.md** roadmap for the `llmMobile` project, encompassing **Phases A through H**:
+
+- **Phase A – Baseline & Guard Rails**: Setup automated verification via `tests/` and Docker build pipeline.  
+- **Phase B – Pure Utilities**: Extracted constants, helpers, DB utilities.  
+- **Phase C – Service Layer (Docker & Model)**: Created `docker_svc.py`, `model_svc.py`.  
+- **Phase D – Service Layer (Chat & SSE)**: Added `chat_svc.py`, `sse_svc.py`.  
+- **Phase E – Service Layer (ComfyUI, Queue, Gallery, Push)**: Built `comfy_svc.py`, `queue_svc.py`, `gallery_svc.py`, `push_svc.py`.  
+- **Phase F – Service Layer (Download, Benchmark, Judge)**: Added `download_svc.py`, `benchmark_svc.py`, `judge_svc.py`.  
+- **Phase G – Thin Router**: `app/main.py` refactored into a pure façade delegating to services.  
+- **Phase H – Automated Verification**: Added comprehensive endpoint tests and verified Docker builds.  
+
+All phases have been completed, resulting in a fully modular, test‑covered codebase with strict separation of concerns.
