@@ -25,7 +25,7 @@ WORKDIR /app
 
 # Copy python requirements and install
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt pytest requests-mock
 
 # Copy built frontend assets from Stage 1
 COPY --from=builder /build/dist ./dist
