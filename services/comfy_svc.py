@@ -1,0 +1,333 @@
+import os
+import json
+import asyncio
+import datetime
+import threading
+import traceback
+import httpx
+import websocket as ws_client
+from typing import Optional
+
+from utils.common import (
+    WORKFLOW_PATH, COMFYUI_HOST, COMFY_CLIENT_ID,
+    NODE_PROMPT_TEXT, NODE_RESOLUTION, NODE_KSAMPLER,
+    IMAGE_GEN_OUTPUT, _deep_copy
+)
+
+# ───────────────────────────────────────────────
+# ComfyUI HTTP client
+# ───────────────────────────────────────────────
+
+_COMFY_HTTP = httpx.Client(base_url=f"http://{COMFYUI_HOST}", timeout=60)
+
+def get_comfy_http() -> httpx.Client:
+    return _COMFY_HTTP
+
+def set_comfy_http(client):
+    global _COMFY_HTTP
+    _COMFY_HTTP = client
+
+# ───────────────────────────────────────────────
+# Workflow helpers
+# ───────────────────────────────────────────────
+
+_workflow_cache: Optional[dict] = None
+_workflow_lock = threading.Lock()
+
+def _load_workflow() -> dict:
+    global _workflow_cache
+    with _workflow_lock:
+        if _workflow_cache is None:
+            with open(WORKFLOW_PATH) as f:
+                _workflow_cache = json.load(f)
+        return _deep_copy(_workflow_cache)
+
+
+def _build_workflow(prompt: str, resolution: str, seed: int, queue_id: str, img_index: int) -> dict:
+    wf = _load_workflow()
+    if NODE_PROMPT_TEXT in wf:
+        wf[NODE_PROMPT_TEXT]["inputs"]["text"] = prompt
+    w, h = resolution.split("x")
+    if NODE_RESOLUTION in wf:
+        wf[NODE_RESOLUTION]["inputs"]["width"]  = int(w)
+        wf[NODE_RESOLUTION]["inputs"]["height"] = int(h)
+    if NODE_KSAMPLER in wf:
+        wf[NODE_KSAMPLER]["inputs"]["seed"] = seed
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "SaveImage":
+            node["inputs"]["filename_prefix"] = f"z-image-{queue_id}-{img_index}"
+    return wf
+
+
+def _queue_comfy(wf: dict) -> tuple:
+    resp = _COMFY_HTTP.post("/prompt", json={"prompt": wf, "client_id": COMFY_CLIENT_ID})
+    if resp.status_code != 200:
+        raise RuntimeError(f"ComfyUI /prompt failed ({resp.status_code}): {resp.text}")
+    data = resp.json()
+    prompt_id = data["prompt_id"]
+    save_nodes = [nid for nid, n in wf.items()
+                  if isinstance(n, dict) and n.get("class_type") == "SaveImage"]
+    return prompt_id, save_nodes
+
+
+def _wait_comfy(prompt_id: str, on_progress=None, timeout: int = 300) -> Optional[dict]:
+    ws_url = f"ws://{COMFYUI_HOST}/ws?clientId={COMFY_CLIENT_ID}"
+    try:
+        ws = ws_client.WebSocket()
+        ws.settimeout(timeout)
+        ws.connect(ws_url)
+    except Exception as e:
+        print(f"[ComfyUI WS] connect failed: {e}")
+        return None
+    try:
+        while True:
+            raw = ws.recv()
+            msg = json.loads(raw)
+            mtype = msg.get("type")
+            data  = msg.get("data", {})
+            if mtype == "executing" and data.get("prompt_id") == prompt_id:
+                if data.get("node") is None:
+                    ws.close()
+                    return _get_comfy_history(prompt_id)
+                if on_progress:
+                    on_progress("executing", data)
+            elif mtype == "progress" and data.get("prompt_id") == prompt_id:
+                if on_progress:
+                    on_progress("progress", data)
+    except Exception as e:
+        print(f"[ComfyUI WS] error waiting for {prompt_id}: {e}")
+        try: ws.close()
+        except Exception: pass
+        return None
+
+
+def _get_comfy_history(prompt_id: str) -> Optional[dict]:
+    resp = _COMFY_HTTP.get(f"/history/{prompt_id}", timeout=30)
+    if resp.status_code != 200:
+        return None
+    history = resp.json()
+    if prompt_id not in history:
+        return None
+    images = []
+    for _, out in history[prompt_id].get("outputs", {}).items():
+        for img in out.get("images", []):
+            images.append({"filename": img.get("filename", ""),
+                           "subfolder": img.get("subfolder", ""),
+                           "type": img.get("type", "output")})
+    return {"prompt_id": prompt_id, "images": images} if images else None
+
+
+def _write_sidecar(image_filename: str, prompt: str, resolution: str,
+                   seed: int, queue_id: str, model: str = "z-image-turbo"):
+    """Write a .json sidecar next to the generated image."""
+    base = os.path.splitext(image_filename)[0]
+    sidecar_path = os.path.join(IMAGE_GEN_OUTPUT, base + ".json")
+    data = {
+        "prompt": prompt,
+        "resolution": resolution.split("x"),
+        "seed": seed,
+        "model": model,
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "generation_id": queue_id,
+    }
+    try:
+        with open(sidecar_path, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"[Sidecar] failed to write {sidecar_path}: {e}")
+
+# ───────────────────────────────────────────────
+# Queue state
+# ───────────────────────────────────────────────
+
+QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
+
+_queue_lock = threading.Lock()
+_gen_queue: list = []
+_queue_running = False
+_queue_sse_subscribers: list = []
+
+
+def get_queue_lock():
+    return _queue_lock
+
+def get_gen_queue():
+    return _gen_queue
+
+def is_queue_running() -> bool:
+    return _queue_running
+
+def set_queue_running(value: bool):
+    global _queue_running
+    _queue_running = value
+
+def get_queue_sse_subscribers():
+    return _queue_sse_subscribers
+
+# ───────────────────────────────────────────────
+# Queue helpers
+# ───────────────────────────────────────────────
+
+def get_queue_snapshot() -> list:
+    with _queue_lock:
+        return _deep_copy(_gen_queue)
+
+
+def save_queue_to_disk():
+    try:
+        snapshot = get_queue_snapshot()
+        os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+        with open(QUEUE_PERSIST_PATH, "w") as f:
+            json.dump(snapshot, f, indent=2)
+    except Exception as e:
+        print(f"[Queue Persistence] Failed to save queue: {e}")
+
+
+def load_persisted_queue() -> bool:
+    """Load queue from disk on startup. Returns True if there are queued items."""
+    global _gen_queue
+    if os.path.exists(QUEUE_PERSIST_PATH):
+        try:
+            with open(QUEUE_PERSIST_PATH) as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    for item in data:
+                        if item.get("status") in ("running", "queued"):
+                            item["status"] = "queued"
+                            item["progress"] = 0.0
+                            item["started_at"] = None
+                    _gen_queue = data
+                    print(f"[Queue Persistence] Loaded {len(_gen_queue)} items from disk.")
+        except Exception as e:
+            print(f"[Queue Persistence] Failed to load queue: {e}")
+    with _queue_lock:
+        return any(item["status"] == "queued" for item in _gen_queue)
+
+
+async def broadcast_queue():
+    """Push full queue snapshot to all SSE subscribers and persist to disk."""
+    snapshot = json.dumps({"queue": get_queue_snapshot()})
+    save_queue_to_disk()
+    for q in list(_queue_sse_subscribers):
+        try:
+            await q.put(snapshot)
+        except Exception:
+            pass
+
+# ───────────────────────────────────────────────
+# Queue worker
+# ───────────────────────────────────────────────
+
+async def queue_worker(send_push_fn=None):
+    """Main async queue worker. Processes generation items one by one.
+
+    Args:
+        send_push_fn: Optional callable(title, body) for push notifications.
+    """
+    global _queue_running
+    while True:
+        item = None
+        with _queue_lock:
+            for qi in _gen_queue:
+                if qi["status"] == "queued":
+                    item = qi
+                    break
+        if item is None:
+            _queue_running = False
+            return
+
+        loop = asyncio.get_running_loop()
+        queue_id = item["id"]
+
+        with _queue_lock:
+            item["status"]     = "running"
+            item["started_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+        await broadcast_queue()
+
+        prompt     = item["prompt"]
+        resolution = item.get("resolution", "1920x1088")
+        num_images = item.get("num_images", 1)
+        image_ids: list = []
+        seeds: list = []
+
+        try:
+            for img_index in range(num_images):
+                with _queue_lock:
+                    if item["status"] == "cancelled":
+                        break
+
+                if item.get("seed") is not None and num_images == 1:
+                    seed = item["seed"]
+                else:
+                    import random
+                    seed = random.randint(0, (2 ** 63) - 1)
+
+                seeds.append(seed)
+
+                with _queue_lock:
+                    item["image_num"]    = img_index + 1
+                    item["total_images"] = num_images
+                    item["progress"]     = 0.0
+                    item["seed"]         = seed
+                    item["seeds"]        = seeds
+                await broadcast_queue()
+
+                wf = _build_workflow(prompt, resolution, seed, queue_id, img_index)
+
+                def on_progress(event_type, event_data):
+                    if event_type == "progress":
+                        val = event_data.get("value", 0)
+                        mx  = event_data.get("max", 1)
+                        pct = round(val / mx, 4) if mx > 0 else 0
+                        with _queue_lock:
+                            item["progress"] = pct
+                        asyncio.run_coroutine_threadsafe(broadcast_queue(), loop)
+
+                prompt_id, _ = _queue_comfy(wf)
+                history = await asyncio.to_thread(_wait_comfy, prompt_id, on_progress)
+
+                with _queue_lock:
+                    if item["status"] == "cancelled":
+                        break
+
+                if not history or not history["images"]:
+                    raise RuntimeError("ComfyUI returned no images — check ComfyUI logs.")
+
+                for img in history["images"]:
+                    fname = img["filename"]
+                    image_ids.append(fname)
+                    _write_sidecar(fname, prompt, resolution, seed, queue_id)
+
+            with _queue_lock:
+                if item["status"] != "cancelled":
+                    item["status"]       = "completed"
+                    item["image_ids"]    = image_ids
+                    item["progress"]     = 1.0
+                    item["completed_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+
+            if send_push_fn:
+                send_push_fn(
+                    "Image Generation Complete",
+                    f"Generated {len(image_ids)} images for: {prompt[:40]}..."
+                )
+
+        except Exception as e:
+            is_cancelled = False
+            with _queue_lock:
+                if item["status"] == "cancelled":
+                    is_cancelled = True
+
+            if not is_cancelled:
+                traceback.print_exc()
+                error_msg = str(e).split("\n")[0]
+                with _queue_lock:
+                    item["status"] = "error"
+                    item["error"]  = error_msg
+
+                if send_push_fn:
+                    send_push_fn(
+                        "Image Generation Failed",
+                        f"Error: {error_msg} for: {prompt[:40]}..."
+                    )
+
+        await broadcast_queue()

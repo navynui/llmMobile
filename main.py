@@ -23,11 +23,6 @@ from fastapi import FastAPI, HTTPException, Request, Response, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-try:
-    from pywebpush import webpush, WebPushException
-    HAS_WEBPUSH = True
-except ImportError:
-    HAS_WEBPUSH = False
 
 app = FastAPI(title="LLM Mobile Manager")
 
@@ -47,14 +42,6 @@ from models.requests import (
     BenchmarkQueueRequest, JudgeRequest
 )
 
-# --- Push Notification Globals ---
-VAPID_PUBLIC_KEY = ""
-VAPID_PRIVATE_KEY = ""
-VAPID_KEYS_FILE = os.path.join(IMAGE_GEN_OUTPUT, "vapid_keys.json")
-_push_subscriptions = []
-SUBS_FILE_PATH = os.path.join(IMAGE_GEN_OUTPUT, "push_subscriptions.json")
-QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
-
 os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
 
 # --- Service imports ---
@@ -69,20 +56,23 @@ from services.model_svc import (
 )
 from services.chat_svc import proxy_chat
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
-
-# --- HTTP client for ComfyUI ---
-_COMFY_HTTP = httpx.Client(base_url=f"http://{COMFYUI_HOST}", timeout=60)
-
-# ───────────────────────────────────────────────
-# Queue state (in-memory, Phase 2 server-side)
-# ───────────────────────────────────────────────
-_queue_lock = threading.Lock()
-_gen_queue: list = []          # list of queue-item dicts
-_queue_running = False         # True while a worker is processing
-_queue_sse_subscribers: list = []   # async queues for /events/queue SSE fans
-
-_workflow_cache: Optional[dict] = None
-_workflow_lock = threading.Lock()
+from services.comfy_svc import (
+    queue_worker, broadcast_queue, get_queue_snapshot, load_persisted_queue,
+    _queue_lock, _gen_queue, _queue_sse_subscribers,
+    is_queue_running, set_queue_running,
+    _COMFY_HTTP
+)
+from services.gallery_svc import (
+    browse_gallery as svc_browse_gallery,
+    get_all_folders as svc_get_all_folders,
+    gallery_mkdir as svc_gallery_mkdir,
+    gallery_move as svc_gallery_move,
+    gallery_delete as svc_gallery_delete,
+)
+from services.push_svc import (
+    init_push, get_vapid_public_key, subscribe as push_subscribe,
+    unsubscribe as push_unsubscribe, send_push
+)
 
 # ───────────────────────────────────────────────
 # Startup
@@ -95,18 +85,11 @@ async def startup_event():
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
     sse_startup()
-    _init_vapid_keys()
-    _load_subscriptions()
-    _load_persisted_queue()
-    # Resume queue worker if there are pending jobs
-    global _queue_running
-    has_queued = False
-    with _queue_lock:
-        if any(item["status"] == "queued" for item in _gen_queue):
-            has_queued = True
-    if has_queued and not _queue_running:
-        _queue_running = True
-        asyncio.create_task(_queue_worker())
+    init_push()
+    has_queued = load_persisted_queue()
+    if has_queued and not is_queue_running():
+        set_queue_running(True)
+        asyncio.create_task(queue_worker(send_push_fn=send_push))
 
 
 # ───────────────────────────────────────────────
@@ -191,376 +174,11 @@ async def route_stream_status(request: Request, since: str = "0"):
 
 
 # ───────────────────────────────────────────────
-# ComfyUI helpers
+# (ComfyUI helpers, queue state, push notification helpers
+# have been moved to services/comfy_svc.py and services/push_svc.py)
 # ───────────────────────────────────────────────
 
-def _load_workflow() -> dict:
-    global _workflow_cache
-    with _workflow_lock:
-        if _workflow_cache is None:
-            with open(WORKFLOW_PATH) as f:
-                _workflow_cache = json.load(f)
-        return _deep_copy(_workflow_cache)
 
-
-def _build_workflow(prompt: str, resolution: str, seed: int, queue_id: str, img_index: int) -> dict:
-    wf = _load_workflow()
-    if NODE_PROMPT_TEXT in wf:
-        wf[NODE_PROMPT_TEXT]["inputs"]["text"] = prompt
-    w, h = resolution.split("x")
-    if NODE_RESOLUTION in wf:
-        wf[NODE_RESOLUTION]["inputs"]["width"]  = int(w)
-        wf[NODE_RESOLUTION]["inputs"]["height"] = int(h)
-    if NODE_KSAMPLER in wf:
-        wf[NODE_KSAMPLER]["inputs"]["seed"] = seed
-    for node in wf.values():
-        if isinstance(node, dict) and node.get("class_type") == "SaveImage":
-            node["inputs"]["filename_prefix"] = f"z-image-{queue_id}-{img_index}"
-    return wf
-
-
-def _queue_comfy(wf: dict) -> tuple[str, list]:
-    resp = _COMFY_HTTP.post("/prompt", json={"prompt": wf, "client_id": COMFY_CLIENT_ID})
-    if resp.status_code != 200:
-        raise RuntimeError(f"ComfyUI /prompt failed ({resp.status_code}): {resp.text}")
-    data = resp.json()
-    prompt_id = data["prompt_id"]
-    save_nodes = [nid for nid, n in wf.items()
-                  if isinstance(n, dict) and n.get("class_type") == "SaveImage"]
-    return prompt_id, save_nodes
-
-
-def _wait_comfy(prompt_id: str, on_progress=None, timeout: int = 300) -> Optional[dict]:
-    ws_url = f"ws://{COMFYUI_HOST}/ws?clientId={COMFY_CLIENT_ID}"
-    try:
-        ws = ws_client.WebSocket()
-        ws.settimeout(timeout)
-        ws.connect(ws_url)
-    except Exception as e:
-        print(f"[ComfyUI WS] connect failed: {e}")
-        return None
-    try:
-        while True:
-            raw = ws.recv()
-            msg = json.loads(raw)
-            mtype = msg.get("type")
-            data  = msg.get("data", {})
-            if mtype == "executing" and data.get("prompt_id") == prompt_id:
-                if data.get("node") is None:
-                    ws.close()
-                    return _get_comfy_history(prompt_id)
-                if on_progress:
-                    on_progress("executing", data)
-            elif mtype == "progress" and data.get("prompt_id") == prompt_id:
-                if on_progress:
-                    on_progress("progress", data)
-    except Exception as e:
-        print(f"[ComfyUI WS] error waiting for {prompt_id}: {e}")
-        try: ws.close()
-        except Exception: pass
-        return None
-
-
-def _get_comfy_history(prompt_id: str) -> Optional[dict]:
-    resp = _COMFY_HTTP.get(f"/history/{prompt_id}", timeout=30)
-    if resp.status_code != 200:
-        return None
-    history = resp.json()
-    if prompt_id not in history:
-        return None
-    images = []
-    for _, out in history[prompt_id].get("outputs", {}).items():
-        for img in out.get("images", []):
-            images.append({"filename": img.get("filename", ""),
-                           "subfolder": img.get("subfolder", ""),
-                           "type": img.get("type", "output")})
-    return {"prompt_id": prompt_id, "images": images} if images else None
-
-
-def _write_sidecar(image_filename: str, prompt: str, resolution: str,
-                   seed: int, queue_id: str, model: str = "z-image-turbo"):
-    """Write a .json sidecar next to the generated image."""
-    base = os.path.splitext(image_filename)[0]
-    sidecar_path = os.path.join(IMAGE_GEN_OUTPUT, base + ".json")
-    data = {
-        "prompt": prompt,
-        "resolution": resolution.split("x"),
-        "seed": seed,
-        "model": model,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
-        "generation_id": queue_id,
-    }
-    try:
-        with open(sidecar_path, "w") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        print(f"[Sidecar] failed to write {sidecar_path}: {e}")
-
-
-async def _broadcast_queue():
-    """Push full queue snapshot to all SSE subscribers."""
-    snapshot = json.dumps({"queue": _get_queue_snapshot()})
-    _save_queue_to_disk()
-    for q in list(_queue_sse_subscribers):
-        try:
-            await q.put(snapshot)
-        except Exception:
-            pass
-
-
-def _get_queue_snapshot() -> list:
-    with _queue_lock:
-        return _deep_copy(_gen_queue)
-
-
-def _load_persisted_queue():
-    global _gen_queue
-    if os.path.exists(QUEUE_PERSIST_PATH):
-        try:
-            with open(QUEUE_PERSIST_PATH) as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    # Sanitize state at startup
-                    for item in data:
-                        if item.get("status") in ("running", "queued"):
-                            item["status"] = "queued"
-                            item["progress"] = 0.0
-                            item["started_at"] = None
-                    _gen_queue = data
-                    print(f"[Queue Persistence] Loaded {len(_gen_queue)} items from disk.")
-        except Exception as e:
-            print(f"[Queue Persistence] Failed to load queue: {e}")
-
-
-def _save_queue_to_disk():
-    try:
-        snapshot = _get_queue_snapshot()
-        os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
-        with open(QUEUE_PERSIST_PATH, "w") as f:
-            json.dump(snapshot, f, indent=2)
-    except Exception as e:
-        print(f"[Queue Persistence] Failed to save queue: {e}")
-
-
-def _init_vapid_keys():
-    global VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY
-    if os.path.exists(VAPID_KEYS_FILE):
-        try:
-            with open(VAPID_KEYS_FILE) as f:
-                data = json.load(f)
-                VAPID_PUBLIC_KEY = data.get("public_key")
-                VAPID_PRIVATE_KEY = data.get("private_key")
-        except Exception:
-            pass
-            
-    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
-        if HAS_WEBPUSH:
-            try:
-                from cryptography.hazmat.primitives.asymmetric import ec
-                from cryptography.hazmat.primitives import serialization
-                import base64
-                
-                private_key = ec.generate_private_key(ec.SECP256R1())
-                private_der = private_key.private_bytes(
-                    encoding=serialization.Encoding.DER,
-                    format=serialization.PrivateFormat.PKCS8,
-                    encryption_algorithm=serialization.NoEncryption()
-                )
-                
-                public_key = private_key.public_key()
-                public_bytes = public_key.public_bytes(
-                    encoding=serialization.Encoding.X962,
-                    format=serialization.PublicFormat.UncompressedPoint
-                )
-                
-                VAPID_PUBLIC_KEY = base64.urlsafe_b64encode(public_bytes).decode().rstrip("=")
-                VAPID_PRIVATE_KEY = base64.urlsafe_b64encode(private_der).decode().rstrip("=")
-                
-                os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
-                with open(VAPID_KEYS_FILE, "w") as f:
-                    json.dump({"public_key": VAPID_PUBLIC_KEY, "private_key": VAPID_PRIVATE_KEY}, f)
-                print("[VAPID] Generated and saved new VAPID keys.")
-            except Exception as e:
-                # Use a fallback key if generation fails (e.g. cryptography package missing)
-                print(f"[VAPID] Failed to generate VAPID keys programmatically: {e}. Using dev-fallback.")
-                VAPID_PUBLIC_KEY = "BEl6mABClg1401306C9V8t-mC9c-L6121401306C9V8t-mC9c-L6121401306C"
-                VAPID_PRIVATE_KEY = "DEV_FALLBACK_KEY"
-        else:
-            print("[VAPID] WebPush not available. Using dev-fallback keys.")
-            VAPID_PUBLIC_KEY = "BEl6mABClg1401306C9V8t-mC9c-L6121401306C9V8t-mC9c-L6121401306C"
-            VAPID_PRIVATE_KEY = "DEV_FALLBACK_KEY"
-
-
-def _load_subscriptions():
-    global _push_subscriptions
-    if os.path.exists(SUBS_FILE_PATH):
-        try:
-            with open(SUBS_FILE_PATH) as f:
-                _push_subscriptions = json.load(f)
-        except Exception:
-            _push_subscriptions = []
-
-
-def _save_subscriptions():
-    try:
-        os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
-        with open(SUBS_FILE_PATH, "w") as f:
-            json.dump(_push_subscriptions, f)
-    except Exception:
-        pass
-
-
-def _send_push_notification(title: str, body: str):
-    global _push_subscriptions
-    if not HAS_WEBPUSH or VAPID_PRIVATE_KEY == "DEV_FALLBACK_KEY":
-        print(f"[Push Notifications] Push not configured/available. Logging: {title} - {body}")
-        return
-
-    vapid_claims = {
-        "sub": "mailto:admin@localhost"
-    }
-
-    for sub in list(_push_subscriptions):
-        try:
-            webpush(
-                subscription_info=sub,
-                data=json.dumps({"title": title, "body": body}),
-                vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims=vapid_claims
-            )
-            print(f"[Push Notifications] Sent push to {sub.get('endpoint')}")
-        except WebPushException as ex:
-            print(f"[Push Notifications] Failed to send push: {ex}")
-            if ex.response and ex.response.status_code in (404, 410):
-                try:
-                    _push_subscriptions.remove(sub)
-                    _save_subscriptions()
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[Push Notifications] Error sending push: {e}")
-
-
-# ───────────────────────────────────────────────
-# Queue worker (runs in background asyncio task)
-# ───────────────────────────────────────────────
-
-async def _queue_worker():
-    global _queue_running
-    while True:
-        # Find next pending item
-        item = None
-        with _queue_lock:
-            for qi in _gen_queue:
-                if qi["status"] == "queued":
-                    item = qi
-                    break
-        if item is None:
-            _queue_running = False
-            return  # No more work – exit; will be restarted on next submit
-
-        loop = asyncio.get_running_loop()
-        queue_id = item["id"]
-
-        # Mark running
-        with _queue_lock:
-            item["status"]     = "running"
-            item["started_at"] = datetime.datetime.utcnow().isoformat() + "Z"
-        await _broadcast_queue()
-
-        prompt     = item["prompt"]
-        resolution = item.get("resolution", "1920x1088")
-        num_images = item.get("num_images", 1)
-        image_ids: list = []
-        seeds: list = []
-        error_msg: Optional[str] = None
-
-        try:
-            for img_index in range(num_images):
-                # Check cancellation
-                with _queue_lock:
-                    if item["status"] == "cancelled":
-                        break
-
-                # Use original seed if provided for single image, otherwise generate random
-                if item.get("seed") is not None and num_images == 1:
-                    seed = item["seed"]
-                else:
-                    import random
-                    seed = random.randint(0, (2 ** 63) - 1)
-                
-                seeds.append(seed)
-
-                # Update progress
-                with _queue_lock:
-                    item["image_num"]    = img_index + 1
-                    item["total_images"] = num_images
-                    item["progress"]     = 0.0
-                    item["seed"]         = seed
-                    item["seeds"]        = seeds
-                await _broadcast_queue()
-
-                wf = _build_workflow(prompt, resolution, seed, queue_id, img_index)
-
-                # Progress callback pushes into our async loop
-                def on_progress(event_type, event_data):
-                    if event_type == "progress":
-                        val = event_data.get("value", 0)
-                        mx  = event_data.get("max", 1)
-                        pct = round(val / mx, 4) if mx > 0 else 0
-                        with _queue_lock:
-                            item["progress"] = pct
-                        asyncio.run_coroutine_threadsafe(_broadcast_queue(), loop)
-
-                prompt_id, _ = _queue_comfy(wf)
-                history = await asyncio.to_thread(_wait_comfy, prompt_id, on_progress)
-
-                # Check cancellation immediately after wait completes
-                with _queue_lock:
-                    if item["status"] == "cancelled":
-                        break
-
-                if not history or not history["images"]:
-                    raise RuntimeError("ComfyUI returned no images — check ComfyUI logs.")
-
-                for img in history["images"]:
-                    fname = img["filename"]
-                    image_ids.append(fname)
-                    _write_sidecar(fname, prompt, resolution, seed, queue_id)
-
-            # Completed
-            with _queue_lock:
-                if item["status"] != "cancelled":
-                    item["status"]       = "completed"
-                    item["image_ids"]    = image_ids
-                    item["progress"]     = 1.0
-                    item["completed_at"] = datetime.datetime.utcnow().isoformat() + "Z"
-            
-            _send_push_notification(
-                title="Image Generation Complete",
-                body=f"Generated {len(image_ids)} images for: {prompt[:40]}..."
-            )
-
-        except Exception as e:
-            is_cancelled = False
-            with _queue_lock:
-                if item["status"] == "cancelled":
-                    is_cancelled = True
-            
-            if not is_cancelled:
-                import traceback
-                traceback.print_exc()
-                error_msg = str(e).split("\n")[0]
-                with _queue_lock:
-                    item["status"] = "error"
-                    item["error"]  = error_msg
-                
-                _send_push_notification(
-                    title="Image Generation Failed",
-                    body=f"Error: {error_msg} for: {prompt[:40]}..."
-                )
-
-        await _broadcast_queue()
 
 
 # ───────────────────────────────────────────────
@@ -572,7 +190,6 @@ async def _queue_worker():
 
 @app.post("/api/generate/queue")
 async def submit_to_queue(req: GenerateRequest):
-    global _queue_running
     queue_id = "q" + uuid.uuid4().hex[:8]
     item = {
         "id":           queue_id,
@@ -592,20 +209,20 @@ async def submit_to_queue(req: GenerateRequest):
     }
     with _queue_lock:
         _gen_queue.append(item)
-        should_start = not _queue_running
+        should_start = not is_queue_running()
 
-    await _broadcast_queue()
+    await broadcast_queue()
 
     if should_start:
-        _queue_running = True
-        asyncio.create_task(_queue_worker())
+        set_queue_running(True)
+        asyncio.create_task(queue_worker(send_push_fn=send_push))
 
     return {"queue_id": queue_id, "position": len(_gen_queue)}
 
 
 @app.get("/api/generate/queue")
 def get_queue():
-    return {"queue": _get_queue_snapshot()}
+    return {"queue": get_queue_snapshot()}
 
 
 @app.delete("/api/generate/queue/{queue_id}")
@@ -620,7 +237,7 @@ async def cancel_queue_item(queue_id: str):
                         print(f"[ComfyUI Interrupt] failed: {e}")
                 item["status"] = "cancelled"
                 break
-    await _broadcast_queue()
+    await broadcast_queue()
     return {"detail": f"Cancelled {queue_id}"}
 
 
@@ -631,7 +248,7 @@ async def clear_completed():
         removable = [i for i in _gen_queue if i["status"] in done]
         for r in removable:
             _gen_queue.remove(r)
-    await _broadcast_queue()
+    await broadcast_queue()
     return {"detail": f"Cleared {len(removable)} finished items"}
 
 
@@ -646,8 +263,7 @@ async def stream_queue(request: Request):
 
     async def _gen():
         try:
-            # Send current snapshot immediately on connect
-            yield f"event: queue\ndata: {json.dumps({'queue': _get_queue_snapshot()})}\n\n"
+            yield f"event: queue\ndata: {json.dumps({'queue': get_queue_snapshot()})}\n\n"
             while True:
                 if await request.is_disconnected():
                     break
@@ -655,7 +271,7 @@ async def stream_queue(request: Request):
                     payload = await asyncio.wait_for(q.get(), timeout=15)
                     yield f"event: queue\ndata: {payload}\n\n"
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"   # prevent proxy timeouts
+                    yield ": keepalive\n\n"
         finally:
             try:
                 _queue_sse_subscribers.remove(q)
@@ -667,147 +283,32 @@ async def stream_queue(request: Request):
 
 # ───────────────────────────────────────────────
 # REST endpoints – gallery
+# (delegated to services/gallery_svc.py)
 # ───────────────────────────────────────────────
-
-def _read_sidecar(image_path: str) -> dict:
-    base = os.path.splitext(image_path)[0]
-    sidecar = base + ".json"
-    if os.path.exists(sidecar):
-        try:
-            with open(sidecar) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
 
 @app.get("/api/gallery/browse")
 def browse_gallery(path: str = "", page: int = 1, limit: int = 24):
-    if not os.path.exists(IMAGE_GEN_OUTPUT):
-        return {"current_path": "", "folders": [], "images": [],
-                "total_images": 0, "page": 1, "limit": limit, "total_pages": 0}
-
-    target_dir = safe_join(IMAGE_GEN_OUTPUT, path)
-    if not os.path.isdir(target_dir):
-        raise HTTPException(status_code=404, detail="Directory not found")
-
-    folders, images = [], []
-
-    for name in os.listdir(target_dir):
-        if name.startswith(".") or name.endswith(".json"):
-            continue
-        full = os.path.join(target_dir, name)
-        rel  = os.path.relpath(full, IMAGE_GEN_OUTPUT)
-        if os.path.isdir(full):
-            folders.append({"name": name, "relative_path": rel})
-        elif name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            mtime    = os.path.getmtime(full)
-            url_path = "/".join(urllib.parse.quote(p) for p in rel.split(os.sep))
-            sidecar  = _read_sidecar(full)
-            images.append({
-                "filename":      name,
-                "relative_path": rel,
-                "url":           f"/images/{url_path}",
-                "mtime":         mtime,
-                "prompt":        sidecar.get("prompt"),
-                "seed":          sidecar.get("seed"),
-                "model":         sidecar.get("model"),
-                "timestamp":     sidecar.get("timestamp"),
-                "generation_id": sidecar.get("generation_id"),
-            })
-
-    folders.sort(key=lambda x: x["name"].lower())
-    images.sort(key=lambda x: x["mtime"], reverse=True)
-
-    # Orphan sidecar cleanup (delete .json with no matching image)
-    for name in os.listdir(target_dir):
-        if name.endswith(".json"):
-            img_base = os.path.join(target_dir, os.path.splitext(name)[0])
-            has_image = any(os.path.exists(img_base + ext) for ext in [".png", ".jpg", ".jpeg", ".webp"])
-            if not has_image:
-                try:
-                    os.remove(os.path.join(target_dir, name))
-                except Exception:
-                    pass
-
-    total   = len(images)
-    pages   = max(1, (total + limit - 1) // limit) if total > 0 else 0
-    start   = (page - 1) * limit
-    paged   = images[start:start + limit]
-
-    return {"current_path": path, "folders": folders, "images": paged,
-            "total_images": total, "page": page, "limit": limit, "total_pages": pages}
+    return svc_browse_gallery(path=path, page=page, limit=limit)
 
 
 @app.get("/api/gallery/all_folders")
 def get_all_folders():
-    if not os.path.exists(IMAGE_GEN_OUTPUT):
-        return []
-    folders = [""]
-    for root, dirs, _ in os.walk(IMAGE_GEN_OUTPUT):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for d in dirs:
-            rel = os.path.relpath(os.path.join(root, d), IMAGE_GEN_OUTPUT)
-            folders.append(rel)
-    folders.sort(key=str.lower)
-    return folders
-
-
-# (MkdirRequest, MoveRequest, and DeleteRequest are imported from models.requests)
+    return svc_get_all_folders()
 
 
 @app.post("/api/gallery/mkdir")
 def gallery_mkdir(req: MkdirRequest):
-    target = safe_join(IMAGE_GEN_OUTPUT, req.current_path, req.folder_name)
-    os.makedirs(target, exist_ok=True)
-    return {"detail": "Folder created"}
+    return svc_gallery_mkdir(req)
 
 
 @app.post("/api/gallery/move")
 def gallery_move(req: MoveRequest):
-    dest_dir = safe_join(IMAGE_GEN_OUTPUT, req.destination)
-    if not os.path.isdir(dest_dir):
-        raise HTTPException(status_code=400, detail="Destination does not exist")
-    moved, errors = [], []
-    for rel in req.filenames:
-        src = safe_join(IMAGE_GEN_OUTPUT, req.current_path, rel)
-        dst = os.path.join(dest_dir, os.path.basename(src))
-        try:
-            shutil.move(src, dst)
-            # Also move sidecar if exists
-            sidecar_src = os.path.splitext(src)[0] + ".json"
-            if os.path.exists(sidecar_src):
-                shutil.move(sidecar_src, os.path.join(dest_dir, os.path.basename(sidecar_src)))
-            moved.append(rel)
-        except Exception as e:
-            errors.append(str(e))
-    if errors:
-        raise HTTPException(status_code=500, detail=f"Moved {len(moved)}, errors: {errors}")
-    return {"detail": f"Moved {len(moved)} files", "moved": moved}
+    return svc_gallery_move(req)
 
 
 @app.post("/api/gallery/delete")
 def gallery_delete(req: DeleteRequest):
-    deleted, errors = [], []
-    for rel in req.filenames:
-        path = safe_join(IMAGE_GEN_OUTPUT, req.current_path, rel)
-        try:
-            os.remove(path)
-            sidecar = os.path.splitext(path)[0] + ".json"
-            if os.path.exists(sidecar):
-                os.remove(sidecar)
-            deleted.append(rel)
-        except Exception as e:
-            errors.append(str(e))
-    for rel_dir in req.folders:
-        path = safe_join(IMAGE_GEN_OUTPUT, req.current_path, rel_dir)
-        try:
-            shutil.rmtree(path)
-        except Exception as e:
-            errors.append(str(e))
-    if errors:
-        raise HTTPException(status_code=500, detail=str(errors))
-    return {"detail": f"Deleted {len(deleted)} files"}
+    return svc_gallery_delete(req)
 
 
 # ───────────────────────────────────────────────
