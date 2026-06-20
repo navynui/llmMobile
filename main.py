@@ -73,6 +73,27 @@ from services.push_svc import (
     init_push, get_vapid_public_key, subscribe as push_subscribe,
     unsubscribe as push_unsubscribe, send_push
 )
+from services.download_svc import (
+    init_download_queue, download_queue_worker,
+    search_hf_models as svc_search_hf_models,
+    get_hf_model_details as svc_get_hf_model_details,
+    download_model as svc_download_model,
+    get_downloads_status as svc_get_downloads_status,
+    scan_and_register_models as svc_scan_and_register_models,
+    get_quantization_from_name,
+)
+from services.benchmark_svc import (
+    run_benchmark_task, run_benchmark_queue_task,
+    get_benchmark_progress, get_benchmark_running,
+    get_benchmark_lock, set_benchmark_running,
+    log_benchmark, log_benchmark_error,
+)
+from services.judge_svc import (
+    judge_benchmark as svc_judge_benchmark,
+    get_llm_server_url,
+    get_quantization_from_name as judge_get_quantization_from_name,
+)
+from services.chat_svc import _get_loaded_model
 
 # ───────────────────────────────────────────────
 # Startup
@@ -81,7 +102,8 @@ from services.push_svc import (
 @app.on_event("startup")
 async def startup_event():
     consolidate_database()
-    asyncio.create_task(_download_queue_worker())
+    init_download_queue()
+    asyncio.create_task(download_queue_worker())
     _start_mqtt_listener()
     asyncio.create_task(_local_stats_poller())
     sse_startup()
@@ -312,317 +334,35 @@ def gallery_delete(req: DeleteRequest):
 
 
 # ───────────────────────────────────────────────
-# Phase 5 – Model Downloader & Benchmarks Backend
+# Phase F – Model Downloader
+# (delegated to services/download_svc.py)
 # ───────────────────────────────────────────────
-
-_downloads_lock = threading.Lock()
-_active_downloads: Dict[str, Dict[str, Any]] = {}  # key: f"{repo_id}/{filename}"
-_download_queue = asyncio.Queue()
-
-async def _download_queue_worker():
-    print("[Download Queue] Asynchronous Sequential Download Worker started.")
-    while True:
-        try:
-            repo_id, filename = await _download_queue.get()
-            print(f"[Download Queue] Starting sequential download for: {repo_id}/{filename}")
-            try:
-                await _download_model_task(repo_id, filename)
-            except Exception as e:
-                print(f"[Download Queue] Exception in download task for {filename}: {e}")
-            finally:
-                _download_queue.task_done()
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            print(f"[Download Queue] Queue worker error: {e}")
-            await asyncio.sleep(2)
 
 # (DownloadRequest is imported from models.requests)
 
-async def _download_model_task(repo_id: str, filename: str):
-    key = f"{repo_id}/{filename}"
-    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
-    dest_path = os.path.join(MODELS_DIR, filename)
-    temp_path = dest_path + ".download"
-
-    current_bytes = 0
-    if os.path.exists(temp_path):
-        current_bytes = os.path.getsize(temp_path)
-
-    with _downloads_lock:
-        _active_downloads[key] = {
-            "repo_id": repo_id,
-            "filename": filename,
-            "status": "downloading",
-            "downloaded": current_bytes,
-            "total": 0,
-            "speed": "0 KB/s",
-            "progress": 0.0,
-            "error": None
-        }
-
-    model_id = _clean_model_id(filename)
-    try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE models 
-            SET status = 'DOWNLOADING', notes = 'Downloading GGUF file...' 
-            WHERE model_id = ?
-        """, (model_id,))
-        conn.commit()
-        conn.close()
-    except Exception as db_err:
-        print(f"[Download DB] Failed to update status to DOWNLOADING: {db_err}")
-
-    headers = {}
-    if current_bytes > 0:
-        headers["Range"] = f"bytes={current_bytes}-"
-
-    try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            async with client.stream("GET", url, headers=headers) as r:
-                if r.status_code == 416:
-                    # Range not satisfiable (might already be completed)
-                    r_head = await client.head(url)
-                    total_bytes = int(r_head.headers.get("content-length", 0))
-                    current_bytes = total_bytes
-                    shutil.move(temp_path, dest_path)
-                    _add_to_models_ini(filename)
-                    with _downloads_lock:
-                        _active_downloads[key].update({
-                            "status": "completed",
-                            "downloaded": total_bytes,
-                            "total": total_bytes,
-                            "progress": 1.0
-                        })
-                    try:
-                        conn = get_db_conn()
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            UPDATE models 
-                            SET status = 'COMPLETED', notes = 'Download completed successfully' 
-                            WHERE model_id = ?
-                        """, (model_id,))
-                        conn.commit()
-                        conn.close()
-                    except Exception as db_err:
-                        print(f"[Download DB] Failed to update status to COMPLETED: {db_err}")
-                    return
-                elif r.status_code == 206:
-                    # Partial content
-                    total_bytes = current_bytes + int(r.headers.get("content-length", 0))
-                    mode = "ab"
-                else:
-                    # Full download
-                    total_bytes = int(r.headers.get("content-length", 0))
-                    current_bytes = 0
-                    mode = "wb"
-
-                with _downloads_lock:
-                    _active_downloads[key]["total"] = total_bytes
-
-                start_time = time.time()
-                last_update = time.time()
-                bytes_since_update = 0
-
-                with open(temp_path, mode) as f:
-                    async for chunk in r.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
-                        current_bytes += len(chunk)
-                        bytes_since_update += len(chunk)
-
-                        now = time.time()
-                        if now - last_update >= 1.0:
-                            elapsed = now - last_update
-                            speed_val = bytes_since_update / elapsed
-                            if speed_val > 1024 * 1024:
-                                speed_str = f"{speed_val / (1024*1024):.1f} MB/s"
-                            else:
-                                speed_str = f"{speed_val / 1024:.1f} KB/s"
-
-                            progress_val = round(current_bytes / total_bytes, 4) if total_bytes > 0 else 0.0
-
-                            with _downloads_lock:
-                                _active_downloads[key].update({
-                                    "downloaded": current_bytes,
-                                    "speed": speed_str,
-                                    "progress": progress_val
-                                })
-                            
-                            last_update = now
-                            bytes_since_update = 0
-
-                # Check if fully downloaded
-                if current_bytes >= total_bytes:
-                    shutil.move(temp_path, dest_path)
-                    _add_to_models_ini(filename)
-                    with _downloads_lock:
-                        _active_downloads[key].update({
-                            "status": "completed",
-                            "progress": 1.0,
-                            "speed": "0 KB/s"
-                        })
-                    try:
-                        conn = get_db_conn()
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            UPDATE models 
-                            SET status = 'COMPLETED', notes = 'Download completed successfully' 
-                            WHERE model_id = ?
-                        """, (model_id,))
-                        conn.commit()
-                        conn.close()
-                    except Exception as db_err:
-                        print(f"[Download DB] Failed to update status to COMPLETED: {db_err}")
-                else:
-                    raise Exception("Download connection closed prematurely")
-
-    except Exception as e:
-        with _downloads_lock:
-            if key in _active_downloads:
-                _active_downloads[key].update({
-                    "status": "failed",
-                    "error": str(e),
-                    "speed": "0 KB/s"
-                })
-        try:
-            conn = get_db_conn()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE models 
-                SET status = 'FAILED', notes = ? 
-                WHERE model_id = ?
-            """, (f"Error: {str(e)}", model_id))
-            conn.commit()
-            conn.close()
-        except Exception as db_err:
-            print(f"[Download DB] Failed to update status to FAILED: {db_err}")
-
-
 @app.get("/api/models/search")
-async def search_hf_models(q: str):
-    url = f"https://huggingface.co/api/models?search={urllib.parse.quote(q)}&filter=gguf&limit=10"
-    async with httpx.AsyncClient() as client:
-        try:
-            r = await client.get(url, timeout=10.0)
-            return r.json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
+async def route_search_hf_models(q: str):
+    return await svc_search_hf_models(q)
+
 
 @app.get("/api/models/details")
-async def get_hf_model_details(repo_id: str):
-    url = f"https://huggingface.co/api/models/{repo_id}?blobs=true"
-    async with httpx.AsyncClient() as client:
-        try:
-            r = await client.get(url, timeout=10.0)
-            data = r.json()
-            # Extract .gguf files with size
-            gguf_files = []
-            sibling_list = data.get("siblings", [])
-            for s in sibling_list:
-                fname = s.get("rfilename", "")
-                if fname.lower().endswith(".gguf"):
-                    gguf_files.append({
-                        "filename": fname,
-                        "size": s.get("size")
-                    })
-            return {"repo_id": repo_id, "gguf_files": gguf_files, "downloads": data.get("downloads", 0), "likes": data.get("likes", 0)}
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
-
+async def route_get_hf_model_details(repo_id: str):
+    return await svc_get_hf_model_details(repo_id)
 
 
 @app.post("/api/models/download")
-def download_model(req: DownloadRequest):
-    key = f"{req.repo_id}/{req.filename}"
-    with _downloads_lock:
-        if key in _active_downloads and _active_downloads[key]["status"] in ["downloading", "queued"]:
-            return {"detail": "Already in download queue or actively downloading", "key": key}
-        
-        _active_downloads[key] = {
-            "repo_id": req.repo_id,
-            "filename": req.filename,
-            "status": "queued",
-            "downloaded": 0,
-            "total": 0,
-            "speed": "Pending",
-            "progress": 0.0,
-            "error": None
-        }
-    
-    # Save QUEUED state in DB
-    try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        model_id = _clean_model_id(req.filename)
-        cursor.execute("""
-            INSERT INTO models (model_id, name, quantization, status, notes)
-            VALUES (?, ?, ?, 'QUEUED', ?)
-            ON CONFLICT(model_id) DO UPDATE SET
-                status = 'QUEUED',
-                notes = ?
-        """, (model_id, req.filename, get_quantization_from_name(req.filename), "Queued for download", "Queued for download"))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"[Download Queue] Failed to write QUEUED state to DB: {e}")
+def route_download_model(req: DownloadRequest):
+    return svc_download_model(req)
 
-    _download_queue.put_nowait((req.repo_id, req.filename))
-    broadcast_notification(f"📥 Added {req.filename} to download queue.")
-    return {"detail": "Added to download queue", "key": key}
 
 @app.get("/api/models/downloads")
-def get_downloads_status():
-    with _downloads_lock:
-        return {"downloads": list(_active_downloads.values())}
+def route_get_downloads_status():
+    return svc_get_downloads_status()
+
 
 @app.post("/api/models/scan_and_register")
-def scan_and_register_models():
-    try:
-        # 1. Get all GGUF files in MODELS_DIR
-        if not os.path.exists(MODELS_DIR):
-            return {"detail": "Models directory not found.", "registered": []}
-            
-        gguf_files = []
-        for filename in os.listdir(MODELS_DIR):
-            if filename.lower().endswith(".gguf"):
-                if "mmproj" not in filename.lower():
-                    gguf_files.append(filename)
-                    
-        # 2. Check what is already present in models.ini
-        registered_in_ini = set()
-        if os.path.exists(MODES_INI_PATH):
-            try:
-                with open(MODES_INI_PATH, "r") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith(";"):
-                            continue
-                        m = re.match(r'^\[(.+?)\]$', line)
-                        if m:
-                            raw_name = m.group(1)
-                            if raw_name == "*":
-                                continue
-                            if raw_name.lower().endswith(".gguf"):
-                                registered_in_ini.add(raw_name.lower())
-                                registered_in_ini.add(raw_name[:-5].lower())
-                            else:
-                                registered_in_ini.add(raw_name.lower())
-                                registered_in_ini.add(f"{raw_name.lower()}.gguf")
-            except Exception as e:
-                print(f"[Scan] Failed to parse models.ini: {e}")
-                
-        # 3. Add missing models
-        added = []
-        for filename in gguf_files:
-            if filename.lower() not in registered_in_ini:
-                _add_to_models_ini(filename)
-                added.append(filename)
-                
-        return {"detail": f"Scan complete. Registered {len(added)} new models.", "registered": added}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def route_scan_and_register_models():
+    return svc_scan_and_register_models()
 
 @app.get("/api/benchmarks")
 def get_benchmarks(show_all: bool = False):
@@ -817,581 +557,23 @@ def get_benchmark_details(model_id: str):
         print(f"Error fetching benchmark details for {model_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-_benchmark_running = False
-_benchmark_lock = asyncio.Lock()
-_benchmark_progress = {
-    "running": False,
-    "model_id": "",
-    "current_round": "",
-    "rounds_completed": 0,
-    "total_rounds": 5,
-    "logs": [],
-    "queue_running": False,
-    "queue": [],
-    "queue_completed": [],
-    "queue_current_index": 0
-}
-
-# (BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, and _rotate_benchmark_log_if_needed are imported from utils.bench_log)
-
-
-def log_benchmark_progress(msg: str):
-    print(msg)
-    _benchmark_progress["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-    if len(_benchmark_progress["logs"]) > 200:
-        _benchmark_progress["logs"].pop(0)
-
-    # Also write to persistent log file (best-effort, never fail the app for this)
-    try:
-        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
-        _rotate_benchmark_log_if_needed()
-        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
-
-
-def log_benchmark_error(msg: str):
-    """Write an error-level benchmark log with full traceback."""
-    import traceback as _tb
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] ERROR: {msg}"
-    print(line)
-    
-    try:
-        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
-        _rotate_benchmark_log_if_needed()
-        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{line}\n")
-            tb_lines = traceback.format_exc().split("\n")
-            # Skip the last line (it's just the exception name, already in 'msg')
-            if len(tb_lines) > 1 and tb_lines[-1].strip() == "":
-                f.write(f"Traceback:\n")
-                for l in tb_lines[:-1]:
-                    f.write(f"  {l}\n")
-            else:
-                for l in tb_lines:
-                    if l.strip():
-                        f.write(f"  {l}\n")
-    except Exception:
-        pass
-
-
-def log_benchmark(msg: str):
-    """Write a benchmark progress message to both console and persistent file."""
-    print(msg)
-    _benchmark_progress["logs"] = getattr(_benchmark_progress, "logs", [])  # ensure backwards compat
-    if isinstance(_benchmark_progress.get("logs"), list) and len(_benchmark_progress["logs"]) < 200:
-        _benchmark_progress["logs"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
-
-    try:
-        os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
-        _rotate_benchmark_log_if_needed()
-        with open(BENCHMARK_EXECUTION_LOG, "a", encoding="utf-8") as f:
-            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
-    except Exception:
-        pass
-
-
+# (benchmark globals, logging, and task functions moved to services/benchmark_svc.py)
 # (BenchmarkRunRequest is imported from models.requests)
 
-
-async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
-    global _benchmark_running
-    
-    _benchmark_progress["running"] = True
-    _benchmark_progress["model_id"] = model_id
-    _benchmark_progress["current_round"] = "Initializing..."
-    _benchmark_progress["rounds_completed"] = 0
-    _benchmark_progress["logs"] = []
-    
-    log_benchmark(f"Starting benchmark sequence for model: {model_id}")
-    
-    prompts = {
-        "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
-        "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
-        "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
-        "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
-        "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
-    }
-    
-    rounds_list = []
-    server_url = get_llm_server_url()
-    # Use chat completions endpoint so instruct models receive proper
-    # chat template formatting (raw /completion causes instruct models
-    # like Gemma-4 to output placeholder templates instead of real answers)
-    api_url = f"{server_url}/v1/chat/completions"
-    
-    try:
-        async with httpx.AsyncClient(timeout=600.0) as client:
-            for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
-                _benchmark_progress["current_round"] = round_name
-                log_benchmark(f"Executing {round_name}...")
-                
-                preset_id = await _get_preset_id_for_model(model_id)
-                payload = {
-                    "model": preset_id,
-                    "messages": [{"role": "user", "content": prompt_text}],
-                    "temperature": 0.7,
-                    "stream": False,
-                    "max_tokens": 4096
-                }
-                
-                start_time = time.time()
-                content = ""
-                tokens_predicted = 0
-                speed_tps = 0.0
-                duration = 0.0
-                
-                def _parse_response(response):
-                    nonlocal content, tokens_predicted, speed_tps, duration
-                    if response.status_code == 200:
-                        res_data = response.json()
-                        choice = res_data.get("choices", [{}])[0]
-                        content = choice.get("message", {}).get("content", "")
-                        usage = res_data.get("usage", {})
-                        tokens_predicted = usage.get("completion_tokens", 0)
-                        timings = res_data.get("timings", {})
-                        speed_tps = timings.get("predicted_per_second", 0)
-                        
-                        if tokens_predicted == 0 and content:
-                            tokens_predicted = len(content) // 4
-                        
-                        if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
-                            speed_tps = tokens_predicted / duration
-                    else:
-                        log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
-                
-                # Track whether we got a server error (non-200) so retries don't loop on persistent errors
-                has_server_error = False
-                try:
-                    response = await client.post(api_url, json=payload)
-                    _parse_response(response)
-                    if response.status_code != 200:
-                        content = ""  # Mark as empty for retry logic
-                        has_server_error = True
-                except Exception as round_err:
-                    tb = traceback.format_exc()
-                    log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
-                    content = ""
-                    has_server_error = True
-                
-                # Retry if content is empty (model hit token limit while thinking).
-                # Skip retries on server errors since they won't help.
-                retry_count = 0
-                max_retries = 3
-                while not content and retry_count < max_retries and not has_server_error:
-                    retry_count += 1
-                    log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
-                    await asyncio.sleep(5)  # brief pause before retry
-                    try:
-                        start_time = time.time()
-                        response = await client.post(api_url, json=payload)
-                        _parse_response(response)
-                        if not content and response.status_code == 200 and tokens_predicted > 0:
-                            log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
-                    except Exception as retry_err:
-                        tb = traceback.format_exc()
-                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
-                
-                # Determine final outcome
-                if not content and has_server_error:
-                    # Don't retry on persistent server errors (retries won't help)
-                    log_benchmark(f"{round_name}: Server error — no retries")
-                    rounds_list.append({
-                        "round_name": get_gold_key(round_name) or round_name,
-                        "error": f"Server error (non-200 response), no content"
-                    })
-                elif not content and retry_count >= max_retries:
-                    # Exhausted all retries with empty responses
-                    log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
-                    rounds_list.append({
-                        "round_name": get_gold_key(round_name) or round_name,
-                        "error": f"Empty response after {max_retries} retries"
-                    })
-                elif content:
-                    duration = time.time() - start_time
-                    log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
-                    rounds_list.append({
-                        "round_name": get_gold_key(round_name) or round_name,
-                        "prompt": prompt_text,
-                        "response": content,
-                        "metrics": {
-                            "duration_seconds": round(duration, 2),
-                            "tokens_generated": tokens_predicted,
-                            "tokens_per_second": round(speed_tps, 2)
-                        }
-                    })
-                
-                _benchmark_progress["rounds_completed"] = idx
-                
-                if idx < len(prompts):
-                    log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
-                    await asyncio.sleep(10)
-                    
-        # Compile and save JSON
-        results = {
-            "model_id": model_id,
-            "model_name": os.path.basename(model_id),
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "rounds": rounds_list
-        }
-        
-        out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
-        os.makedirs(out_dir, exist_ok=True)
-        raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
-        
-        with open(raw_output_path, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=4, ensure_ascii=False)
-            
-        log_benchmark(f"Saved raw results to {raw_output_path}")
-        
-        # Trigger judge
-        log_benchmark("Starting AI Judge grading sequence...")
-        _benchmark_progress["current_round"] = "AI Judge Grading..."
-        
-        req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
-        try:
-            await judge_benchmark(req)
-            log_benchmark("AI Judge grading sequence completed successfully!")
-        except Exception as j_err:
-            tb = traceback.format_exc()
-            log_benchmark_error(f"Judge grading failed: {j_err}")
-        
-    except Exception as run_err:
-        tb = traceback.format_exc()
-        log_benchmark_error(f"Model: {model_id}, Benchmark failed: {run_err}")
-        try:
-            conn = get_db_conn()
-            cursor = conn.cursor()
-            cursor.execute("""
-            INSERT INTO models (model_id, name, quantization, status, notes)
-            VALUES (?, ?, ?, 'FAILED', ?)
-            ON CONFLICT(model_id) DO UPDATE SET
-                status = 'FAILED',
-                notes = ?
-            """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id), f"Failed: {str(run_err)}", f"Failed: {str(run_err)}"))
-            conn.commit()
-            conn.close()
-        except Exception as db_err:
-            log_benchmark_error(f"Model: {model_id}, Failed to record failure in DB: {db_err}")
-    finally:
-        async with _benchmark_lock:
-            global _benchmark_running
-            _benchmark_running = False
-            _benchmark_progress["running"] = False
-        _benchmark_progress["current_round"] = "Finished"
-
+# (run_benchmark_task, run_benchmark_queue_task moved to services/benchmark_svc.py)
 
 # (BenchmarkQueueRequest is imported from models.requests)
 
 
-async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
-    global _benchmark_running
-    
-    _benchmark_progress["running"] = True
-    _benchmark_progress["queue_running"] = True
-    _benchmark_progress["queue"] = models
-    _benchmark_progress["queue_completed"] = []
-    _benchmark_progress["queue_current_index"] = 0
-    _benchmark_progress["logs"] = []
-    
-    log_benchmark(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
-    
-    try:
-        for idx, model_id in enumerate(models):
-            _benchmark_progress["queue_current_index"] = idx
-            log_benchmark(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
-            
-            # 1. Load the test model via the server API
-            preset_id = await _get_preset_id_for_model(model_id)
-            log_benchmark(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
-            async with httpx.AsyncClient() as client:
-                try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
-                    if load_res.status_code != 200:
-                        try:
-                            res_json = load_res.json()
-                            error_msg = res_json.get("error", {}).get("message", "")
-                            if "already running" in error_msg or "already loaded" in error_msg:
-                                log_benchmark(f"Queue: {model_id} is already loaded and running.")
-                            else:
-                                tb = traceback.format_exc()
-                                log_benchmark_error(f"Model: {model_id}, Server returned {load_res.status_code}: {error_msg}")
-                                continue
-                        except Exception as e:
-                            tb = traceback.format_exc()
-                            log_benchmark_error(f"Model: {model_id}, Server HTTP error {load_res.status_code}")
-                            continue
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    log_benchmark_error(f"Model: {model_id}, Exception loading: {e}")
-                    continue
-            
-            # 2. Wait for model to load successfully
-            log_benchmark(f"Queue: Waiting for {model_id} to load...")
-            loaded = False
-            for _ in range(60): # wait up to 120 seconds
-                await asyncio.sleep(2)
-                curr_loaded = await _get_loaded_model()
-                if curr_loaded and _clean_model_id(curr_loaded) == _clean_model_id(model_id):
-                    loaded = True
-                    break
-            
-            if not loaded:
-                log_benchmark_error(f"Model: {model_id}, Timeout loading model")
-                continue
-                
-            log_benchmark(f"Queue: Success! {model_id} loaded. Running benchmark...")
-            
-            # 3. Create run_id and run the benchmark rounds on the test model
-            run_id = str(uuid.uuid4())
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
-            raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
-            
-            # Normalize model_id: lowercase + strip .gguf to avoid duplicate DB records
-            # when the same model is loaded with different casing or suffix across runs
-            norm_model_id = _clean_model_id(model_id)
-            display_name = os.path.basename(model_id)
-            
-            # Insert or update status in DB as TESTING
-            try:
-                conn = get_db_conn()
-                cursor = conn.cursor()
-                cursor.execute("""
-                INSERT INTO models (model_id, name, quantization, status, notes)
-                VALUES (?, ?, ?, 'TESTING', ?)
-                ON CONFLICT(model_id) DO UPDATE SET
-                    status = 'TESTING',
-                    notes = ?
-                """, (norm_model_id, display_name, get_quantization_from_name(model_id), f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
-                
-                # Delete old run records (idempotent: wipe previous runs for same model)
-                cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (norm_model_id,))
-                for old_run in cursor.fetchall():
-                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
-                    
-                cursor.execute("""
-                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
-                VALUES (?, ?, ?, ?)
-                """, (run_id, norm_model_id, timestamp, raw_output_path))
-                conn.commit()
-                conn.close()
-                # Use normalized id going forward so judge grading matches the DB record
-                model_id = norm_model_id
-            except Exception as db_err:
-                tb = traceback.format_exc()
-                log_benchmark_error(f"Model: {model_id}, Queue DB Error: {db_err}")
-                continue
-                
-            prompts = {
-                "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
-                "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
-                "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
-                "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
-                "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
-            }
-            
-            rounds_list = []
-            server_url = get_llm_server_url()
-            # Use chat completions endpoint so instruct models receive proper
-            # chat template formatting (raw /completion causes instruct models
-            # like Gemma-4 to output placeholder templates instead of real answers)
-            api_url = f"{server_url}/v1/chat/completions"
-            
-            async with httpx.AsyncClient(timeout=600.0) as client:
-                for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
-                    _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
-                    _benchmark_progress["rounds_completed"] = r_idx - 1
-                    
-                    preset_id = await _get_preset_id_for_model(model_id)
-                    log_benchmark(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
-                    payload = {
-                        "model": preset_id,
-                        "messages": [{"role": "user", "content": prompt_text}],
-                        "temperature": 0.7,
-                        "stream": False,
-                        "max_tokens": 4096
-                    }
-                    start_time = time.time()
-                    content = ""
-                    tokens_predicted = 0
-                    speed_tps = 0.0
-                    duration = 0.0
-                    
-                    def _parse_response(response):
-                        nonlocal content, tokens_predicted, speed_tps, duration
-                        if response.status_code == 200:
-                            res_data = response.json()
-                            choice = res_data.get("choices", [{}])[0]
-                            content = choice.get("message", {}).get("content", "")
-                            usage = res_data.get("usage", {})
-                            tokens_predicted = usage.get("completion_tokens", 0)
-                            # Timings may be in top-level or per-choice depending on llama.cpp version
-                            timings = res_data.get("timings", {})
-                            speed_tps = timings.get("predicted_per_second", 0)
-                            if tokens_predicted == 0 and content:
-                                tokens_predicted = len(content) // 4
-                            if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
-                                speed_tps = tokens_predicted / duration
-                        else:
-                            log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
-                    
-                    # Track whether we got a server error (non-200) so retries don't loop on persistent errors
-                    has_server_error = False
-                    try:
-                        response = await client.post(api_url, json=payload)
-                        _parse_response(response)
-                        if response.status_code != 200:
-                            content = ""
-                            has_server_error = True
-                    except Exception as round_err:
-                        tb = traceback.format_exc()
-                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
-                        content = ""
-                        has_server_error = True
-                    
-                    # Retry if content is empty (model hit token limit while thinking).
-                    # Skip retries on server errors since they won't help.
-                    retry_count = 0
-                    max_retries = 3
-                    while not content and retry_count < max_retries and not has_server_error:
-                        retry_count += 1
-                        log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
-                        await asyncio.sleep(5)  # brief pause before retry
-                        try:
-                            start_time = time.time()
-                            response = await client.post(api_url, json=payload)
-                            _parse_response(response)
-                            if not content and response.status_code == 200 and tokens_predicted > 0:
-                                log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
-                        except Exception as retry_err:
-                            tb = traceback.format_exc()
-                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
-                    
-                    # Determine final outcome
-                    if not content and has_server_error:
-                        log_benchmark(f"{round_name}: Server error — no retries")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "error": f"Server error (non-200 response), no content"
-                        })
-                    elif not content and retry_count >= max_retries:
-                        log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "error": f"Empty response after {max_retries} retries"
-                        })
-                    elif content:
-                        duration = time.time() - start_time
-                        log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "prompt": prompt_text,
-                            "response": content,
-                            "metrics": {
-                                "duration_seconds": round(duration, 2),
-                                "tokens_generated": tokens_predicted,
-                                "tokens_per_second": round(speed_tps, 2)
-                            }
-                        })
-                    
-                    _benchmark_progress["rounds_completed"] = r_idx
-                    if r_idx < len(prompts):
-                        log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
-                        await asyncio.sleep(10)
-                        
-            # Save raw JSON results
-            results = {
-                "model_id": model_id,
-                "model_name": os.path.basename(model_id),
-                "timestamp": timestamp,
-                "rounds": rounds_list
-            }
-            os.makedirs(out_dir, exist_ok=True)
-            with open(raw_output_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, indent=4, ensure_ascii=False)
-            log_benchmark("Saved raw test results.")
-            
-            # 4. Switch to Judge Model for evaluation
-            preset_id = await _get_preset_id_for_model(judge_model_id)
-            log_benchmark(f"Queue: Requesting server to load Judge model: {judge_model_id} (preset: {preset_id})")
-            async with httpx.AsyncClient() as client:
-                try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
-                    if load_res.status_code != 200:
-                        try:
-                            res_json = load_res.json()
-                            error_msg = res_json.get("error", {}).get("message", "")
-                            if "already running" in error_msg or "already loaded" in error_msg:
-                                log_benchmark(f"Queue: Judge model {judge_model_id} is already loaded and running.")
-                            else:
-                                tb = traceback.format_exc()
-                                log_benchmark_error(f"Judge: Server returned {load_res.status_code}: {error_msg}")
-                                continue
-                        except Exception as e:
-                            tb = traceback.format_exc()
-                            log_benchmark_error(f"Judge: HTTP error {load_res.status_code}")
-                            continue
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    log_benchmark_error(f"Judge: Exception loading: {e}")
-                    continue
-                    
-            # Wait for Judge model to load
-            log_benchmark(f"Queue: Waiting for Judge model to load...")
-            judge_loaded = False
-            for _ in range(60):
-                await asyncio.sleep(2)
-                curr_loaded = await _get_loaded_model()
-                if curr_loaded and _clean_model_id(curr_loaded) == _clean_model_id(judge_model_id):
-                    judge_loaded = True
-                    break
-            
-            if not judge_loaded:
-                log_benchmark_error(f"Judge: Timeout loading model {judge_model_id}")
-                continue
-                
-            # 5. Execute AI Judge evaluation
-            log_benchmark("Queue: Starting AI Judge grading sequence...")
-            _benchmark_progress["current_round"] = "AI Judge Grading..."
-            try:
-                req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
-                await judge_benchmark(req)
-                log_benchmark(f"Queue: AI Judge grading completed successfully for {model_id}!")
-                _benchmark_progress["queue_completed"].append(model_id)
-            except Exception as judge_err:
-                tb = traceback.format_exc()
-                log_benchmark_error(f"Judge: Grading failed for model {model_id}: {judge_err}")
-                
-            # Wait 10s cooldown between models
-            if idx < len(models) - 1:
-                log_benchmark("Cooling down 10 seconds before next model in queue...")
-                await asyncio.sleep(10)
-        
-        log_benchmark("--- Automated Benchmark Queue Completed Successfully! ---")
-        
-    except Exception as queue_err:
-        tb = traceback.format_exc()
-        log_benchmark_error(f"Benchmark queue execution failed: {queue_err}")
-    finally:
-        async with _benchmark_lock:
-            _benchmark_running = False
-        _benchmark_progress["running"] = False
-        _benchmark_progress["queue_running"] = False
-        _benchmark_progress["current_round"] = "Finished"
 
 
 @app.post("/api/benchmarks/queue/run")
-async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: BackgroundTasks):
-    global _benchmark_running
-    
-    async with _benchmark_lock:
-        if _benchmark_running:
+async def route_run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: BackgroundTasks):
+    async with get_benchmark_lock():
+        if get_benchmark_running():
             raise HTTPException(status_code=400, detail="A benchmark or queue is already actively running. Please wait for it to complete.")
-        _benchmark_running = True
-        
+        set_benchmark_running(True)
+
     try:
         background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id)
         return {
@@ -1400,68 +582,58 @@ async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: Back
             "queue_size": len(req.models)
         }
     except Exception as e:
-        async with _benchmark_lock:
-            _benchmark_running = False
+        async with get_benchmark_lock():
+            set_benchmark_running(False)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/benchmarks/run")
-async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTasks):
-    global _benchmark_running
-    
-    async with _benchmark_lock:
-        if _benchmark_running:
+async def route_run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTasks):
+    async with get_benchmark_lock():
+        if get_benchmark_running():
             raise HTTPException(status_code=400, detail="A benchmark is already actively running. Please wait for it to complete.")
-        _benchmark_running = True
-        
+        set_benchmark_running(True)
+
     try:
-        # Detect loaded model and normalize ID to avoid duplicate DB records
         raw_model_id = await _get_loaded_model()
         if not raw_model_id:
-            async with _benchmark_lock:
-                _benchmark_running = False
+            async with get_benchmark_lock():
+                set_benchmark_running(False)
             raise HTTPException(status_code=400, detail="No active model is loaded in the server. Please load a model before running benchmarks.")
-        
-        # Normalize: lowercase + strip .gguf so every run of the same model merges
+
         model_id = _clean_model_id(raw_model_id)
         display_name = os.path.basename(raw_model_id)
-            
+
         run_id = str(uuid.uuid4())
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Determine raw output path
+
         out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
         raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
-        
-        # Save placeholder records in database
+
         conn = get_db_conn()
         cursor = conn.cursor()
-        
         cursor.execute("""
         INSERT INTO models (model_id, name, quantization, status, notes)
         VALUES (?, ?, ?, 'TESTING', ?)
         ON CONFLICT(model_id) DO UPDATE SET
             status = 'TESTING',
             notes = ?
-        """, (model_id, display_name, get_quantization_from_name(raw_model_id), f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
-        
-        # Clean any historical test run for this model so we keep only the latest
+        """, (model_id, display_name, get_quantization_from_name(raw_model_id),
+              f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
+
         cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
         old_runs = cursor.fetchall()
         for old_run in old_runs:
             cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
-            
+
         cursor.execute("""
         INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
         VALUES (?, ?, ?, ?)
         """, (run_id, model_id, timestamp, raw_output_path))
-        
         conn.commit()
         conn.close()
-        
-        # Queue background task (pass raw_model_id for preset lookup, normalized model_id for DB)
+
         background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id)
-        
         return {
             "status": "success",
             "message": "Benchmark sequence initiated successfully in the background.",
@@ -1469,25 +641,24 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
             "model_id": model_id
         }
     except Exception as e:
-        async with _benchmark_lock:
-            _benchmark_running = False
+        async with get_benchmark_lock():
+            set_benchmark_running(False)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/benchmarks/status")
-def get_benchmark_status():
-    return _benchmark_progress
+def route_get_benchmark_status():
+    return get_benchmark_progress()
 
 
 @app.get("/api/benchmarks/logs")
-def get_benchmark_logs(lines: int = 200):
+def route_get_benchmark_logs(lines: int = 200):
     """Return the persistent benchmark execution log file."""
     try:
         if not os.path.exists(BENCHMARK_EXECUTION_LOG):
             return {"logs": ""}
         with open(BENCHMARK_EXECUTION_LOG, "r", encoding="utf-8") as f:
             all_lines = f.readlines()
-        # Return last N lines
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {"logs": "".join(tail)}
     except Exception as e:
@@ -1496,8 +667,8 @@ def get_benchmark_logs(lines: int = 200):
 
 
 @app.get("/api/benchmarks/outputs")
-def get_benchmark_outputs():
-    """List all saved raw JSON output files and the execution log."""
+def route_get_benchmark_outputs():
+    """List all saved raw JSON output files."""
     try:
         os.makedirs(BENCHMARK_LOG_DIR, exist_ok=True)
         outputs = []
@@ -1505,10 +676,9 @@ def get_benchmark_outputs():
             full_path = os.path.join(BENCHMARK_LOG_DIR, f_name)
             if not os.path.isfile(full_path):
                 continue
-            stat_info = os.stat(full_path)
-            # Skip the execution log itself from this listing
             if f_name == "benchmark_execution.log":
                 continue
+            stat_info = os.stat(full_path)
             outputs.append({
                 "filename": f_name,
                 "size_bytes": stat_info.st_size,
@@ -1517,319 +687,20 @@ def get_benchmark_outputs():
         return {"outputs": outputs}
     except Exception as e:
         print(f"[Outputs] Error listing benchmark outputs: {e}")
-        return {"outputs": [], "error": str(e) + ": " + traceback.format_exc() if 'traceback' in dir(__builtins__) else str(e)}
+        return {"outputs": [], "error": str(e)}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase F – Judge
+# (judge helpers and judge_benchmark moved to services/judge_svc.py)
+# ─────────────────────────────────────────────────────────────────────────────
 
 # (JudgeRequest is imported from models.requests)
 
 
-def get_llm_server_url() -> str:
-    try:
-        import socket
-        socket.gethostbyname("llm-server")
-        return "http://llm-server:8080"
-    except Exception:
-        return "http://localhost:8080"
-
-
-def get_gold_answers() -> dict:
-    paths = [
-        "/app/answers1.json",
-        "/home/nui/llmaCPP/answers1.json",
-        "/llm-server/answers1.json"
-    ]
-    for path in paths:
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    raise FileNotFoundError("Could not locate answers1.json")
-
-
-def load_raw_json(path_str: str) -> dict:
-    if os.path.exists(path_str):
-        with open(path_str, "r", encoding="utf-8") as f:
-            return json.load(f)
-    
-    basename = os.path.basename(path_str)
-    alternates = [
-        os.path.join("/home/nui/workspace/llmTest/model_test_output", basename),
-        os.path.join("/llm-server/benchmark_results", basename),
-        os.path.join("/app/benchmark_results", basename),
-        os.path.join("/home/nui/llmaCPP/benchmark_results", basename),
-    ]
-    for alt in alternates:
-        if os.path.exists(alt):
-            try:
-                with open(alt, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    raise FileNotFoundError(f"Could not load raw JSON for path: {path_str}")
-
-
-def parse_judge_json(raw_text: str) -> dict:
-    clean_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL)
-    start_idx = clean_text.find('{')
-    end_idx = clean_text.rfind('}')
-    if start_idx == -1 or end_idx == -1:
-        raise ValueError(f"No JSON object found in response: {raw_text[:200]}")
-    json_str = clean_text[start_idx:end_idx+1]
-    return json.loads(json_str)
-
-
-async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
-    url = f"{get_llm_server_url()}/v1/chat/completions"
-    preset_id = await _get_preset_id_for_model(judge_model)
-    log_benchmark(f"Grading round using Judge model: {preset_id}...")
-    payload = {
-        "model": preset_id,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.1,
-        "stream": False
-    }
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        res_data = response.json()
-        log_benchmark(f"Grading round completed for Judge model: {preset_id}")
-        return res_data["choices"][0]["message"]["content"]
-
-
-def get_gold_key(round_name: str) -> Optional[str]:
-    round_map = {
-        "round 1": "knowledge_qa",
-        "round 2": "technical_reasoning",
-        "round 3": "code_generation",
-        "round 4": "abstract_logic",
-        "round 5": "creative_writing"
-    }
-    r_lower = round_name.lower().strip()
-    if r_lower in ["knowledge_qa", "technical_reasoning", "code_generation", "abstract_logic", "creative_writing"]:
-        return r_lower
-    for key, val in round_map.items():
-        if key in r_lower:
-            return val
-    return None
-
-
-def get_quantization_from_name(name: str) -> str:
-    match = re.search(r'\b(Q[0-9]_[K_M_L_S_X_]+|IQ[0-9]_[A-Z_]+)\b', name, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
-    return "Unknown"
-
-
 @app.post("/api/benchmarks/judge")
-async def judge_benchmark(req: JudgeRequest):
-    try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        
-        # 1. Determine run_id and model_id
-        if req.run_id:
-            cursor.execute("SELECT run_id, model_id, raw_output_path FROM test_runs WHERE run_id = ?", (req.run_id,))
-            run_row = cursor.fetchone()
-        else:
-            cursor.execute("SELECT run_id, model_id, raw_output_path FROM test_runs ORDER BY timestamp DESC LIMIT 1")
-            run_row = cursor.fetchone()
-            
-        if not run_row:
-            conn.close()
-            raise HTTPException(status_code=404, detail="No test run found to grade")
-            
-        run_id = run_row["run_id"]
-        model_id = run_row["model_id"]
-        raw_output_path = run_row["raw_output_path"]
-        
-        # 2. Determine Judge model
-        judge_model = req.judge_model_id or await _get_loaded_model()
-        if not judge_model:
-            conn.close()
-            raise HTTPException(status_code=400, detail="No active model loaded to act as Judge. Please load a model first.")
-            
-        # 3. Load raw JSON results
-        raw_data = load_raw_json(raw_output_path)
-        gold = get_gold_answers()
-        
-        # 4. Compute average TPS and Speed score
-        tps_list = []
-        for r in raw_data.get("rounds", []):
-            metrics = r.get("metrics", {})
-            tps = metrics.get("tokens_per_second") or 0.0
-            if not tps:
-                dur = metrics.get("duration_seconds") or 0.0
-                tok = metrics.get("tokens_generated") or 0.0
-                if dur > 0:
-                    tps = tok / dur
-            if tps > 0:
-                tps_list.append(tps)
-                
-        avg_tps = sum(tps_list) / len(tps_list) if tps_list else 0.0
-        speed_score = min(25, int((avg_tps / 60.0) * 25))
-        
-        # 5. Begin grading qualitative rounds
-        graded_rounds = []
-        hallucinations = []
-        
-        # Let's perform sequential grading
-        for r in raw_data.get("rounds", []):
-            round_name = r.get("round") or r.get("round_name") or ""
-            model_response = r.get("response", "")
-            gold_key = get_gold_key(round_name)
-            
-            if not gold_key or gold_key not in gold:
-                print(f"Skipping unmappable round: {round_name}")
-                continue
-                
-            gold_round = gold[gold_key]
-            correct_answer = gold_round.get("correct_answer", "")
-            key_points = gold_round.get("key_points", [])
-            max_points = gold_round.get("max_points", 0)
-            
-            key_points_str = "\n".join([f"- {kp}" for kp in key_points])
-            
-            system_prompt = "You are an expert, objective AI Benchmark Judge."
-            user_prompt = f"""You are grading a local LLM's response to a specific benchmark round.
-Compare the model's response against the provided Gold Standard and verify which key points were addressed.
-
-### Grading Rubric & Max Points:
-- Category: {gold_key}
-- Max Points: {max_points}
-
-### Gold Standard Ground Truth:
-{correct_answer}
-
-### Key Points to Verify:
-{key_points_str}
-
-### Model Response Under Test:
-\"\"\"
-{model_response}
-\"\"\"
-
-### Grading Instructions:
-1. Evaluate the model response strictly based on factual accuracy, correctness, and adherence to the key points.
-2. Award points up to the maximum ({max_points} pts). Be fair but strict.
-3. Deduced scores should be integers.
-4. Auditing Hallucinations: 
-   - If this is "Round 1: Knowledge QA" (knowledge_qa), check if the model fabricated, invented, or hallucinated facts, spelling, or etymology (e.g. fabricating parts of Bangkok's name, inventing Thai words, or providing wrong English translations).
-   - If a hallucination is detected, you MUST set "hallucination_detected" to true and provide a description.
-
-You must return a JSON object exactly matching this structure (do not output any other text or markdown outside of the JSON):
-{{
-    "score": <integer_score>,
-    "reasoning": "<concise_explanation_of_the_assigned_score>",
-    "hallucination_detected": <true_or_false>,
-    "hallucination_description": "<description_if_detected_else_empty>"
-}}"""
-            
-            print(f"Grading round: {gold_key} using judge {judge_model}...")
-            log_benchmark(f"Grading round: {gold_key} using judge {judge_model}")
-            try:
-                judge_response = await query_judge_model(judge_model, system_prompt, user_prompt)
-                grades = parse_judge_json(judge_response)
-                
-                score = grades.get("score") or 0
-                reasoning = grades.get("reasoning") or ""
-                hallucinated = grades.get("hallucination_detected") or False
-                hallucination_desc = grades.get("hallucination_description") or ""
-                
-                # Fetch round speed
-                round_tps = r.get("metrics", {}).get("tokens_per_second") or avg_tps
-                
-                graded_rounds.append({
-                    "round_name": gold_key,
-                    "score": min(max_points, int(score)),
-                    "reasoning": reasoning,
-                    "speed_tps": round_tps
-                })
-                
-                if hallucinated and hallucination_desc:
-                    hallucinations.append({
-                        "round_name": round_name,
-                        "description": hallucination_desc
-                    })
-            except Exception as grading_err:
-                tb = traceback.format_exc()
-                print(f"Failed to grade round {gold_key}: {grading_err}")
-                log_benchmark_error(f"Judge: Grading failed for round {gold_key}: {str(grading_err)}")
-                # Fallback to zero points on failure to avoid blocking
-                graded_rounds.append({
-                    "round_name": gold_key,
-                    "score": 0,
-                    "reasoning": f"Grading failed: {str(grading_err)}",
-                    "speed_tps": 0.0
-                })
-                
-        # 6. Save results to Database
-        # Clean old scores and hallucinations for this model
-        cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ? AND run_id != ?", (model_id, run_id))
-        old_runs = cursor.fetchall()
-        for old_run in old_runs:
-            cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
-            
-        cursor.execute("DELETE FROM model_hallucinations WHERE model_id = ?", (model_id,))
-        cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (run_id,))
-        
-        # Update model metadata in models table
-        model_name = raw_data.get("model_name") or model_id
-        quant = get_quantization_from_name(model_name)
-        status = "⚠️ HALLUCINATION WARNING" if hallucinations else "✅ FAST"
-        
-        cursor.execute("""
-        INSERT INTO models (model_id, name, quantization, status, notes)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(model_id) DO UPDATE SET
-            name = excluded.name,
-            quantization = excluded.quantization,
-            status = excluded.status,
-            notes = excluded.notes
-        """, (model_id, model_name, quant, status, f"Graded by {judge_model} on {time.strftime('%Y-%m-%d %H:%M:%S')}"))
-        
-        # Insert speed_metric round score
-        cursor.execute("""
-        INSERT INTO round_scores (run_id, round_name, score, reasoning, speed_tps)
-        VALUES (?, 'speed_metric', ?, ?, ?)
-        """, (run_id, speed_score, f"Observed average TPS: {avg_tps:.2f}", avg_tps))
-        
-        # Insert qualitative scores
-        for gr in graded_rounds:
-            cursor.execute("""
-            INSERT INTO round_scores (run_id, round_name, score, reasoning, speed_tps)
-            VALUES (?, ?, ?, ?, ?)
-            """, (run_id, gr["round_name"], gr["score"], gr["reasoning"], gr["speed_tps"]))
-            
-        # Insert hallucinations
-        for h in hallucinations:
-            cursor.execute("""
-            INSERT INTO model_hallucinations (model_id, round_name, description, severity)
-            VALUES (?, ?, ?, 'warning')
-            """, (model_id, h["round_name"], h["description"]))
-        
-        log_benchmark(f"All {len(graded_rounds)} qualitative rounds graded. Hallucinations: {len(hallucinations)}")
-        conn.commit()
-        conn.close()
-        
-        return {
-            "status": "success",
-            "model_id": model_id,
-            "run_id": run_id,
-            "average_tps": round(avg_tps, 2),
-            "speed_score": speed_score,
-            "graded_rounds": graded_rounds,
-            "hallucinations_detected": len(hallucinations)
-        }
-    except Exception as e:
-        tb = traceback.format_exc()
-        log_benchmark_error(f"Judge grading error for model {model_id}: {e}")
-        print(f"Error in judge_benchmark: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+async def route_judge_benchmark(req: JudgeRequest):
+    return await svc_judge_benchmark(req)
 
 
 @app.get("/api/logs")
