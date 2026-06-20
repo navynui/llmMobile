@@ -31,26 +31,21 @@ except ImportError:
 
 app = FastAPI(title="LLM Mobile Manager")
 
-# --- Constants ---
-MODES_INI_PATH      = "/models/models.ini"
-MODELS_DIR          = "/models"
-
-DB_PATH = "/app/llm_bench.db"
-if not os.path.exists(DB_PATH):
-    DB_PATH = "/home/nui/llmaCPP/llm_bench.db"
-
-def get_db_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
-IMAGE_GEN_OUTPUT    = "/comfyui-output"
-WORKFLOW_PATH       = "/app/MyZimage_turbo.json"
-PROMPTS_FILE        = "/app/PROMPTS"
-LLM_PROJECT_NAME    = os.environ.get("LLM_PROJECT_NAME", "llmacpp")
-LLM_COMPOSE_DIR     = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
-COMFYUI_HOST        = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")
-COMFY_CLIENT_ID     = "llm-mobile"
+# --- Import utils and models ---
+from utils.common import (
+    MODES_INI_PATH, MODELS_DIR, IMAGE_GEN_OUTPUT, WORKFLOW_PATH, PROMPTS_FILE,
+    LLM_PROJECT_NAME, LLM_COMPOSE_DIR, COMFYUI_HOST, COMFY_CLIENT_ID,
+    NODE_PROMPT_TEXT, NODE_RESOLUTION, NODE_KSAMPLER,
+    VRAM_CRITICAL_THRESHOLD, VRAM_EMERGENCY_THRESHOLD, MQTT_CONFIG,
+    safe_join, _deep_copy, get_local_stats
+)
+from utils.db_utils import DB_PATH, get_db_conn, consolidate_database, _clean_model_id
+from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
+from models.requests import (
+    ModelsIniRequest, ModelActionRequest, GenerateRequest, MkdirRequest,
+    MoveRequest, DeleteRequest, DownloadRequest, BenchmarkRunRequest,
+    BenchmarkQueueRequest, JudgeRequest
+)
 
 # --- Push Notification Globals ---
 VAPID_PUBLIC_KEY = ""
@@ -59,14 +54,6 @@ VAPID_KEYS_FILE = os.path.join(IMAGE_GEN_OUTPUT, "vapid_keys.json")
 _push_subscriptions = []
 SUBS_FILE_PATH = os.path.join(IMAGE_GEN_OUTPUT, "push_subscriptions.json")
 QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
-
-# ComfyUI workflow node IDs (MyZimage_turbo.json layout)
-NODE_PROMPT_TEXT    = "57:27"   # CLIPTextEncode → .inputs.text
-NODE_RESOLUTION     = "57:13"   # EmptySD3LatentImage → .inputs.width / height
-NODE_KSAMPLER       = "57:3"    # KSampler → .inputs.seed
-
-VRAM_CRITICAL_THRESHOLD  = 90.0
-VRAM_EMERGENCY_THRESHOLD = 95.0
 
 os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
 
@@ -120,60 +107,7 @@ _workflow_lock = threading.Lock()
 # Helpers
 # ───────────────────────────────────────────────
 
-def safe_join(base_dir: str, *path_parts: str) -> str:
-    resolved_base = os.path.realpath(base_dir)
-    target = os.path.realpath(os.path.join(resolved_base, *path_parts))
-    if not target.startswith(resolved_base):
-        raise HTTPException(status_code=400, detail="Access denied (outside root folder)")
-    return target
-
-def _deep_copy(d: dict) -> dict:
-    return json.loads(json.dumps(d))
-
-
-# ───────────────────────────────────────────────
-# Telemetry – local polling fallback
-# ───────────────────────────────────────────────
-
-def get_local_stats() -> dict:
-    stats: dict = {}
-    stats["cpu_util"] = psutil.cpu_percent()
-    ram = psutil.virtual_memory()
-    stats["ram_percent"] = ram.percent
-    try:
-        usage = psutil.disk_usage("/")
-        stats["storage_percent"]  = usage.percent
-        stats["storage_used_gb"]  = round(usage.used  / (1024 ** 3), 1)
-        stats["storage_total_gb"] = round(usage.total / (1024 ** 3), 1)
-        stats["storage_free_gb"]  = round(usage.free  / (1024 ** 3), 1)
-    except Exception:
-        pass
-    try:
-        temps = psutil.sensors_temperatures()
-        if "coretemp" in temps:
-            stats["cpu_temp"] = temps["coretemp"][0].current
-        elif temps:
-            stats["cpu_temp"] = list(temps.values())[0][0].current
-    except Exception:
-        pass
-    try:
-        res = subprocess.run(
-            ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=2,
-        )
-        if res.returncode == 0:
-            parts = res.stdout.strip().split(",")
-            if len(parts) >= 4:
-                stats["gpu_temp"]     = float(parts[0].strip())
-                stats["gpu_util"]     = float(parts[1].strip())
-                used  = float(parts[2].strip())
-                total = float(parts[3].strip())
-                if total > 0:
-                    stats["vram_percent"] = round((used / total) * 100, 1)
-    except Exception:
-        pass
-    return stats
+# (safe_join, _deep_copy, and get_local_stats are imported from utils.common)
 
 
 def _on_mqtt_message(client, userdata, msg):
@@ -390,8 +324,7 @@ def _remove_from_models_ini(filename: str):
         print(f"[Models INI] Failed to clean up {filename}: {e}")
 
 
-class ModelsIniRequest(BaseModel):
-    content: str
+# (ModelsIniRequest is imported from models.requests)
 
 
 @app.get("/models")
@@ -472,8 +405,7 @@ async def proxy_llm_models():
             raise HTTPException(status_code=502, detail=str(e))
 
 
-class ModelActionRequest(BaseModel):
-    model: str
+# (ModelActionRequest is imported from models.requests)
 
 
 async def _get_preset_id_for_model(model_id: str) -> str:
@@ -498,95 +430,7 @@ async def _get_preset_id_for_model(model_id: str) -> str:
     return model_id if model_id.lower().endswith(".gguf") else (model_id + ".gguf")
 
 
-def _clean_model_id(mid: str) -> str:
-    if not mid:
-        return ""
-    return os.path.basename(mid).lower().replace(".gguf", "")
-
-
-def consolidate_database():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = OFF;")
-        cursor = conn.cursor()
-        
-        # 1. Fetch all models
-        cursor.execute("SELECT * FROM models")
-        models_rows = [dict(row) for row in cursor.fetchall()]
-        
-        # Group models by their clean ID
-        from collections import defaultdict
-        grouped = defaultdict(list)
-        for row in models_rows:
-            clean_id = _clean_model_id(row['model_id'])
-            grouped[clean_id].append(row)
-            
-        for clean_id, dups in grouped.items():
-            model_ids = [r['model_id'] for r in dups]
-            placeholders = ",".join(["?"] * len(model_ids))
-            
-            # Get all runs for all duplicate model_ids
-            cursor.execute(f"SELECT * FROM test_runs WHERE model_id IN ({placeholders})", model_ids)
-            runs = [dict(row) for row in cursor.fetchall()]
-            
-            # Sort runs by timestamp descending to find the latest
-            runs.sort(key=lambda x: x['timestamp'], reverse=True)
-            
-            if runs:
-                latest_run = runs[0]
-                older_runs = runs[1:]
-                
-                # Delete older runs and their scores
-                for old_run in older_runs:
-                    cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (old_run['run_id'],))
-                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run['run_id'],))
-                
-                # Update latest run's model_id to clean_id
-                cursor.execute("UPDATE test_runs SET model_id = ? WHERE run_id = ?", (clean_id, latest_run['run_id']))
-                
-                # Re-map hallucinations for the latest run's model to clean_id, delete others
-                latest_model_id = latest_run['model_id']
-                cursor.execute("SELECT round_name, description, severity FROM model_hallucinations WHERE model_id = ?", (latest_model_id,))
-                latest_halls = [dict(row) for row in cursor.fetchall()]
-                
-                cursor.execute(f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})", model_ids)
-                
-                for h in latest_halls:
-                    cursor.execute("""
-                        INSERT INTO model_hallucinations (model_id, round_name, description, severity)
-                        VALUES (?, ?, ?, ?)
-                    """, (clean_id, h['round_name'], h['description'], h['severity']))
-            else:
-                # No runs. Just delete all hallucinations
-                cursor.execute(f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})", model_ids)
-                
-            # Update rounds table if anyone is using it
-            cursor.execute(f"DELETE FROM rounds WHERE model_id IN ({placeholders})", model_ids)
-            
-            # Keep the "best" duplicate model record
-            best_dup = dups[0]
-            if runs:
-                for d in dups:
-                    if d['model_id'] == latest_run['model_id']:
-                        best_dup = d
-                        break
-                        
-            # Delete duplicate model rows
-            cursor.execute(f"DELETE FROM models WHERE model_id IN ({placeholders})", model_ids)
-            
-            # Insert consolidated model row
-            cursor.execute("""
-                INSERT INTO models (model_id, name, quantization, vram_fit, status, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (clean_id, best_dup['name'], best_dup['quantization'], best_dup['vram_fit'], best_dup['status'], best_dup['notes']))
-            
-        conn.commit()
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.close()
-        print("[DB consolidation] Database consolidation complete!")
-    except Exception as e:
-        print(f"[DB consolidation] Error consolidating database: {e}")
+# (_clean_model_id and consolidate_database are imported from utils.db_utils)
 
 
 @app.post("/api/llm/models/load")
@@ -1175,11 +1019,7 @@ async def _queue_worker():
 # REST endpoints – generation queue
 # ───────────────────────────────────────────────
 
-class GenerateRequest(BaseModel):
-    prompt: str
-    resolution: str = "1920x1088"
-    num_images: int = 1
-    seed: Optional[int] = None
+# (GenerateRequest is imported from models.requests)
 
 
 @app.post("/api/generate/queue")
@@ -1365,21 +1205,7 @@ def get_all_folders():
     return folders
 
 
-class MkdirRequest(BaseModel):
-    current_path: str
-    folder_name: str
-
-
-class MoveRequest(BaseModel):
-    current_path: str
-    filenames: list
-    destination: str
-
-
-class DeleteRequest(BaseModel):
-    current_path: str
-    filenames: list
-    folders: list
+# (MkdirRequest, MoveRequest, and DeleteRequest are imported from models.requests)
 
 
 @app.post("/api/gallery/mkdir")
@@ -1462,9 +1288,7 @@ async def _download_queue_worker():
             print(f"[Download Queue] Queue worker error: {e}")
             await asyncio.sleep(2)
 
-class DownloadRequest(BaseModel):
-    repo_id: str
-    filename: str
+# (DownloadRequest is imported from models.requests)
 
 async def _download_model_task(repo_id: str, filename: str):
     key = f"{repo_id}/{filename}"
@@ -1959,27 +1783,7 @@ _benchmark_progress = {
     "queue_current_index": 0
 }
 
-# Persistent benchmark log file path
-BENCHMARK_LOG_DIR = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
-BENCHMARK_EXECUTION_LOG = os.path.join(BENCHMARK_LOG_DIR, "benchmark_execution.log")
-
-_log_rotation_lock = threading.Lock()
-
-def _rotate_benchmark_log_if_needed():
-    """Keep the benchmark execution log under ~10MB by rotating it."""
-    try:
-        with _log_rotation_lock:
-            if os.path.exists(BENCHMARK_EXECUTION_LOG):
-                size = os.path.getsize(BENCHMARK_EXECUTION_LOG)
-                max_size = 10 * 1024 * 1024  # 10 MB
-                if size > max_size:
-                    ts = time.strftime("%Y%m%d_%H%M%S")
-                    rotated_name = BENCHMARK_EXECUTION_LOG.replace(
-                        ".log", f"_{ts}.bak"
-                    )
-                    shutil.move(BENCHMARK_EXECUTION_LOG, rotated_name)
-    except Exception:
-        pass  # best-effort rotation
+# (BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, and _rotate_benchmark_log_if_needed are imported from utils.bench_log)
 
 
 def log_benchmark_progress(msg: str):
@@ -2040,8 +1844,7 @@ def log_benchmark(msg: str):
         pass
 
 
-class BenchmarkRunRequest(BaseModel):
-    judge_model_id: Optional[str] = None
+# (BenchmarkRunRequest is imported from models.requests)
 
 
 async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
@@ -2231,9 +2034,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         _benchmark_progress["current_round"] = "Finished"
 
 
-class BenchmarkQueueRequest(BaseModel):
-    models: list[str]
-    judge_model_id: str
+# (BenchmarkQueueRequest is imported from models.requests)
 
 
 async def run_benchmark_queue_task(models: list[str], judge_model_id: str):
@@ -2670,9 +2471,7 @@ def get_benchmark_outputs():
         return {"outputs": [], "error": str(e) + ": " + traceback.format_exc() if 'traceback' in dir(__builtins__) else str(e)}
 
 
-class JudgeRequest(BaseModel):
-    run_id: Optional[str] = None
-    judge_model_id: Optional[str] = None
+# (JudgeRequest is imported from models.requests)
 
 
 def get_llm_server_url() -> str:
