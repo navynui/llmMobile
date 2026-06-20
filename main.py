@@ -57,40 +57,19 @@ QUEUE_PERSIST_PATH = os.path.join(IMAGE_GEN_OUTPUT, "generation_queue.json")
 
 os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
 
-# --- Docker client ---
-try:
-    docker_client = docker.DockerClient(base_url="unix://var/run/docker.sock")
-except Exception as e:
-    docker_client = None
-    print(f"Error connecting to Docker socket: {e}")
+# --- Service imports ---
+from services.docker_svc import (
+    get_docker_client, get_status, get_system_stats, start_llm, stop_llm,
+    _start_mqtt_listener, _local_stats_poller, _stats_cache, _stats_lock
+)
+from services.model_svc import (
+    list_models, delete_model, get_models_ini, save_models_ini,
+    proxy_llm_models, proxy_llm_load, proxy_llm_unload, get_vision_capabilities,
+    _get_preset_id_for_model, _add_to_models_ini, _remove_from_models_ini
+)
 
 # --- HTTP client for ComfyUI ---
 _COMFY_HTTP = httpx.Client(base_url=f"http://{COMFYUI_HOST}", timeout=60)
-
-# --- Telemetry cache ---
-_stats_cache: dict = {"data": {
-    "cpu_temp": 0.0, "cpu_util": 0.0, "ram_percent": 0.0,
-    "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0,
-    "storage_percent": 0.0, "storage_used_gb": 0.0,
-    "storage_total_gb": 0.0, "storage_free_gb": 0.0,
-}}
-_stats_lock = threading.Lock()
-last_mqtt_update_time: float = 0.0
-
-MQTT_CONFIG = {
-    "broker": "192.168.31.182",
-    "user": "mqttuser",
-    "pass": "mqttpass",
-    "topics": {
-        "home/129/sensor/cpu_temp":               "cpu_temp",
-        "home/129/sensor/tesla_p100_temp":        "gpu_temp",
-        "home/129/sensor/cpu_utilization":        "cpu_util",
-        "home/129/sensor/ram_utilization":        "ram_percent",
-        "home/129/sensor/vram_utilization":       "vram_percent",
-        "home/129/sensor/gpu_utilization":        "gpu_util",
-        "home/129/sensor/disk_utilization_root":  "storage_percent",
-    },
-}
 
 # ───────────────────────────────────────────────
 # Queue state (in-memory, Phase 2 server-side)
@@ -102,52 +81,6 @@ _queue_sse_subscribers: list = []   # async queues for /events/queue SSE fans
 
 _workflow_cache: Optional[dict] = None
 _workflow_lock = threading.Lock()
-
-# ───────────────────────────────────────────────
-# Helpers
-# ───────────────────────────────────────────────
-
-# (safe_join, _deep_copy, and get_local_stats are imported from utils.common)
-
-
-def _on_mqtt_message(client, userdata, msg):
-    global last_mqtt_update_time
-    try:
-        val = float(msg.payload.decode())
-        key = MQTT_CONFIG["topics"].get(msg.topic)
-        if key:
-            with _stats_lock:
-                _stats_cache["data"][key] = val
-            last_mqtt_update_time = time.time()
-    except Exception as e:
-        print(f"MQTT Parse Error: {e}")
-
-
-def _start_mqtt_listener():
-    try:
-        client = mqtt.Client()
-        client.on_message = _on_mqtt_message
-        client.username_pw_set(MQTT_CONFIG["user"], MQTT_CONFIG["pass"])
-        client.connect(MQTT_CONFIG["broker"], 1883, 60)
-        for topic in MQTT_CONFIG["topics"]:
-            client.subscribe(topic)
-        client.loop_start()
-        print("MQTT Telemetry Listener started.")
-    except Exception as e:
-        print(f"MQTT Connection Error: {e}")
-
-
-async def _local_stats_poller():
-    while True:
-        try:
-            if time.time() - last_mqtt_update_time > 5.0:
-                local = get_local_stats()
-                with _stats_lock:
-                    _stats_cache["data"].update(local)
-        except Exception as e:
-            print(f"Stats poller error: {e}")
-        await asyncio.sleep(2)
-
 
 # ───────────────────────────────────────────────
 # Startup
@@ -175,338 +108,71 @@ async def startup_event():
 
 
 # ───────────────────────────────────────────────
-# Container / system status helpers
-# ───────────────────────────────────────────────
-
-def _container_info(name: str) -> dict:
-    try:
-        container = None
-        try:
-            container = docker_client.containers.get(name)
-        except docker.errors.NotFound:
-            containers = docker_client.containers.list(all=True, filters={"name": name})
-            if containers:
-                container = containers[0]
-        if not container:
-            return {"status": "not_found", "image": None, "uptime": None}
-        status = container.status
-        image  = container.image.tags[0] if container.image.tags else container.image.id
-        started_str = container.attrs.get("State", {}).get("StartedAt", "")
-        uptime = None
-        if status == "running" and started_str:
-            try:
-                t = started_str.split(".")[0].rstrip("Z")
-                delta = datetime.datetime.utcnow() - datetime.datetime.fromisoformat(t)
-                uptime = str(delta).split(".")[0]
-            except Exception:
-                uptime = started_str
-        return {"status": status, "image": image, "uptime": uptime}
-    except Exception:
-        return {"status": "error", "image": None, "uptime": None}
-
-
-# ───────────────────────────────────────────────
 # REST endpoints – server control
 # ───────────────────────────────────────────────
 
 @app.get("/status")
-def get_status():
-    if not docker_client:
-        raise HTTPException(status_code=500, detail="Docker client not initialized.")
-    return {"server": _container_info("llm-server"), "manager": _container_info("llm-mobile")}
+def route_get_status():
+    return get_status()
 
 
 @app.get("/system_stats")
-def get_system_stats():
-    with _stats_lock:
-        return dict(_stats_cache["data"])
+def route_get_system_stats():
+    return get_system_stats()
 
 
 @app.post("/start")
-def start_llm():
-    if not os.path.exists(LLM_COMPOSE_DIR):
-        raise HTTPException(status_code=400, detail=f"Compose dir '{LLM_COMPOSE_DIR}' not found.")
-    result = subprocess.run(
-        ["docker", "compose", "-p", LLM_PROJECT_NAME, "up", "-d", "--no-build", "llama-server"],
-        cwd=LLM_COMPOSE_DIR, capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise HTTPException(status_code=500, detail=result.stderr)
-    return {"detail": "Started llm-server"}
+def route_start_llm():
+    return start_llm()
 
 
 @app.post("/stop")
-def stop_llm():
-    if not docker_client:
-        raise HTTPException(status_code=500, detail="Docker client not initialized.")
-    try:
-        c = docker_client.containers.get("llm-server")
-        c.stop(); c.remove()
-        return {"detail": "Stopped llm-server"}
-    except docker.errors.NotFound:
-        return {"detail": "llm-server is not running."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def route_stop_llm():
+    return stop_llm()
 
 
 # ───────────────────────────────────────────────
 # REST endpoints – model management
 # ───────────────────────────────────────────────
 
-def _add_to_models_ini(filename: str):
-    if not os.path.exists(MODES_INI_PATH):
-        try:
-            os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
-            with open(MODES_INI_PATH, "w") as f:
-                f.write("")
-        except Exception:
-            return
-
-    # Check if already present in models.ini
-    already_present = False
-    try:
-        with open(MODES_INI_PATH, "r") as f:
-            content = f.read()
-            if f"[{filename}]" in content or f"[{filename.lower()}]" in content.lower():
-                already_present = True
-    except Exception:
-        pass
-
-    if not already_present:
-        try:
-            block = f"""
-
-[{filename}]
-model = /models/{filename}
-n-gpu-layers = -1
-"""
-            with open(MODES_INI_PATH, "a") as f:
-                f.write(block)
-            print(f"[Models INI] Auto-registered preset config block for {filename}")
-        except Exception as e:
-            print(f"[Models INI] Failed to auto-add {filename}: {e}")
-
-
-def _remove_from_models_ini(filename: str):
-    if not os.path.exists(MODES_INI_PATH):
-        return
-    try:
-        with open(MODES_INI_PATH, "r") as f:
-            lines = f.readlines()
-
-        new_lines = []
-        skip_section = False
-        target_lower = filename.lower()
-        target_base = target_lower[:-5] if target_lower.endswith(".gguf") else target_lower
-
-        for line in lines:
-            line_stripped = line.strip()
-            # Check if line is a section header
-            if line_stripped.startswith("[") and line_stripped.endswith("]"):
-                section_name = line_stripped[1:-1].lower()
-                section_base = section_name[:-5] if section_name.endswith(".gguf") else section_name
-                
-                if section_base == target_base:
-                    skip_section = True
-                    continue
-                else:
-                    skip_section = False
-
-            if skip_section:
-                continue
-
-            new_lines.append(line)
-
-        with open(MODES_INI_PATH, "w") as f:
-            f.writelines(new_lines)
-        print(f"[Models INI] Cleaned up {filename} from models.ini")
-    except Exception as e:
-        print(f"[Models INI] Failed to clean up {filename}: {e}")
-
-
-# (ModelsIniRequest is imported from models.requests)
-
-
 @app.get("/models")
-def list_models():
-    if not os.path.exists(MODES_INI_PATH):
-        return {"models": []}
-    models = []
-    try:
-        # Fallback parsing that is robust and doesn't depend on configparser strict rules
-        with open(MODES_INI_PATH) as f:
-            current_model = None
-            is_default = False
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith(";"):
-                    continue
-                m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
-                if m:
-                    if current_model:
-                        models.append({"filename": current_model, "is_default": is_default})
-                    current_model = m.group(1) + ".gguf"
-                    is_default = False
-                elif "load-on-startup" in line and "true" in line.lower() and current_model:
-                    is_default = True
-            if current_model:
-                models.append({"filename": current_model, "is_default": is_default})
-    except Exception as e:
-        print(f"[Models INI] Failed to parse: {e}")
-    return {"models": models}
+def route_list_models():
+    return list_models()
 
 
 @app.delete("/models/{filename}")
-def delete_model(filename: str):
-    if not filename.endswith(".gguf") or "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    path = os.path.join(MODELS_DIR, filename)
-    if os.path.exists(path):
-        os.remove(path)
-    
-    # Also clean up models.ini configuration
-    _remove_from_models_ini(filename)
-    
-    # Do NOT delete the model's row from SQLite - keep historical benchmark results intact
-    # Deleting a model file should preserve test runs, scores, and hallucinations for audit purposes
-        
-    return {"detail": f"Deleted {filename} and updated models.ini"}
+def route_delete_model(filename: str):
+    return delete_model(filename)
 
 
 @app.get("/api/models_ini")
-def get_models_ini():
-    if not os.path.exists(MODES_INI_PATH):
-        return {"content": ""}
-    try:
-        with open(MODES_INI_PATH, "r") as f:
-            return {"content": f.read()}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def route_get_models_ini():
+    return get_models_ini()
 
 
 @app.post("/api/models_ini")
-def save_models_ini(req: ModelsIniRequest):
-    try:
-        os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
-        with open(MODES_INI_PATH, "w") as f:
-            f.write(req.content)
-        return {"detail": "models.ini updated successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+def route_save_models_ini(req: ModelsIniRequest):
+    return save_models_ini(req)
 
 
 @app.get("/api/llm/models")
-async def proxy_llm_models():
-    async with httpx.AsyncClient() as c:
-        try:
-            return (await c.get("http://llm-server:8080/models", timeout=5)).json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
-
-
-# (ModelActionRequest is imported from models.requests)
-
-
-async def _get_preset_id_for_model(model_id: str) -> str:
-    if not model_id:
-        return model_id
-    try:
-        async with httpx.AsyncClient() as client:
-            res = await client.get("http://llm-server:8080/models", timeout=3)
-            if res.status_code == 200:
-                presets = [m["id"] for m in res.json().get("data", [])]
-                # Search for a case-insensitive match (with or without extension)
-                norm_id = model_id.lower()
-                for preset in presets:
-                    p_low = preset.lower()
-                    if p_low == norm_id or p_low.replace(".gguf", "") == norm_id.replace(".gguf", ""):
-                        return preset
-    except Exception as e:
-        print(f"[Preset Matching] Failed to fetch active models: {e}")
-    # Fallback:
-    if model_id.lower() == "default":
-        return "default"
-    return model_id if model_id.lower().endswith(".gguf") else (model_id + ".gguf")
-
-
-# (_clean_model_id and consolidate_database are imported from utils.db_utils)
+async def route_proxy_llm_models():
+    return await proxy_llm_models()
 
 
 @app.post("/api/llm/models/load")
-async def proxy_llm_load(req: ModelActionRequest):
-    async with httpx.AsyncClient() as c:
-        try:
-            preset_id = await _get_preset_id_for_model(req.model)
-            return (await c.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)).json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
+async def route_proxy_llm_load(req: ModelActionRequest):
+    return await proxy_llm_load(req)
 
 
 @app.post("/api/llm/models/unload")
-async def proxy_llm_unload(req: ModelActionRequest):
-    async with httpx.AsyncClient() as c:
-        try:
-            preset_id = await _get_preset_id_for_model(req.model)
-            return (await c.post("http://llm-server:8080/models/unload", json={"model": preset_id}, timeout=10)).json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
+async def route_proxy_llm_unload(req: ModelActionRequest):
+    return await proxy_llm_unload(req)
 
-
-# ───────────────────────────────────────────────
-# REST endpoints – chat
-# ───────────────────────────────────────────────
 
 @app.get("/models/vision-capabilities")
-async def get_vision_capabilities():
-    """Check which currently loaded models support vision/multimodal input."""
-    try:
-        async with httpx.AsyncClient() as c:
-            resp = await c.get("http://llm-server:8080/models", timeout=3)
-            if resp.status_code != 200:
-                raise HTTPException(status_code=502, detail="Failed to fetch model metadata")
-            data = resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
-
-    # Map model IDs to vision support.
-    # llama-server exposes --mmproj in the args array for multimodal models,
-    # or may include `vision_enabled`/`vision_model_loaded` keys in the status dict.
-    models_metadata = {}
-    for m in data.get("data", []):
-        mid = m.get("id") or str(m.get("model_id", ""))
-        status_dict = m.get("status") if isinstance(m.get("status"), dict) else None
-
-        vision_capable = False
-        has_mmproj = False
-
-        # Check explicit flags in the status dict (may be present on newer llama.cpp)
-        if status_dict:
-            vis_enabled = status_dict.get("vision_enabled", False)
-            vis_loaded  = status_dict.get("vision_model_loaded", False)
-            vision_capable = bool(vis_enabled or vis_loaded)
-
-            # Check for --mmproj in the args array (most reliable indicator)
-            args_raw = status_dict.get("args")
-            if isinstance(args_raw, list):
-                has_mmproj = "--mmproj" in args_raw
-            elif isinstance(args_raw, str):
-                has_mmproj = "--mmproj" in args_raw
-
-        if not vision_capable:
-            # Fallback: check for common llama.cpp multimodal model IDs
-            mid_lower = mid.lower()
-            vision_capable = any(
-                x in mid_lower
-                for x in ["mmproj", "clip_l", "llava", "moondream"]
-            )
-
-        models_metadata[mid] = {
-            "model_id": mid,
-            "vision_capable": vision_capable or has_mmproj,
-            "has_mmproj": has_mmproj
-        }
-    return {"models": models_metadata}
+async def route_get_vision_capabilities():
+    return await get_vision_capabilities()
 
 async def _get_loaded_model() -> Optional[str]:
     try:
