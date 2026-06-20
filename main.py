@@ -2157,12 +2157,6 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                         "round_name": get_gold_key(round_name) or round_name,
                         "error": f"Empty response after {max_retries} retries"
                     })
-                elif not content and retry_count >= max_retries:
-                    log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
-                    rounds_list.append({
-                        "round_name": get_gold_key(round_name) or round_name,
-                        "error": f"Empty response after {max_retries} retries"
-                    })
                 elif content:
                     duration = time.time() - start_time
                     log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
