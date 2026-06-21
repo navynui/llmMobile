@@ -3,7 +3,7 @@ import './components/server-tab.js';
 import './components/chat-tab.js';
 import './components/generator-tab.js';
 import './components/gallery-tab.js';
-import './components/stub-tabs.js';
+import './components/benchmark-tab.js';
 
 
 export class LlmApp extends LitElement {
@@ -586,8 +586,8 @@ export class LlmApp extends LitElement {
         return html`<generator-tab .queue="${this.queue}"></generator-tab>`;
       case '#/gallery':
         return html`<gallery-tab></gallery-tab>`;
-      case '#/more':
-        return html`<more-tab></more-tab>`;
+      case '#/benchmarks':
+        return html`<benchmark-tab></benchmark-tab>`;
       default:
         return html`<server-tab .stats="${stats}" .status="${status}"></server-tab>`;
     }
@@ -615,7 +615,7 @@ export class LlmApp extends LitElement {
             ${this.renderMenuLink('#/chat', '💬', 'Chat')}
             ${this.renderMenuLink('#/generate', '🎨', 'Generator')}
             ${this.renderMenuLink('#/gallery', '🖼️', 'Gallery')}
-            ${this.renderMenuLink('#/more', '•••', 'More')}
+            ${this.renderMenuLink('#/benchmarks', '📊', 'Benchmarks')}
           </nav>
 
           <div class="connection-badge">
@@ -635,7 +635,7 @@ export class LlmApp extends LitElement {
           ${this.renderTabLink('#/chat', '💬', 'Chat')}
           ${this.renderTabLink('#/generate', '🎨', 'Generator')}
           ${this.renderTabLink('#/gallery', '🖼️', 'Gallery')}
-          ${this.renderTabLink('#/more', '•••', 'More')}
+          ${this.renderTabLink('#/benchmarks', '📊', 'Benchmarks')}
         </nav>
       </div>
 

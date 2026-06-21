@@ -16,7 +16,24 @@ export class ServerTab extends LitElement {
     modelsIniLoading: { type: Boolean },
     modelToDelete: { type: String },
     configExpanded: { type: Boolean },
-    iniExpanded: { type: Boolean }
+    iniExpanded: { type: Boolean },
+
+    // Migrated Downloader States
+    hfSearchQuery: { type: String },
+    hfSearchLoading: { type: Boolean },
+    hfSearchResults: { type: Array },
+    hfSelectedRepo: { type: String },
+    hfRepoDetails: { type: Object },
+    hfDetailsLoading: { type: Boolean },
+    hfActiveDownloads: { type: Array },
+    downloaderExpanded: { type: Boolean },
+    logsExpanded: { type: Boolean },
+
+    // Migrated System Logs States
+    logContainer: { type: String },
+    logsText: { type: String },
+    logsLoading: { type: Boolean },
+    logLimit: { type: Number }
   };
 
   static styles = css`
@@ -332,6 +349,26 @@ export class ServerTab extends LitElement {
       font-weight: 500;
     }
 
+    .model-file-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+
+    .model-file-size {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    /* Input group */
+    .input-group {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+    }
+
     /* Modal dialog */
     .modal-backdrop {
       position: fixed;
@@ -395,6 +432,176 @@ export class ServerTab extends LitElement {
       animation: fadeIn 0.2s ease-out;
     }
 
+    /* Downloads List */
+    .downloads-container {
+      margin-top: 8px;
+    }
+
+    .download-item {
+      background: rgba(99, 102, 241, 0.04);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .download-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.85rem;
+    }
+
+    .download-filename {
+      font-weight: 600;
+      color: var(--text-primary);
+      word-break: break-all;
+      flex: 1;
+      margin-right: 8px;
+    }
+
+    .download-speed {
+      color: var(--success);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), #a5b4fc);
+      transition: width 0.3s ease-out;
+      border-radius: 2px;
+    }
+
+    .download-eta {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+
+    /* System Logs Terminal */
+    .logs-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .logs-tabs {
+      display: flex;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-sm);
+      padding: 2px;
+    }
+
+    .logs-tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border-radius: calc(var(--radius-sm) - 1px);
+      cursor: pointer;
+    }
+
+    .logs-tab-btn.active {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+
+    .logs-terminal {
+      background: #05070f;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.75rem;
+      color: #38bdf8;
+      height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Repo list styling */
+    .repo-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .repo-item {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .repo-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: rgba(99, 102, 241, 0.4);
+    }
+
+    /* Left-aligned model file cards (Models Config + Available GGUF)
+       Override the shared .repo-item centering rules for these sections */
+    .model-file-item {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      justify-content: flex-start !important;
+      padding: 12px 14px !important;
+    }
+
+    .search-result-item {
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .search-result-item:hover {
+      background: rgba(99, 102, 241, 0.06);
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    .repo-meta {
+      display: flex;
+      gap: 8px;
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .repo-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .repo-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+
     /* Loader */
     .loader {
       width: 16px;
@@ -441,6 +648,26 @@ export class ServerTab extends LitElement {
     this.modelToDelete = null;
     this.configExpanded = false;
     this.iniExpanded = false;
+    this.downloaderExpanded = false;
+    this.logsExpanded = false;
+
+    // Migrated Downloader states
+    this.hfSearchQuery = '';
+    this.hfSearchLoading = false;
+    this.hfSearchResults = [];
+    this.hfSelectedRepo = '';
+    this.hfRepoDetails = null;
+    this.hfDetailsLoading = false;
+    this.hfActiveDownloads = [];
+
+    // Migrated System Logs states
+    this.logContainer = 'llm-server';
+    this.logsText = '';
+    this.logsLoading = false;
+    this.logLimit = 50;
+
+    // Restore persisted downloads/queue from localStorage
+    this.restoreDownloadsFromStorage();
   }
 
   connectedCallback() {
@@ -453,6 +680,8 @@ export class ServerTab extends LitElement {
     
     // Automatically load migrated configurations on mount
     this.fetchModelsIni();
+    // Start download polling
+    this.startDownloadPolling();
   }
 
   disconnectedCallback() {
@@ -460,11 +689,177 @@ export class ServerTab extends LitElement {
     if (this.activeModelPoll) {
       clearInterval(this.activeModelPoll);
     }
+    this.stopDownloadPolling();
+  }
+
+  // --- Migrated Downloader Methods ---
+  startDownloadPolling() {
+    if (this.downloadPollInterval) clearInterval(this.downloadPollInterval); // ensure only one interval
+    this.downloadPollInterval = setInterval(() => this.pollDownloads(), 1500);
+  }
+
+  stopDownloadPolling() {
+    if (this.downloadPollInterval) {
+      clearInterval(this.downloadPollInterval);
+      this.downloadPollInterval = null;
+    }
+  }
+
+  async pollDownloads() {
+    try {
+      const res = await fetch('/api/models/downloads');
+      const data = await res.json();
+      this.hfActiveDownloads = data.downloads || [];
+      // Persist to localStorage for survive-refresh
+      this.saveDownloadsToStorage();
+    } catch (err) {
+      console.error("Failed to poll downloads", err);
+    }
+  }
+
+  saveDownloadsToStorage() {
+    try {
+      const payload = { active: this.hfActiveDownloads, ts: Date.now() };
+      localStorage.setItem('hf_downloads', JSON.stringify(payload));
+    } catch (e) { /* silent */ }
+  }
+
+  restoreDownloadsFromStorage() {
+    try {
+      const raw = localStorage.getItem('hf_downloads');
+      if (!raw) return;
+      // Only use persisted state if it's recent (less than 6 hours old)
+      const payload = JSON.parse(raw);
+      if (!payload || !Array.isArray(payload.active)) return;
+      const ageSecs = (Date.now() - (payload.ts || 0)) / 1000;
+      if (ageSecs > 6 * 3600) {
+        // Stale data — clear it
+        localStorage.removeItem('hf_downloads');
+        return;
+      }
+      this.hfActiveDownloads = payload.active;
+    } catch (e) { /* silent */ }
+  }
+
+  async handleHfSearch() {
+    if (!this.hfSearchQuery.trim()) return;
+    this.hfSearchLoading = true;
+    this.hfSearchResults = [];
+    this.hfSelectedRepo = '';
+    this.hfRepoDetails = null;
+
+    try {
+      const res = await fetch(`/api/models/search?q=${encodeURIComponent(this.hfSearchQuery)}`);
+      if (res.ok) {
+        const results = await res.json();
+        // Sort by downloads descending (highest first)
+        this.hfSearchResults = [...results].sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+      } else {
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: 'Failed to search HuggingFace Hub' },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      this.hfSearchLoading = false;
+    }
+  }
+
+  async selectHfRepo(repoId) {
+    this.hfSelectedRepo = repoId;
+    this.hfDetailsLoading = true;
+    this.hfRepoDetails = null;
+
+    try {
+      const res = await fetch(`/api/models/details?repo_id=${encodeURIComponent(repoId)}`);
+      if (res.ok) {
+        this.hfRepoDetails = await res.json();
+      } else {
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: 'Failed to fetch repository details' },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      this.hfDetailsLoading = false;
+    }
+  }
+
+  async triggerHfDownload(filename) {
+    try {
+      const res = await fetch('/api/models/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo_id: this.hfSelectedRepo,
+          filename: filename
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: data.detail || 'Download started in background' },
+          bubbles: true,
+          composed: true
+        }));
+      } else {
+        const errData = await res.json();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: errData.detail || 'Failed to start download' },
+          bubbles: true,
+          composed: true
+        }));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // --- Migrated System Logs Methods ---
+  async fetchLogs() {
+    this.logsLoading = true;
+    this.logsText = 'Fetching logs...';
+    try {
+      const res = await fetch(`/api/logs?container_name=${this.logContainer}&lines=${this.logLimit}`);
+      if (res.ok) {
+        const data = await res.json();
+        this.logsText = data.logs || 'No logs found.';
+        setTimeout(() => {
+          const terminal = this.shadowRoot?.querySelector('.logs-terminal');
+          if (terminal) terminal.scrollTop = terminal.scrollHeight;
+        }, 100);
+      } else {
+        this.logsText = 'Failed to fetch logs.';
+      }
+    } catch (err) {
+      this.logsText = `Error: ${err.message}`;
+    } finally {
+      this.logsLoading = false;
+    }
+  }
+
+  switchLogsTab(container) {
+    this.logContainer = container;
+    this.fetchLogs();
+  }
+
+  handleLogLimitChange(e) {
+    this.logLimit = parseInt(e.target.value);
+    this.fetchLogs();
   }
 
   firstUpdated() {
     this.fetchModelsList();
     this.fetchActiveModel();
+    this.pollDownloads();
+    this.startDownloadPolling();
   }
 
   updated(changedProperties) {
@@ -535,6 +930,14 @@ export class ServerTab extends LitElement {
 
   toggleIni() {
     this.iniExpanded = !this.iniExpanded;
+  }
+
+  toggleDownloader() {
+    this.downloaderExpanded = !this.downloaderExpanded;
+  }
+
+  toggleLogs() {
+    this.logsExpanded = !this.logsExpanded;
   }
 
   async handleServerToggle() {
@@ -980,21 +1383,21 @@ export class ServerTab extends LitElement {
               ` : html`
                 <div class="file-list">
                   ${this.models.map(m => html`
-                    <div class="repo-item" style="cursor: default;">
-                      <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; margin-right: 12px;">
-                        <span style="font-size: 0.85rem; font-weight: 500; word-break: break-all;">${m.filename}</span>
+                    <div class="model-file-item">
+                      <button 
+                        class="btn btn-danger" 
+                        style="padding: 6px 12px; font-size: 0.8rem; flex-shrink: 0;"
+                        @click="${() => this.showDeleteModelConfirm(m.filename)}"
+                      >
+                        🗑️ Delete
+                      </button>
+                      <div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">
+                        <span class="model-file-name">${m.filename}</span>
                         <div style="display: flex; gap: 6px; align-items: center;">
                           ${m.size ? html`<span class="meta-badge">${m.size}</span>` : ''}
                           ${m.is_default ? html`<span class="meta-badge" style="background: rgba(99,102,241,0.15); color: #a5b4fc; border-color: rgba(99,102,241,0.25);">⭐ Default</span>` : ''}
                         </div>
                       </div>
-                      <button 
-                        class="btn btn-danger" 
-                        style="padding: 6px 12px; font-size: 0.8rem;" 
-                        @click="${() => this.showDeleteModelConfirm(m.filename)}"
-                      >
-                        🗑️ Delete
-                      </button>
                     </div>
                   `)}
                 </div>
@@ -1051,6 +1454,174 @@ export class ServerTab extends LitElement {
           </div>
         </div>
 
+        <!-- HuggingFace Model Downloader Card -->
+        <div class="card">
+          <div class="switcher-header" @click="${this.toggleDownloader}">
+            <div class="card-title" style="margin-bottom: 0;">📦 Hugging Face Model Downloader</div>
+            <div class="arrow-icon ${this.downloaderExpanded ? 'arrow-expanded' : ''}">▼</div>
+          </div>
+
+          <div class="switcher-body ${this.downloaderExpanded ? 'expanded' : ''}">
+            <span class="card-subtitle" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">Search and download GGUF models directly from the Hub.</span>
+
+            <!-- Search Bar -->
+          <div class="input-group">
+            <input 
+              type="text" 
+              class="text-input" 
+              placeholder="Search HuggingFace (e.g., llama.cpp)"
+              .value="${this.hfSearchQuery}"
+              @input="${e => this.hfSearchQuery = e.target.value}"
+              @keydown="${e => e.key === 'Enter' && this.handleHfSearch()}"
+            >
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 8px 14px; font-size: 0.85rem;" 
+              @click="${() => { this.handleHfSearch(); }}"
+              ?disabled="${this.hfSearchLoading}"
+            >
+              🔍 Search
+            </button>
+          </div>
+
+          <!-- Loading State -->
+          ${this.hfSearchLoading ? html`
+            <div style="text-align: center; padding: 30px 0; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+              <span class="loader" style="border-top-color: var(--primary);"></span>
+              Loading...
+            </div>
+          ` : ''}
+
+          <!-- Search Results -->
+          ${!this.hfSearchLoading && this.hfSearchResults.length > 0 ? html`
+            <h3 style="font-size: 0.9rem; margin-bottom: 8px; color: var(--text-primary);">🔎 Search Results</h3>
+            <div class="repo-list">
+              ${this.hfSearchResults.map(repo => html`
+                <div class="search-result-item" @click="${() => this.selectHfRepo(repo.id)}">
+                  <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px; text-align: left;">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); flex-shrink: 0;">⭐ ${repo.likes || 0}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); flex-shrink: 0;">📥 ${repo.downloads || 0}</span>
+                  </div>
+                  <div class="repo-title">${repo.id}</div>
+                </div>
+              `)}
+            </div>
+          ` : ''}
+
+          <!-- Repository Details -->
+          ${!this.hfSearchLoading && this.hfSelectedRepo ? html`
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+              <h3 style="font-size: 0.9rem; margin-bottom: 8px; color: #a5b4fc;">📂 Repository: ${this.hfSelectedRepo}</h3>
+              
+              <!-- Repo Info -->
+              <div style="display: flex; gap: 6px; font-size: 0.72rem; margin-bottom: 12px; flex-wrap: wrap;">
+                ${this.hfRepoDetails ? html`
+                  <span class="meta-badge">📥 ${this.hfRepoDetails.downloads || 0} downloads</span>
+                  <span class="meta-badge">⬆️ Last updated: ${this.hfRepoDetails.last_modified || 'N/A'}</span>
+                ` : ''}
+              </div>
+
+              <!-- Loading for repo details -->
+              ${!this.hfSearchLoading && this.hfSelectedRepo && this.hfDetailsLoading ? html`
+                <div style="text-align: center; padding: 20px;"><span class="loader" style="border-top-color: var(--primary);"></span> Loading repo files...</div>
+              ` : ''}
+
+              <!-- Model Files -->
+              ${this.hfRepoDetails && this.hfRepoDetails.gguf_files ? html`
+                <h4 style="font-size: 0.8rem; margin-bottom: 6px; color: var(--text-secondary);">Available GGUF Files (sorted by size, largest first):</h4>
+                <div class="repo-list">
+                  ${this.hfRepoDetails.gguf_files.sort((a, b) => (b.size || 0) - (a.size || 0)).map(file => html`
+                    <div class="model-file-item">
+                      <button 
+                        class="btn btn-primary" 
+                        style="padding: 6px 12px; font-size: 0.75rem; white-space: nowrap; flex-shrink: 0;"
+                        @click="${() => this.triggerHfDownload(file.filename)}"
+                      >
+                        ⬇️ Download
+                      </button>
+                      ${file.size ? html`<span class="model-file-size">⚖️ ${(file.size / (1024 * 1024 * 1024)).toFixed(2)} GB</span>` : ''}
+                      <span class="model-file-name">${file.filename}</span>
+                    </div>
+                  `)}
+                </div>
+              ` : ''}
+
+              <!-- Active Downloads -->
+              ${this.hfActiveDownloads.length > 0 ? html`
+                <h4 style="font-size: 0.8rem; margin-top: 16px; color: var(--text-secondary);">📡 Active Downloads:</h4>
+                <div class="downloads-container">
+                  ${this.hfActiveDownloads.map(d => {
+                    const speedMatch = (d.speed || '').match(/([\d.]+)\s*(KB\/s|MB\/s)/);
+                    const speedBps = speedMatch ? parseFloat(speedMatch[1]) * (speedMatch[2] === 'KB/s' ? 1024 : 1048576) : 0;
+                    const remainingBytes = Math.max(0, d.total - (d.downloaded || 0));
+                    let etaSec = null;
+                    if (speedBps > 0 && remainingBytes > 0) {
+                      etaSec = Math.ceil(remainingBytes / speedBps);
+                    }
+                    const etaStr = etaSec !== null ? this.formatEta(etaSec) : '';
+                    return html`
+                      <div class="download-item">
+                        <div class="download-info">
+                          <span class="download-filename">${d.filename || d.repo_id + '/' + (d.filename || '')}</span>
+                          <span class="download-speed" style="color: var(--success);">✓ ${d.status || 'Complete'}</span>
+                        </div>
+                        <div class="progress-track">
+                          <div class="progress-fill" style="width: ${(d.progress * 100).toFixed(1)}%"></div>
+                        </div>
+                        <div class="download-eta">
+                          ${Math.round(d.progress * 100)}% — Speed: ${d.speed || 'N/A'}${etaStr ? ` — ETA: ${etaStr}` : ''}
+                        </div>
+                        ${d.error ? html`<div style="color: var(--danger); font-size: 0.72rem; margin-top: 2px;">Error: ${d.error}</div>` : ''}
+                      </div>
+                    `;
+                  })}
+                </div>
+              ` : ''}
+            </div>
+          ` : ''}
+          </div>
+        </div>
+
+        <!-- Real-Time System Logs Card -->
+        <div class="card">
+          <div class="switcher-header" @click="${this.toggleLogs}">
+            <div class="card-title" style="margin-bottom: 0;">🖥️ Real-Time System Logs</div>
+            <div class="arrow-icon ${this.logsExpanded ? 'arrow-expanded' : ''}">▼</div>
+          </div>
+
+          <div class="switcher-body ${this.logsExpanded ? 'expanded' : ''}">
+            <span class="card-subtitle" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">Inspect outputs, exceptions, or load cycles printed by your chosen container.</span>
+
+            <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 10px;">
+            <div class="logs-tabs">
+              <button class="logs-tab-btn ${this.logContainer === 'llm-server' ? 'active' : ''}" @click="${() => this.switchLogsTab('llm-server')}">LLM Server</button>
+              <button class="logs-tab-btn ${this.logContainer === 'llm-mobile' ? 'active' : ''}" @click="${() => this.switchLogsTab('llm-mobile')}">Manager</button>
+            </div>
+
+            <div style="display: flex; gap: 6px; align-items: center; font-size: 0.85rem;">
+              <span>Lines:</span>
+              <select class="select-input" style="padding: 4px 8px;" .value="${(this.logLimit ?? '').toString()}" @change="${() => this.handleLogLimitChange(event)}">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </div>
+
+            <button 
+              class="btn btn-secondary" 
+              style="padding: 6px 12px; font-size: 0.8rem;"
+              @click="${() => this.fetchLogs()}"
+              ?disabled="${this.logsLoading}"
+            >
+              ${this.logsLoading ? html`<span class="loader"></span>` : '⟳ Refresh Logs'}
+            </button>
+          </div>
+
+          <div class="logs-terminal">${this.logsText || 'Click refresh to pull container logs...'}</div>
+          </div>
+        </div>
+
         <!-- Notification Feed -->
         ${this.statusMessage ? html`<div class="status-msg">${this.statusMessage}</div>` : ''}
       </div>
@@ -1074,6 +1645,16 @@ export class ServerTab extends LitElement {
         </div>
       ` : ''}
     `;
+  }
+
+  formatEta(seconds) {
+    if (seconds < 60) return `${seconds}s`;
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins < 60) return `${mins}m ${secs}s`;
+    const hrs = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `${hrs}h ${remMins}m`;
   }
 }
 
