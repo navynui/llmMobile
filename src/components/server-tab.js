@@ -189,7 +189,7 @@ export class ServerTab extends LitElement {
     }
 
     .switcher-body.expanded {
-      max-height: 1000px;
+      max-height: none;
       margin-top: 16px;
     }
 
