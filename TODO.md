@@ -514,15 +514,15 @@ For **every** numbered item above, execute in this exact order:
 
 ## 📌 Current Status
 
-- [ ] P0.1 — `src/components/_primitives.js` extracted and all tabs migrated
-- [ ] P0.2 — `src/utils/api.js` created and all ad-hoc fetches replaced
-- [ ] P1.3 — `server-tab.js` split into 4 children + parent ≤ 500 LOC
-- [ ] P1.4 — `benchmark-tab.js` split into table + runner
-- [ ] P2.5 — `Confirm.show()` replaces all `window.confirm`
-- [ ] P2.6 — `PollingMixin` adopted in all polling tabs
-- [ ] P2.7 — `<data-table>` created and benchmark table migrated
-- [ ] P2.8 — `Toast.show()` replaces all inline toasts
-- [ ] P3.9 — `src/assets/icons.js` created, all inline SVGs removed
-- [ ] P3.10 — `StateMixin` available (adoption optional)
-- [ ] P3.11 — CSS custom properties audit complete
-- [ ] P3.12 — Frontend tests for all extracted primitives passing
+- [x] P0.1 — `src/components/_primitives.js` extracted and all tabs migrated
+- [x] P0.2 — `src/utils/api.js` created and all ad-hoc fetches replaced
+- [x] P1.3 — `server-tab.js` split into 4 children + parent ≤ 500 LOC
+- [x] P1.4 — `benchmark-tab.js` split into table + runner
+- [x] P2.5 — `Confirm.show()` replaces all `window.confirm`
+- [x] P2.6 — `PollingMixin` adopted in all polling tabs
+- [x] P2.7 — `<data-table>` created and benchmark table migrated
+- [x] P2.8 — `Toast.show()` replaces all inline toasts
+- [x] P3.9 — `src/assets/icons.js` created, all inline SVGs removed
+- [x] P3.10 — `StateMixin` available (adoption optional)
+- [x] P3.11 — CSS custom properties audit complete
+- [x] P3.12 — Frontend tests for all extracted primitives passing

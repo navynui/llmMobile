@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { Confirm } from './_confirm.js';
 
 export class GalleryTab extends LitElement {
   static properties = {
@@ -597,7 +598,8 @@ export class GalleryTab extends LitElement {
 
   async _deleteGroup(group) {
     const count = group.images.length;
-    if (!confirm(`Delete ${count} image(s)? This cannot be undone.`)) return;
+    const confirmed = await Confirm.show(`Delete ${count} image(s)?`, 'This cannot be undone.');
+    if (!confirmed) return;
     const filenames = group.images.map(img => img.filename);
     await fetch('/api/gallery/delete', {
       method: 'POST',
@@ -632,7 +634,8 @@ export class GalleryTab extends LitElement {
 
   async _deleteSelected() {
     if (!this.selected.size) return;
-    if (!confirm(`Delete ${this.selected.size} image(s)? This cannot be undone.`)) return;
+    const confirmed = await Confirm.show(`Delete ${this.selected.size} image(s)?`, 'This cannot be undone.');
+    if (!confirmed) return;
     const filenames = [...this.selected].map(p => p.split('/').pop());
     await fetch('/api/gallery/delete', {
       method: 'POST',

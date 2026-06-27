@@ -1,4 +1,5 @@
 import { LitElement, html, css } from 'lit';
+import { Confirm } from '../components/_confirm.js';
 
 export class ChatTab extends LitElement {
   static properties = {
@@ -725,8 +726,9 @@ export class ChatTab extends LitElement {
   }
 
   // Helper to clear conversation
-  clearConversation() {
-    if (confirm('Clear entire chat history?')) {
+  async clearConversation() {
+    const confirmed = await Confirm.show('Clear entire chat history?');
+    if (confirmed) {
       this.messages = [];
       localStorage.removeItem('chat_history');
     }
