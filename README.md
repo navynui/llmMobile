@@ -4,7 +4,8 @@
 ---
 
 ## 🔍 Overview
-**llmMobile** is a high-fidelity, responsive Single Page Application (SPA) designed to manage local LLM inference engines and image generation pipelines on modern GPU infrastructures (such as Nvidia Tesla P100 / RTX). It features a robust Python/FastAPI backend, a modular Lit-based reactive frontend, and integrations with `llama.cpp` (`llama-server`) and `ComfyUI` Docker containers.
+
+**llmMobile** is a high-fidelity, responsive Single Page Application (SPA) designed to manage local LLM inference engines and image generation pipelines on modern GPU infrastructures (such as Nvidia Tesla P100 / RTX). It features a modular Python/FastAPI backend, a reactive Lit-based frontend, and integrations with `llama.cpp` (`llama-server`) and `ComfyUI` Docker containers.
 
 ```mermaid
 graph TD
@@ -72,26 +73,65 @@ The system features an automated, background-scheduled 5-round evaluation suite:
 
 ## 📂 Repository Layout
 
-```
-llmMobile/
-├── main.py                     # Primary FastAPI application (Server controls, SQLite integration, API)
-├── Dockerfile                  # Multi-stage Dockerfile (Stage 1: Vite Build, Stage 2: Python environment)
-├── package.json                # Frontend dependencies and Vite build scripts
-├── requirements.txt            # Python requirements (FastAPI, Docker, httpx, etc.)
-├── MyZimage_turbo.json         # Turbo Image Generator template
-├── PROMPTS                     # Predefined prompt templates
-├── benchmark.md                # System implementation plan and references
-├── public/                     # Static frontend assets (icons, images)
-└── src/                        # Frontend source code
-    ├── index.css               # Core styling tokens, animations, and typography
-    ├── llm-app.js              # SPA entry point, state controller, SSE client
-    ├── components/             # Reusable Lit web components
-    │   ├── server-tab.js       # llama-server manager, logs, models.ini panel
-    │   ├── chat-tab.js         # Streaming OpenAI chat client
-    │   ├── generator-tab.js    # Image generation prompt/slider console
-    │   ├── gallery-tab.js      # Responsive photo gallery & metadata inspector
-    │   └── stub-tabs.js        # Benchmarks, models config, and settings panels
-    └── utils/                  # Helper classes and formatting routines
+``` llmMobile/
+├── app/
+│   └── main.py # Thin FastAPI router — delegates all logic to services/
+├── services/ # Backend service layer (modular business logic)
+│   ├── docker_svc.py # Container lifecycle & system stats
+│   ├── model_svc.py # Model loading, scanning, deletion
+│   ├── chat_svc.py # Streaming chat orchestration
+│   ├── sse_svc.py # Server-Sent Event management
+│   ├── comfy_svc.py # ComfyUI image pipeline integration
+│   ├── queue_svc.py # Benchmark queue orchestration
+│   ├── gallery_svc.py # Image gallery & metadata handling
+│   ├── push_svc.py # Push notification service
+│   ├── download_svc.py # Model download management
+│   ├── benchmark_svc.py # Benchmark run & scoring logic
+│   └── judge_svc.py # AI-as-a-Judge evaluation & JSON parsing
+├── utils/ # Shared utilities
+│   ├── common.py # Constants, paths, helpers
+│   ├── db_utils.py # SQLite connection & transaction helpers
+│   └── bench_log.py # Benchmark logging & rotation
+├── models/
+│   └── requests.py # Pydantic request schemas
+├── tests/ # Automated verification (Phase H)
+│   ├── conftest.py
+│   └── test_endpoints.py
+├── main.py # Re-exports app for Uvicorn
+├── Dockerfile # Multi-stage Dockerfile (Vite build + Python env)
+├── package.json # Frontend dependencies & Vite scripts
+├── requirements.txt # Python dependencies
+├── MyZimage_turbo.json # Turbo Image Generator template
+├── PROMPTS # Predefined prompt templates
+├── benchmark.md # System implementation plan
+├── public/ # Static frontend assets (icons, images)
+└── src/ # Frontend source code (Lit + Vite)
+    ├── index.css # Core design tokens & animations
+    ├── llm-app.js # SPA shell, view router, SSE client, toast host
+    ├── assets/
+    │   └── icons.js # Centralized SVG icon set
+    ├── components/ # Lit web components
+    │   ├── _primitives.js # Shared CSS primitives (card, buttons, etc.)
+    │   ├── _confirm.js # Async confirm-dialog primitive
+    │   ├── _data-table.js # Generic sortable/paginated data table
+    │   ├── server-tab.js # Thin orchestrator for server sub-components
+    │   ├── server-status-card.js # Status display & start/stop/restart
+    │   ├── models-config-editor.js # models.ini editor with save/scan/delete
+    │   ├── model-downloader.js # Model search & download queue UI
+    │   ├── server-logs.js # Live log viewer with auto-scroll
+    │   ├── chat-tab.js # Streaming chat interface
+    │   ├── generator-tab.js # ComfyUI prompt & parameter console
+    │   ├── gallery-tab.js # Responsive image gallery & inspector
+    │   ├── toast-host.js # Global toast notification singleton
+    │   ├── benchmark-tab.js # Thin orchestrator for benchmark sub-components
+    │   ├── benchmark-table.js # Sortable/filterable benchmark results
+    │   ├── benchmark-runner.js # Queue builder & live progress tracker
+    │   └── models-config.js # Database inspector & file management
+    └── utils/
+        ├── api.js # Centralized fetch wrapper with toast/loading support
+        ├── polling.js # Polling mixin/hook with concurrency guards
+        ├── state-mixin.js # Loading/error state mixin
+        └── toast.js # Toast.show() static service
 ```
 
 ---
@@ -120,8 +160,8 @@ The backend server will start at `http://localhost:8000`.
 ---
 
 ### Option B: Deploying inside Docker Compose (Recommended)
-This repository is pre-integrated into the main `llmaCPP` stack. To rebuild and deploy the mobile manager container:
 
+This repository is pre-integrated into the main `llmaCPP` stack. To rebuild and deploy the mobile manager container:
 ```bash
 # Navigate to the main compose stack
 cd /home/nui/llmaCPP
@@ -152,11 +192,49 @@ The mobile portal will be live at `http://localhost:8000`.
 ---
 
 ## 🔒 Guidelines for System Modifiers
+
 * Always keep the frontend build-safe. Verify changes by executing `npm run build` locally or inside the multi-stage Docker workflow.
 * Always preserve database transaction safety when performing idempotent upserts or cascading deletions during re-testing.
 * Ensure all database locks inside Python are handled using asynchronous primitives (`asyncio.Lock()`) to prevent deadlock starvation during sequential model swaps.
 
-## 🏗️ Architectural Evolution (Phase G)
+---
 
-The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic now resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns. Phase H verification tests have been added to ensure endpoint contract compliance.
+## 🏗️ Architectural Evolution
 
+### Phase G — Thin Router & Service Layer
+
+The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic now resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns.
+
+Phase H verification tests have been added to ensure endpoint contract compliance.
+
+### Phase I — Frontend Component Refactor
+
+The monolithic frontend tabs have been decomposed into a library of reusable, single-responsibility components:
+- **Shared Primitives:** `_primitives.js` consolidates CSS (cards, buttons, pills, modals) into one source of truth.
+- **Generic Widgets:** `_data-table` (sort/paginate), `_confirm` (async confirmation), `toast-host` (global notifications).
+- **Split Tabs:** `server-tab` and `benchmark-tab` are now thin orchestrators composing child elements (`<server-status-card>`, `<models-config-editor>`, `<model-downloader>`, `<server-logs>`, `<benchmark-table>`, `<benchmark-runner>`).
+- **Shared Utilities:** `utils/api.js` centralizes fetch logic with built-in toast/loading support; `utils/polling.js` manages safe async intervals; `utils/state-mixin.js` standardizes loading/error state patterns.
+- **Asset Centralization:** `assets/icons.js` replaces inline SVGs across every component.
+
+All changes are build-safe (`npm run build` passes), visually pixel-identical to the pre-refactor baseline, and fully backward-compatible with existing backend APIs.
+
+---
+
+## 📜 Full Roadmap
+
+This repository implements the complete roadmap for the `llmMobile` project:
+
+### Backend Modularization (Phases A–H)
+- **Phase A – Baseline & Guard Rails**: Setup automated verification via `tests/` and Docker build pipeline.
+- **Phase B – Pure Utilities**: Extracted constants, helpers, DB utilities.
+- **Phase C – Service Layer (Docker & Model)**: Created `docker_svc.py`, `model_svc.py`.
+- **Phase D – Service Layer (Chat & SSE)**: Added `chat_svc.py`, `sse_svc.py`.
+- **Phase E – Service Layer (ComfyUI, Queue, Gallery, Push)**: Built `comfy_svc.py`, `queue_svc.py`, `gallery_svc.py`, `push_svc.py`.
+- **Phase F – Service Layer (Download, Benchmark, Judge)**: Added `download_svc.py`, `benchmark_svc.py`, `judge_svc.py`.
+- **Phase G – Thin Router**: `app/main.py` refactored into a pure façade delegating to services.
+- **Phase H – Automated Verification**: Added comprehensive endpoint tests and verified Docker builds.
+
+### Frontend Refactor (Phase I)
+- **Phase I – Component Extraction**: Decomposed monolithic tabs into reusable primitives (`_primitives.js`, `_confirm.js`, `_data-table.js`, `toast-host.js`), shared utilities (`utils/api.js`, `utils/polling.js`, `utils/state-mixin.js`), and clean child-component trees for `server-tab` and `benchmark-tab`. Centralized icons in `assets/icons.js`.
+
+All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend.
