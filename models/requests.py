@@ -12,6 +12,7 @@ class GenerateRequest(BaseModel):
     resolution: str = "1920x1088"
     num_images: int = 1
     seed: Optional[int] = None
+    model: str = "zimage"
 
 class MkdirRequest(BaseModel):
     current_path: str

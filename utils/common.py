@@ -4,21 +4,27 @@ import psutil
 import subprocess
 from fastapi import HTTPException
 
-MODES_INI_PATH      = "/models/models.ini"
-MODELS_DIR          = "/models"
-IMAGE_GEN_OUTPUT    = "/comfyui-output"
-WORKFLOW_PATH       = "/app/MyZimage_turbo.json"
-PROMPTS_FILE        = "/app/PROMPTS"
-LLM_PROJECT_NAME    = os.environ.get("LLM_PROJECT_NAME", "llmacpp")
-LLM_COMPOSE_DIR     = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
-COMFYUI_HOST        = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")
-COMFY_CLIENT_ID     = "llm-mobile"
+MODES_INI_PATH = "/models/models.ini"
+MODELS_DIR = "/models"
+IMAGE_GEN_OUTPUT = "/comfyui-output"
+WORKFLOW_PATH = "/app/MyZimage_turbo.json"
+KREA_WORKFLOW_PATH = "/app/My_krea2_turbo_t2i.json"
+MODEL_ZIMAGE = "z-image-turbo"
+MODEL_KREA = "krea2-turbo"
+PROMPTS_FILE = "/app/PROMPTS"
+LLM_PROJECT_NAME = os.environ.get("LLM_PROJECT_NAME", "llmacpp")
+LLM_COMPOSE_DIR = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
+COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")
+COMFY_CLIENT_ID = "llm-mobile"
 
-NODE_PROMPT_TEXT    = "57:27"
-NODE_RESOLUTION     = "57:13"
-NODE_KSAMPLER       = "57:3"
+NODE_PROMPT_TEXT = "57:27"
+NODE_RESOLUTION = "57:13"
+NODE_KSAMPLER = "57:3"
+NODE_KREA_PROMPT_TEXT = "30:19"
+NODE_KREA_RESOLUTION = "30:5"
+NODE_KREA_KSAMPLER = "30:3"
 
-VRAM_CRITICAL_THRESHOLD  = 90.0
+VRAM_CRITICAL_THRESHOLD = 90.0
 VRAM_EMERGENCY_THRESHOLD = 95.0
 
 MQTT_CONFIG = {
@@ -26,15 +32,16 @@ MQTT_CONFIG = {
     "user": "mqttuser",
     "pass": "mqttpass",
     "topics": {
-        "home/129/sensor/cpu_temp":               "cpu_temp",
-        "home/129/sensor/tesla_p100_temp":        "gpu_temp",
-        "home/129/sensor/cpu_utilization":        "cpu_util",
-        "home/129/sensor/ram_utilization":        "ram_percent",
-        "home/129/sensor/vram_utilization":       "vram_percent",
-        "home/129/sensor/gpu_utilization":        "gpu_util",
-        "home/129/sensor/disk_utilization_root":  "storage_percent",
+        "home/129/sensor/cpu_temp": "cpu_temp",
+        "home/129/sensor/tesla_p100_temp": "gpu_temp",
+        "home/129/sensor/cpu_utilization": "cpu_util",
+        "home/129/sensor/ram_utilization": "ram_percent",
+        "home/129/sensor/vram_utilization": "vram_percent",
+        "home/129/sensor/gpu_utilization": "gpu_util",
+        "home/129/sensor/disk_utilization_root": "storage_percent",
     },
 }
+
 
 def safe_join(base_dir: str, *path_parts: str) -> str:
     resolved_base = os.path.realpath(base_dir)
@@ -43,8 +50,10 @@ def safe_join(base_dir: str, *path_parts: str) -> str:
         raise HTTPException(status_code=400, detail="Access denied (outside root folder)")
     return target
 
+
 def _deep_copy(d: dict) -> dict:
     return json.loads(json.dumps(d))
+
 
 def get_local_stats() -> dict:
     stats: dict = {}
@@ -53,10 +62,10 @@ def get_local_stats() -> dict:
     stats["ram_percent"] = ram.percent
     try:
         usage = psutil.disk_usage("/")
-        stats["storage_percent"]  = usage.percent
-        stats["storage_used_gb"]  = round(usage.used  / (1024 ** 3), 1)
+        stats["storage_percent"] = usage.percent
+        stats["storage_used_gb"] = round(usage.used / (1024 ** 3), 1)
         stats["storage_total_gb"] = round(usage.total / (1024 ** 3), 1)
-        stats["storage_free_gb"]  = round(usage.free  / (1024 ** 3), 1)
+        stats["storage_free_gb"] = round(usage.free / (1024 ** 3), 1)
     except Exception:
         pass
     try:
@@ -69,16 +78,21 @@ def get_local_stats() -> dict:
         pass
     try:
         res = subprocess.run(
-            ["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total",
-             "--format=csv,noheader,nounits"],
-             capture_output=True, text=True, timeout=2,
+            [
+                "nvidia-smi",
+                "--query-gpu=temperature.gpu,utilization.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if res.returncode == 0:
             parts = res.stdout.strip().split(",")
             if len(parts) >= 4:
-                stats["gpu_temp"]     = float(parts[0].strip())
-                stats["gpu_util"]     = float(parts[1].strip())
-                used  = float(parts[2].strip())
+                stats["gpu_temp"] = float(parts[0].strip())
+                stats["gpu_util"] = float(parts[1].strip())
+                used = float(parts[2].strip())
                 total = float(parts[3].strip())
                 if total > 0:
                     stats["vram_percent"] = round((used / total) * 100, 1)

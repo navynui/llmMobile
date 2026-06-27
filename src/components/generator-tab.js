@@ -8,376 +8,88 @@ const RESOLUTIONS = [
 
 export class GeneratorTab extends LitElement {
   static properties = {
-    prompt:        { type: String },
-    resolution:    { type: String },
-    numImages:     { type: Number },
-    queue:         { type: Array },
-    submitting:    { type: Boolean },
-    errorMsg:      { type: String },
+    prompt: { type: String },
+    resolution: { type: String },
+    numImages: { type: Number },
+    queue: { type: Array },
+    submitting: { type: Boolean },
+    errorMsg: { type: String },
     activeThumbnailMenu: { type: Object },
+    genMode: { type: String },
+    seed: { type: String },
   };
 
   static styles = css`
     :host { display: block; padding: 16px 16px 80px; }
-
-    .container {
-      max-width: 600px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    .card {
-      background: var(--bg-card);
-      backdrop-filter: blur(var(--blur));
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 20px;
-      box-shadow: var(--shadow-lg);
-      transition: var(--transition);
-    }
+    .container { max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .card { background: var(--bg-card); backdrop-filter: blur(var(--blur)); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-lg); transition: var(--transition); }
     .card:hover { border-color: var(--border-active); }
-
-    h2 {
-      font-family: var(--font-title);
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-bottom: 16px;
-      color: var(--text-primary);
-    }
-
-    label {
-      display: block;
-      font-size: 0.8rem;
-      font-weight: 500;
-      color: var(--text-secondary);
-      margin-bottom: 6px;
-    }
-
-    select, textarea {
-      width: 100%;
-      padding: 11px 14px;
-      background: rgba(0,0,0,0.25);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-md);
-      color: var(--text-primary);
-      font-family: var(--font-sans);
-      font-size: 0.9rem;
-      outline: none;
-      transition: var(--transition);
-      box-sizing: border-box;
-    }
+    h2 { font-family: var(--font-title); font-size: 1.1rem; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+    label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+    select, textarea { width: 100%; padding: 11px 14px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-sans); font-size: 0.9rem; outline: none; transition: var(--transition); box-sizing: border-box; }
     select:focus, textarea:focus { border-color: var(--primary); }
-
-    select {
-      appearance: none;
-      -webkit-appearance: none;
-      background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 12px center;
-      background-size: 16px;
-      padding-right: 40px;
-    }
-
+    select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; }
     textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
-
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-    .generate-btn {
-      width: 100%;
-      padding: 14px;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: var(--radius-md);
-      font-family: var(--font-title);
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      box-shadow: 0 4px 14px var(--primary-glow);
-      transition: var(--transition);
-    }
+    .generate-btn { width: 100%; padding: 14px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius-md); font-family: var(--font-title); font-size: 1rem; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px var(--primary-glow); transition: var(--transition); }
     .generate-btn:hover:not(:disabled) { background: #4f46e5; transform: translateY(-1px); }
     .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-    .error-msg {
-      color: var(--danger);
-      font-size: 0.85rem;
-      text-align: center;
-    }
-
-    /* Queue list */
+    .error-msg { color: var(--danger); font-size: 0.85rem; text-align: center; }
     .queue-list { display: flex; flex-direction: column; gap: 12px; }
-
-    .queue-item {
-      background: rgba(255,255,255,0.02);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-md);
-      padding: 14px;
-      animation: slideIn 0.25s ease-out;
-    }
-    @keyframes slideIn {
-      from { opacity:0; transform: translateY(6px); }
-      to   { opacity:1; transform: translateY(0); }
-    }
-
-    .qi-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-
-    .qi-prompt {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 70%;
-    }
-
-    .status-pill {
-      font-size: 0.7rem;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: var(--radius-full);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .pill-queued    { background: rgba(107,114,128,0.15); color:#9ca3af; }
-    .pill-running   { background: rgba(99,102,241,0.15);  color: var(--primary); }
-    .pill-completed { background: var(--success-glow);    color: var(--success); }
-    .pill-error     { background: var(--danger-glow);     color: var(--danger); }
-    .pill-cancelled { background: rgba(0,0,0,0.2);        color: var(--text-muted); }
-    .pill-offline   { background: rgba(245,158,11,0.15);  color: #f59e0b; }
-
-    .qi-sub {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .progress-bar {
-      height: 5px;
-      background: rgba(255,255,255,0.06);
-      border-radius: var(--radius-full);
-      overflow: hidden;
-    }
-    .progress-fill {
-      height: 100%;
-      background: var(--primary);
-      border-radius: var(--radius-full);
-      transition: width 0.4s ease-out;
-    }
-
-    /* Completed images thumbnails */
-    .thumb-row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      margin-top: 10px;
-    }
-    .thumb {
-      width: 72px;
-      height: 72px;
-      object-fit: cover;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border-color);
-      cursor: pointer;
-      transition: var(--transition);
-    }
+    .queue-item { background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 14px; animation: slideIn 0.25s ease-out; }
+    @keyframes slideIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform: translateY(0); } }
+    .qi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .qi-prompt { font-size: 0.85rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
+    .status-pill { font-size: 0.7rem; font-weight: 700; padding: 3px 8px; border-radius: var(--radius-full); text-transform: uppercase; letter-spacing: 0.04em; }
+    .pill-queued { background: rgba(107,114,128,0.15); color:#9ca3af; }
+    .pill-running { background: rgba(99,102,241,0.15); color: var(--primary); }
+    .pill-completed { background: var(--success-glow); color: var(--success); }
+    .pill-error { background: var(--danger-glow); color: var(--danger); }
+    .pill-cancelled { background: rgba(0,0,0,0.2); color: var(--text-muted); }
+    .pill-offline { background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .qi-sub { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; }
+    .progress-bar { height: 5px; background: rgba(255,255,255,0.06); border-radius: var(--radius-full); overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--primary); border-radius: var(--radius-full); transition: width 0.4s ease-out; }
+    .thumb-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border-color); cursor: pointer; transition: var(--transition); }
     .thumb:hover { border-color: var(--primary); transform: scale(1.05); }
-
-    /* Lightbox */
-    .lightbox {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.9);
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-      animation: fadeIn 0.2s ease-out;
-    }
+    .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; animation: fadeIn 0.2s ease-out; }
     @keyframes fadeIn { from{opacity:0} to{opacity:1} }
-    .lightbox img {
-      max-width: 100%;
-      max-height: 85vh;
-      border-radius: var(--radius-md);
-      object-fit: contain;
-    }
-    .lightbox-close {
-      position: absolute;
-      top: 16px; right: 16px;
-      background: rgba(255,255,255,0.1);
-      border: 1px solid rgba(255,255,255,0.2);
-      color: #fff;
-      font-size: 1.2rem;
-      width: 40px; height: 40px;
-      border-radius: var(--radius-full);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .lightbox-nav {
-      display: flex;
-      gap: 16px;
-      margin-top: 16px;
-    }
-    .lightbox-nav button {
-      background: rgba(255,255,255,0.1);
-      border: 1px solid rgba(255,255,255,0.2);
-      color: #fff;
-      padding: 8px 20px;
-      border-radius: var(--radius-md);
-      cursor: pointer;
-      font-size: 0.9rem;
-    }
-
-    .empty-state {
-      text-align: center;
-      padding: 32px 0;
-      color: var(--text-muted);
-    }
+    .lightbox img { max-width: 100%; max-height: 85vh; border-radius: var(--radius-md); object-fit: contain; }
+    .lightbox-close { position: absolute; top: 16px; right: 16px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; font-size: 1.2rem; width: 40px; height: 40px; border-radius: var(--radius-full); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .lightbox-nav { display: flex; gap: 16px; margin-top: 16px; }
+    .lightbox-nav button { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #fff; padding: 8px 20px; border-radius: var(--radius-md); cursor: pointer; font-size: 0.9rem; }
+    .empty-state { text-align: center; padding: 32px 0; color: var(--text-muted); }
     .empty-state .icon { font-size: 2.5rem; margin-bottom: 8px; }
-
-     .clear-btn {
-      align-self: flex-end;
-      background: none;
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      padding: 5px 10px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      transition: var(--transition);
-    }
+    .clear-btn { align-self: flex-end; background: none; border: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.75rem; padding: 5px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition); }
     .clear-btn:hover { color: var(--danger); border-color: var(--danger); }
-
-    /* Action Sheet / Context Menu */
-    .action-sheet-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(4px);
-      z-index: 10000;
-      display: flex;
-      align-items: flex-end;
-      justify-content: center;
-    }
-    
-    .action-sheet {
-      width: 100%;
-      max-width: 500px;
-      background: #111827;
-      border-top: 1px solid var(--border-color);
-      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-      padding: 20px;
-      box-sizing: border-box;
-      box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5);
-      animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    
-    @keyframes slideUp {
-      from { transform: translateY(100%); }
-      to { transform: translateY(0); }
-    }
-    
-    .action-sheet-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-    }
-    
-    .action-sheet-title {
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-    
-    .action-sheet-close {
-      background: rgba(255,255,255,0.05);
-      border: 1px solid var(--border-color);
-      color: var(--text-secondary);
-      border-radius: var(--radius-full);
-      width: 32px; height: 32px;
-      display: flex; align-items: center; justify-content: center;
-      cursor: pointer;
-    }
-    
-    .action-sheet-info {
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-radius: var(--radius-md);
-      padding: 12px;
-      margin-bottom: 16px;
-    }
-    
-    .action-sheet-prompt {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      line-height: 1.4;
-      margin: 0 0 8px 0;
-      word-break: break-word;
-    }
-    
-    .action-sheet-meta {
-      display: flex;
-      gap: 12px;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-    }
-    
-    .action-sheet-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-    
-    .action-btn {
-      width: 100%;
-      padding: 12px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--border-color);
-      color: var(--text-primary);
-      border-radius: var(--radius-md);
-      font-size: 0.9rem;
-      font-weight: 500;
-      text-align: left;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      transition: var(--transition);
-    }
-    .action-btn:hover {
-      background: rgba(255,255,255,0.08);
-      border-color: var(--border-active);
-    }
-    .action-btn.danger {
-      color: var(--danger);
-      border-color: rgba(239, 68, 68, 0.2);
-    }
-    .action-btn.danger:hover {
-      background: rgba(239, 68, 68, 0.1);
-    }
+    .action-sheet-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); z-index: 10000; display: flex; align-items: flex-end; justify-content: center; }
+    .action-sheet { width: 100%; max-width: 500px; background: #111827; border-top: 1px solid var(--border-color); border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 20px; box-sizing: border-box; box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5); animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .action-sheet-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .action-sheet-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
+    .action-sheet-close { background: rgba(255,255,255,0.05); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: var(--radius-full); width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .action-sheet-info { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: var(--radius-md); padding: 12px; margin-bottom: 16px; }
+    .action-sheet-prompt { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.4; margin: 0 0 8px 0; word-break: break-word; }
+    .action-sheet-meta { display: flex; gap: 12px; font-size: 0.75rem; color: var(--text-muted); }
+    .action-sheet-buttons { display: flex; flex-direction: column; gap: 10px; }
+    .action-btn { width: 100%; padding: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: var(--radius-md); font-size: 0.9rem; font-weight: 500; text-align: left; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: var(--transition); }
+    .action-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--border-active); }
+    .action-btn.danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.2); }
+    .action-btn.danger:hover { background: rgba(239, 68, 68, 0.1); }
   `;
 
   constructor() {
     super();
-    this.prompt     = localStorage.getItem('gen_prompt') || '';
+    this.prompt = localStorage.getItem('gen_prompt') || '';
     this.resolution = localStorage.getItem('gen_resolution') || '1920x1088';
-    this.numImages  = parseInt(localStorage.getItem('gen_num_images') || '1', 10);
-    this.queue      = [];
+    this.numImages = parseInt(localStorage.getItem('gen_num_images') || '1', 10);
+    this.genMode = localStorage.getItem('gen_mode') || 'zimage';
+    this.seed = '';
+    this.queue = [];
     this.submitting = false;
-    this.errorMsg   = '';
-    this._lightbox  = null; // { images: [...], index: 0 }
+    this.errorMsg = '';
+    this._lightbox = null;
     this.activeThumbnailMenu = null;
   }
 
@@ -396,30 +108,29 @@ export class GeneratorTab extends LitElement {
     localStorage.setItem('gen_prompt', this.prompt);
     localStorage.setItem('gen_resolution', this.resolution);
     localStorage.setItem('gen_num_images', String(this.numImages));
+    localStorage.setItem('gen_mode', this.genMode);
   }
 
   async _submit() {
     if (!this.prompt.trim()) { this.errorMsg = 'Please enter a prompt.'; return; }
-    this.errorMsg   = '';
+    this.errorMsg = '';
     this.submitting = true;
     this._savePrefs();
-
+    const seedVal = this.seed.trim();
+    const seedNum = parseInt(seedVal, 10);
     const body = {
-      prompt:     this.prompt.trim(),
+      prompt: this.prompt.trim(),
       resolution: this.resolution,
       num_images: this.numImages,
+      model: this.genMode,
+      seed: (seedVal !== '' && !isNaN(seedNum)) ? seedNum : null,
     };
-
     if (!navigator.onLine) {
-      opQueue.push('/api/generate/queue', {
-        method: 'POST',
-        body: JSON.stringify(body)
-      });
+      opQueue.push('/api/generate/queue', { method: 'POST', body: JSON.stringify(body) });
       this.prompt = '';
       this.submitting = false;
       return;
     }
-
     try {
       const res = await fetch('/api/generate/queue', {
         method: 'POST',
@@ -440,18 +151,15 @@ export class GeneratorTab extends LitElement {
 
   async _cancelItem(id) {
     if (id.startsWith('op_')) {
-      // Offline local item, remove directly
       opQueue.queue = opQueue.queue.filter(op => op.id !== id);
       localStorage.setItem('op_queue', JSON.stringify(opQueue.queue));
       window.dispatchEvent(new CustomEvent('op-queue-changed', { detail: opQueue.queue }));
       return;
     }
-
     if (!navigator.onLine) {
       opQueue.push(`/api/generate/queue/${id}`, { method: 'DELETE' });
       return;
     }
-
     await fetch(`/api/generate/queue/${id}`, { method: 'DELETE' });
   }
 
@@ -481,10 +189,11 @@ export class GeneratorTab extends LitElement {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt:     item.prompt,
+          prompt: item.prompt,
           resolution: item.resolution || '1024x1024',
           num_images: 1,
-          seed:       seed,
+          seed: seed,
+          model: item.model || 'zimage',
         }),
       });
       if (!res.ok) {
@@ -509,9 +218,10 @@ export class GeneratorTab extends LitElement {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt:     item.prompt,
+          prompt: item.prompt,
           resolution: item.resolution || '1024x1024',
           num_images: item.total_images || item.num_images || 1,
+          model: item.model || 'zimage',
         }),
       });
       if (!res.ok) {
@@ -542,18 +252,22 @@ export class GeneratorTab extends LitElement {
 
   _pillClass(status, isOffline) {
     if (isOffline) return 'pill-offline';
-    return { queued: 'pill-queued', running: 'pill-running',
-             completed: 'pill-completed', error: 'pill-error',
-             cancelled: 'pill-cancelled' }[status] || 'pill-queued';
+    return { queued: 'pill-queued', running: 'pill-running', completed: 'pill-completed', error: 'pill-error', cancelled: 'pill-cancelled' }[status] || 'pill-queued';
   }
 
   _subText(item) {
     if (item.isOffline) return 'Queued offline · Awaiting connection';
+    if (item.model === 'both') {
+      const subItems = item.sub_items || [];
+      const done = Math.min(item.current_sub_index || 0, subItems.length);
+      const label = subItems[done]?.workflow === 'krea2' ? 'Krea2' : (subItems[done]?.workflow || '?');
+      return `Dual mode · ${label} (${done + 1}/${subItems.length})`;
+    }
     if (item.status === 'running') {
       return `Image ${item.image_num || 1}/${item.total_images} · ${Math.round((item.progress || 0) * 100)}%`;
     }
     if (item.status === 'completed') return `${item.image_ids?.length || 0} image(s) generated`;
-    if (item.status === 'error')     return item.error || 'Unknown error';
+    if (item.status === 'error') return item.error || 'Unknown error';
     return `${item.resolution} · ${item.num_images} image(s)`;
   }
 
@@ -563,73 +277,72 @@ export class GeneratorTab extends LitElement {
       let promptText = 'Generation Task';
       let resVal = '1024x1024';
       let numImgs = 1;
+      let model = 'zimage';
       try {
         const body = JSON.parse(op.body);
         promptText = body.prompt;
         resVal = body.resolution || resVal;
         numImgs = body.num_images || numImgs;
+        model = body.model || model;
       } catch {}
-
       return {
         id: op.id,
         prompt: promptText,
         resolution: resVal,
         num_images: numImgs,
+        model,
         status: 'queued',
         isOffline: true,
         image_ids: [],
-        progress: 0.0
+        progress: 0.0,
       };
     });
-
     const combinedQueue = [...offlineItems, ...(this.queue || [])];
     const hasDone = combinedQueue.some(q => ['completed','error','cancelled'].includes(q.status));
-
+    const buttonLabel = this.submitting ? 'Submitting…' : (this.genMode === 'krea2' ? '🎨 Generate' : this.genMode === 'both' ? '🔀 Generate both' : '⚡ Generate');
     return html`
       <div class="container">
-
-        <!-- Prompt Input Card -->
         <div class="card">
-          <h2>🎨 Z-Image Turbo Generator</h2>
-
+          <h2>🎨 Image Generator</h2>
           <div class="row">
             <div>
               <label>Resolution</label>
-              <select .value="${this.resolution}"
-                @change="${e => { this.resolution = e.target.value; this._savePrefs(); }}">
+              <select .value="${this.resolution}" @change="${e => { this.resolution = e.target.value; this._savePrefs(); }}">
                 ${RESOLUTIONS.map(r => html`<option value="${r}" ?selected="${r === this.resolution}">${r}</option>`)}
               </select>
             </div>
             <div>
               <label>Images per prompt</label>
-              <select .value="${String(this.numImages)}"
-                @change="${e => { this.numImages = parseInt(e.target.value); this._savePrefs(); }}">
+              <select .value="${String(this.numImages)}" @change="${e => { this.numImages = parseInt(e.target.value); this._savePrefs(); }}">
                 ${[1,2,3,4,6,8].map(n => html`<option value="${n}" ?selected="${n === this.numImages}">${n}</option>`)}
               </select>
             </div>
           </div>
-
+          <div class="row" style="margin-top:14px;">
+            <div>
+              <label>Mode</label>
+              <select .value="${this.genMode}" @change="${e => { this.genMode = e.target.value; this._savePrefs(); }}">
+                <option value="zimage" ?selected="${this.genMode === 'zimage'}">⚡ Z-Image Turbo</option>
+                <option value="krea2" ?selected="${this.genMode === 'krea2'}">🎨 Krea2 Turbo</option>
+                <option value="both" ?selected="${this.genMode === 'both'}">🔀 Both (2 images)</option>
+              </select>
+            </div>
+            <div>
+              <label>Seed (optional)</label>
+              <input type="text" .value="${this.seed}" @input="${e => { this.seed = e.target.value; }}" placeholder="Random" style="width:100%; padding:11px 14px; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:var(--radius-md); color:var(--text-primary); font-family:var(--font-sans); font-size:0.9rem; outline:none; box-sizing:border-box;">
+            </div>
+          </div>
           <div style="margin-top:14px;">
             <label>Prompt</label>
-            <textarea
-              .value="${this.prompt}"
-              @input="${e => { this.prompt = e.target.value; }}"
-              placeholder="Describe the image you want to generate…"
-            ></textarea>
+            <textarea .value="${this.prompt}" @input="${e => { this.prompt = e.target.value; }}" placeholder="Describe the image you want to generate…"></textarea>
           </div>
-
           ${this.errorMsg ? html`<p class="error-msg">${this.errorMsg}</p>` : ''}
-
           <div style="margin-top:16px;">
-            <button class="generate-btn"
-              @click="${this._submit}"
-              ?disabled="${this.submitting || !this.prompt.trim()}">
-              ${this.submitting ? 'Submitting…' : '⚡ Generate'}
+            <button class="generate-btn" @click="${this._submit}" ?disabled="${this.submitting || !this.prompt.trim()}">
+              ${buttonLabel}
             </button>
           </div>
         </div>
-
-        <!-- Queue card -->
         ${combinedQueue.length > 0 ? html`
           <div class="card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
@@ -644,27 +357,18 @@ export class GeneratorTab extends LitElement {
                     <span class="status-pill ${this._pillClass(item.status, item.isOffline)}">${item.isOffline ? 'offline' : item.status}</span>
                   </div>
                   <div class="qi-sub">${this._subText(item)}</div>
-
                   ${item.status === 'running' ? html`
                     <div class="progress-bar">
                       <div class="progress-fill" style="width:${Math.round((item.progress||0)*100)}%"></div>
                     </div>
                   ` : ''}
-
                   ${item.status === 'completed' && item.image_ids?.length ? html`
                     <div class="thumb-row">
                       ${item.image_ids.map((fname, i) => html`
-                        <img class="thumb"
-                          src="/images/${fname}"
-                          alt="${fname}"
-                          @click="${() => this._openLightbox(item.image_ids.map(f => `/images/${f}`), i)}"
-                          @contextmenu="${e => { e.preventDefault(); this._openThumbnailMenu(item, i); }}"
-                          loading="lazy"
-                        />
+                        <img class="thumb" src="/images/${fname}" alt="${fname}" @click="${() => this._openLightbox(item.image_ids.map(f => `/images/${f}`), i)}" @contextmenu="${e => { e.preventDefault(); this._openThumbnailMenu(item, i); }}" loading="lazy" />
                       `)}
                     </div>
                   ` : ''}
-
                   <div style="display:flex; gap:8px; margin-top:8px;">
                     ${item.status === 'queued' || item.status === 'running' || item.isOffline ? html`
                       <button class="clear-btn" @click="${() => this._cancelItem(item.id)}">Cancel</button>
@@ -686,8 +390,6 @@ export class GeneratorTab extends LitElement {
           </div>
         `}
       </div>
-
-      <!-- Lightbox -->
       ${this._lightbox ? html`
         <div class="lightbox" @click="${e => e.target === e.currentTarget && this._closeLightbox()}">
           <button class="lightbox-close" @click="${this._closeLightbox}">✕</button>
@@ -703,8 +405,6 @@ export class GeneratorTab extends LitElement {
           ` : ''}
         </div>
       ` : ''}
-
-      <!-- Thumbnail Context Menu -->
       ${this.activeThumbnailMenu ? html`
         <div class="action-sheet-backdrop" @click="${this._closeThumbnailMenu}">
           <div class="action-sheet" @click="${e => e.stopPropagation()}">
@@ -712,7 +412,6 @@ export class GeneratorTab extends LitElement {
               <div class="action-sheet-title">Image Options</div>
               <button class="action-sheet-close" @click="${this._closeThumbnailMenu}">✕</button>
             </div>
-            
             <div class="action-sheet-info">
               <p class="action-sheet-prompt">${this.activeThumbnailMenu.item.prompt}</p>
               <div class="action-sheet-meta">
@@ -721,7 +420,6 @@ export class GeneratorTab extends LitElement {
                 ` : ''}
               </div>
             </div>
-
             <div class="action-sheet-buttons">
               <button class="action-btn" @click="${() => { this._copyPromptText(this.activeThumbnailMenu.item.prompt); this._closeThumbnailMenu(); }}">
                 📋 Copy Prompt
