@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { Confirm } from './_confirm.js';
+import { icons } from '../assets/icons.js';
 
 export class GalleryTab extends LitElement {
   static properties = {
@@ -13,6 +14,9 @@ export class GalleryTab extends LitElement {
     selected:     { type: Object },   // Set of relative_path strings
     lightbox:     { type: Object },   // { images, index }
     activeActionMenu: { type: Object },
+    showMoveModal:    { type: Boolean },
+    allFolders:       { type: Array },
+    moveTargetGroup:  { type: Object },
   };
 
   static styles = css`
@@ -441,6 +445,9 @@ export class GalleryTab extends LitElement {
     this._longPressTimer = null;
     this._selectMode     = false;
     this.activeActionMenu = null;
+    this.showMoveModal    = false;
+    this.allFolders       = [];
+    this.moveTargetGroup  = null;
   }
 
   connectedCallback() {
@@ -651,6 +658,65 @@ export class GalleryTab extends LitElement {
     }
   }
 
+  async _openMoveModal(group) {
+    this.moveTargetGroup = group;
+    this.showMoveModal = true;
+    this._closeActionMenu();
+    await this._loadAllFolders();
+    this.requestUpdate();
+  }
+
+  async _loadAllFolders() {
+    try {
+      const res = await fetch('/api/gallery/all_folders');
+      const folders = await res.json();
+      this.allFolders = folders;
+    } catch (e) {
+      console.error('Failed to load folders', e);
+      this.allFolders = ['']; // fallback to root
+    }
+  }
+
+  _closeMoveModal() {
+    this.showMoveModal = false;
+    this.moveTargetGroup = null;
+    this.requestUpdate();
+  }
+
+  async _moveGroupToFolder(folderPath) {
+    if (!this.moveTargetGroup) return;
+    const filenames = this.moveTargetGroup.images.map(img => img.filename);
+    await fetch('/api/gallery/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_path: this.currentPath,
+        destination: folderPath,
+        filenames,
+      }),
+    });
+    this._closeMoveModal();
+    this._load(this.currentPath, this.page);
+  }
+
+  async _moveSelectedToFolder(folderPath) {
+    if (!this.selected.size) return;
+    const filenames = [...this.selected].map(p => p.split('/').pop());
+    await fetch('/api/gallery/move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_path: this.currentPath,
+        destination: folderPath,
+        filenames,
+      }),
+    });
+    this._closeMoveModal();
+    this.selected = new Set();
+    this._selectMode = false;
+    this._load(this.currentPath, this.page);
+  }
+
   render() {
     const crumbs   = this._breadcrumbs();
     const lbImg    = this.lightbox?.images[this.lightbox.index];
@@ -811,12 +877,34 @@ export class GalleryTab extends LitElement {
                   🔄 Regenerate Image
                 </button>
               ` : ''}
+              <button class="action-btn" @click="${() => { this._openMoveModal(this.activeActionMenu); }}">
+                ${icons.folder} Move to Folder
+              </button>
               <button class="action-btn" @click="${() => { this._toggleSelectGroup(this.activeActionMenu); this._closeActionMenu(); }}">
                 ☑️ ${this._isGroupSelected(this.activeActionMenu) ? 'Deselect Item' : 'Select Item'}
               </button>
               <button class="action-btn danger" @click="${() => { this._deleteGroup(this.activeActionMenu); this._closeActionMenu(); }}">
                 🗑️ Delete Image(s)
               </button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Move to Folder Modal -->
+      ${this.showMoveModal ? html`
+        <div class="action-sheet-backdrop" @click="${this._closeMoveModal}">
+          <div class="action-sheet" @click="${e => e.stopPropagation()}" style="max-height: 80vh; overflow-y: auto;">
+            <div class="action-sheet-header">
+              <div class="action-sheet-title">Move to Folder</div>
+              <button class="action-sheet-close" @click="${this._closeMoveModal}">✕</button>
+            </div>
+            <div class="action-sheet-buttons">
+              ${this.allFolders.map(folder => html`
+                <button class="action-btn" @click="${() => this.moveTargetGroup ? this._moveGroupToFolder(folder) : this._moveSelectedToFolder(folder)}">
+                  ${icons.folder} ${folder || '(Root)'}
+                </button>
+              `)}
             </div>
           </div>
         </div>
