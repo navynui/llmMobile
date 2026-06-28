@@ -17,6 +17,7 @@ export class GeneratorTab extends LitElement {
     activeThumbnailMenu: { type: Object },
     genMode: { type: String },
     seed: { type: String },
+    forceGenerate: { type: Boolean },
   };
 
   static styles = css`
@@ -91,6 +92,7 @@ export class GeneratorTab extends LitElement {
     this.errorMsg = '';
     this._lightbox = null;
     this.activeThumbnailMenu = null;
+    this.forceGenerate = false;
   }
 
   connectedCallback() {
@@ -116,6 +118,21 @@ export class GeneratorTab extends LitElement {
     this.errorMsg = '';
     this.submitting = true;
     this._savePrefs();
+
+    // Query active model before unload and save it to sessionStorage
+    try {
+      const activeRes = await fetch('/api/llm/models');
+      if (activeRes.ok) {
+        const activeData = await activeRes.json();
+        const loadedModel = activeData.data?.find(m => m.status === 'loaded' || m.status?.value === 'loaded');
+        if (loadedModel) {
+          sessionStorage.setItem('previous_model_name', loadedModel.id);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to retrieve active model before swapping", e);
+    }
+
     const seedVal = this.seed.trim();
     const seedNum = parseInt(seedVal, 10);
     const body = {
@@ -124,6 +141,7 @@ export class GeneratorTab extends LitElement {
       num_images: this.numImages,
       model: this.genMode,
       seed: (seedVal !== '' && !isNaN(seedNum)) ? seedNum : null,
+      force_generate: this.forceGenerate,
     };
     if (!navigator.onLine) {
       opQueue.push('/api/generate/queue', { method: 'POST', body: JSON.stringify(body) });
@@ -335,6 +353,10 @@ export class GeneratorTab extends LitElement {
           <div style="margin-top:14px;">
             <label>Prompt</label>
             <textarea .value="${this.prompt}" @input="${e => { this.prompt = e.target.value; }}" placeholder="Describe the image you want to generate…"></textarea>
+          </div>
+          <div style="margin-top:14px; display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="forceGenerate" .checked="${this.forceGenerate}" @change="${e => { this.forceGenerate = e.target.checked; }}" style="width:auto; cursor:pointer;" />
+            <label for="forceGenerate" style="margin-bottom:0; cursor:pointer; font-size:0.85rem; user-select:none;">Force Generate (skip VRAM swap / keep LLM loaded)</label>
           </div>
           ${this.errorMsg ? html`<p class="error-msg">${this.errorMsg}</p>` : ''}
           <div style="margin-top:16px;">

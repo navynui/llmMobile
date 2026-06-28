@@ -13,6 +13,7 @@ class GenerateRequest(BaseModel):
     num_images: int = 1
     seed: Optional[int] = None
     model: str = "zimage"
+    force_generate: Optional[bool] = False
 
 class MkdirRequest(BaseModel):
     current_path: str

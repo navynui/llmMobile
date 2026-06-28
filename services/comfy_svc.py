@@ -129,7 +129,7 @@ async def _free_comfy_cache() -> bool:
 
 def _queue_comfy(wf: dict) -> tuple:
     resp = _COMFY_HTTP.post(
-        "/prompt", json={"prompt": wf, "client_id": COMFY_CLIENT_ID}
+        "/prompt", json={"prompt": wf, "client_id": COMFY_CLIENT_ID}, timeout=120.0
     )
     if resp.status_code != 200:
         raise RuntimeError(
@@ -403,6 +403,76 @@ async def _run_subtask(
     return image_ids
 
 
+from contextlib import asynccontextmanager
+
+async def check_llama_cpp_idle() -> bool:
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get("http://llm-server:8080/slots", timeout=3)
+            if resp.status_code == 200:
+                slots = resp.json()
+                for slot in slots:
+                    if slot.get("state") != 0:
+                        return False
+                return True
+    except Exception as e:
+        print(f"[VRAM Swap] Failed to check slots: {e}")
+    return True
+
+
+@asynccontextmanager
+async def swap_vram_for_generation(force_generate: bool = False):
+    from services.chat_svc import _get_loaded_model
+    from services.model_svc import proxy_llm_unload, proxy_llm_load
+    from models.requests import ModelActionRequest
+
+    loaded_model = await _get_loaded_model()
+    
+    if loaded_model and not force_generate:
+        idle = False
+        for _ in range(30):
+            if await check_llama_cpp_idle():
+                idle = True
+                break
+            await asyncio.sleep(1)
+            
+        if not idle:
+            raise RuntimeError("Cannot free VRAM — llama-server is busy processing a chat request.")
+            
+        print(f"[VRAM Swap] Unloading model: {loaded_model}")
+        unload_success = False
+        for attempt in range(2):
+            try:
+                await proxy_llm_unload(ModelActionRequest(model=loaded_model))
+                unload_success = True
+                break
+            except Exception as e:
+                print(f"[VRAM Swap] Unload attempt {attempt+1} failed: {e}")
+                if attempt == 0:
+                    await asyncio.sleep(3)
+                    
+        if not unload_success:
+            raise RuntimeError("Cannot free VRAM — unload request to llama.cpp failed.")
+            
+    try:
+        yield
+    finally:
+        if loaded_model and not force_generate:
+            print(f"[VRAM Swap] Reloading model: {loaded_model}")
+            reload_success = False
+            for attempt in range(2):
+                try:
+                    await proxy_llm_load(ModelActionRequest(model=loaded_model))
+                    reload_success = True
+                    break
+                except Exception as e:
+                    print(f"[VRAM Swap] Reload attempt {attempt+1} failed: {e}")
+                    if attempt == 0:
+                        await asyncio.sleep(3)
+            if not reload_success:
+                print(f"[VRAM Swap] CRITICAL: Failed to reload model: {loaded_model}")
+
+
 async def queue_worker(send_push_fn=None):
     """Main async queue worker. Processes generation items one by one.
 
@@ -410,76 +480,97 @@ async def queue_worker(send_push_fn=None):
         send_push_fn: Optional callable(title, body) for push notifications.
     """
     global _queue_running
-    while True:
-        item = None
+    
+    first_item = None
+    with _queue_lock:
+        for qi in _gen_queue:
+            if qi["status"] == "queued":
+                first_item = qi
+                break
+                
+    force_gen = first_item.get("force_generate", False) if first_item else False
+    
+    try:
+        async with swap_vram_for_generation(force_generate=force_gen):
+            while True:
+                item = None
+                with _queue_lock:
+                    for qi in _gen_queue:
+                        if qi["status"] == "queued":
+                            item = qi
+                            break
+                if item is None:
+                    _queue_running = False
+                    return
+
+                loop = asyncio.get_running_loop()
+                queue_id = item["id"]
+                with _queue_lock:
+                    item["status"] = "running"
+                    item["started_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                await broadcast_queue()
+
+                try:
+                    model = item.get("model", MODEL_ZIMAGE)
+                    if model == "both":
+                        sub_items = item.get("sub_items", [])
+                        for idx, sub in enumerate(sub_items):
+                            with _queue_lock:
+                                item["status"] = "running"
+                            await _run_subtask(item, sub, idx, len(sub_items), loop)
+                            if idx < len(sub_items) - 1:
+                                await _free_comfy_cache()
+                                with _queue_lock:
+                                    item["current_sub_index"] = idx + 1
+                                    item["progress"] = 0.0
+                                await broadcast_queue()
+                                await asyncio.sleep(15)
+                    else:
+                        sub_item = {
+                            "workflow": model,
+                            "num_images": item.get("num_images", 1),
+                            "seed": item.get("seed"),
+                        }
+                        await _run_subtask(item, sub_item, 0, 1, loop)
+
+                    with _queue_lock:
+                        if item["status"] != "cancelled":
+                            item["status"] = "completed"
+                            item["progress"] = 1.0
+                            item["completed_at"] = (
+                                datetime.datetime.utcnow().isoformat() + "Z"
+                            )
+                    if send_push_fn:
+                        send_push_fn(
+                            "Image Generation Complete",
+                            f"Generated {len(item.get('image_ids', []))} images for: {item['prompt'][:40]}...",
+                        )
+                except Exception as e:
+                    is_cancelled = False
+                    with _queue_lock:
+                        if item["status"] == "cancelled":
+                            is_cancelled = True
+                    if not is_cancelled:
+                        traceback.print_exc()
+                        error_msg = str(e).split("\n")[0]
+                        with _queue_lock:
+                            item["status"] = "error"
+                            item["error"] = error_msg
+                        if send_push_fn:
+                            send_push_fn(
+                                "Image Generation Failed",
+                                f"Error: {error_msg} for: {item['prompt'][:40]}...",
+                            )
+                await broadcast_queue()
+    except Exception as e:
+        print(f"[Queue Worker] Swapping or generation failed: {e}")
         with _queue_lock:
             for qi in _gen_queue:
                 if qi["status"] == "queued":
-                    item = qi
-                    break
-        if item is None:
-            _queue_running = False
-            return
-
-        loop = asyncio.get_running_loop()
-        queue_id = item["id"]
-        with _queue_lock:
-            item["status"] = "running"
-            item["started_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    qi["status"] = "error"
+                    qi["error"] = f"VRAM Swap failed: {str(e)}"
         await broadcast_queue()
-
-        try:
-            model = item.get("model", MODEL_ZIMAGE)
-            if model == "both":
-                sub_items = item.get("sub_items", [])
-                for idx, sub in enumerate(sub_items):
-                    with _queue_lock:
-                        item["status"] = "running"
-                    await _run_subtask(item, sub, idx, len(sub_items), loop)
-                    if idx < len(sub_items) - 1:
-                        await _free_comfy_cache()
-                        with _queue_lock:
-                            item["current_sub_index"] = idx + 1
-                            item["progress"] = 0.0
-                        await broadcast_queue()
-                        await asyncio.sleep(15)
-            else:
-                sub_item = {
-                    "workflow": model,
-                    "num_images": item.get("num_images", 1),
-                    "seed": item.get("seed"),
-                }
-                await _run_subtask(item, sub_item, 0, 1, loop)
-
-            with _queue_lock:
-                if item["status"] != "cancelled":
-                    item["status"] = "completed"
-                    item["progress"] = 1.0
-                    item["completed_at"] = (
-                        datetime.datetime.utcnow().isoformat() + "Z"
-                    )
-            if send_push_fn:
-                send_push_fn(
-                    "Image Generation Complete",
-                    f"Generated {len(item.get('image_ids', []))} images for: {item['prompt'][:40]}...",
-                )
-        except Exception as e:
-            is_cancelled = False
-            with _queue_lock:
-                if item["status"] == "cancelled":
-                    is_cancelled = True
-            if not is_cancelled:
-                traceback.print_exc()
-                error_msg = str(e).split("\n")[0]
-                with _queue_lock:
-                    item["status"] = "error"
-                    item["error"] = error_msg
-                if send_push_fn:
-                    send_push_fn(
-                        "Image Generation Failed",
-                        f"Error: {error_msg} for: {item['prompt'][:40]}...",
-                    )
-        await broadcast_queue()
+        _queue_running = False
 
 
 # ───────────────────────────────────────────────
@@ -511,6 +602,7 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "num_images": 2,
             "seed": req.seed,
             "model": model,
+            "force_generate": getattr(req, "force_generate", False) or False,
             "sub_items": sub_items,
             "current_sub_index": 0,
             "status": "queued",
@@ -531,6 +623,7 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "num_images": max(1, min(req.num_images, 16)),
             "seed": req.seed,
             "model": model,
+            "force_generate": getattr(req, "force_generate", False) or False,
             "sub_items": [],
             "current_sub_index": 0,
             "status": "queued",

@@ -7,7 +7,10 @@ export class ChatTab extends LitElement {
     inputActive: { type: Boolean },
     isGenerating: { type: Boolean },
     metadata: { type: Object },
-    visionCapable: { type: Boolean }
+    visionCapable: { type: Boolean },
+    showReloadBanner: { type: Boolean },
+    previousModelName: { type: String },
+    isReloading: { type: Boolean }
   };
 
   static styles = css`
@@ -366,6 +369,9 @@ export class ChatTab extends LitElement {
     this.isGenerating = false;
     this.metadata = null;
     this.visionCapable = false;
+    this.showReloadBanner = false;
+    this.previousModelName = '';
+    this.isReloading = false;
 
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');
@@ -381,8 +387,81 @@ export class ChatTab extends LitElement {
     this.imageSent = false;
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    this.statusPoll = setInterval(() => this.checkModelStatus(), 3000);
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.statusPoll) clearInterval(this.statusPoll);
+  }
+
   async firstUpdated() {
     await this.checkVisionSupport();
+    await this.checkModelStatus();
+  }
+
+  async checkModelStatus() {
+    try {
+      let queueRunning = false;
+      const queueResp = await fetch('/api/generate/queue');
+      if (queueResp.ok) {
+        const queueData = await queueResp.json();
+        queueRunning = queueData.queue?.some(item => item.status === 'running' || item.status === 'queued') || false;
+      }
+
+      const modelsResp = await fetch('/api/llm/models');
+      if (!modelsResp.ok) return;
+      const modelsData = await modelsResp.json();
+      const loadedModel = modelsData.data?.find(m => 
+        m.status === 'loaded' || 
+        (typeof m.status === 'object' && m.status?.value === 'loaded')
+      );
+
+      const prevModel = sessionStorage.getItem('previous_model_name');
+      if (!loadedModel && prevModel) {
+        this.showReloadBanner = true;
+        this.previousModelName = prevModel;
+      } else {
+        this.showReloadBanner = false;
+        this.previousModelName = '';
+      }
+
+      if (queueRunning) {
+        this.isGenerating = true;
+      } else {
+        const activeAss = this.messages.some(m => m.role === 'assistant' && !m.done && m.content === '');
+        if (!activeAss) {
+          this.isGenerating = false;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed checking model status:", e);
+    }
+  }
+
+  async reloadModel() {
+    if (!this.previousModelName) return;
+    this.isReloading = true;
+    try {
+      const res = await fetch('/api/llm/models/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: this.previousModelName })
+      });
+      if (res.ok) {
+        this.showReloadBanner = false;
+        sessionStorage.removeItem('previous_model_name');
+        await this.checkVisionSupport();
+      } else {
+        alert("Failed to reload model: " + (await res.text()));
+      }
+    } catch (e) {
+      alert("Error reloading model: " + e.message);
+    } finally {
+      this.isReloading = false;
+    }
   }
 
   parseThinkingAndContent(m) {
@@ -555,6 +634,40 @@ export class ChatTab extends LitElement {
 
     let text = (textarea ? textarea.value?.trim() : '') || '';
     let base64Image = null;
+
+    // Hard fallback: on chat send, check if model needs reload
+    const prevModel = sessionStorage.getItem('previous_model_name');
+    if (prevModel) {
+      try {
+        const modelsResp = await fetch('/api/llm/models');
+        if (modelsResp.ok) {
+          const modelsData = await modelsResp.json();
+          const loadedModel = modelsData.data?.find(m => 
+            m.status === 'loaded' || 
+            (typeof m.status === 'object' && m.status?.value === 'loaded')
+          );
+          if (!loadedModel) {
+            console.log(`[Chat Tab] Auto-reloading previous model: ${prevModel}`);
+            this.isGenerating = true;
+            const loadRes = await fetch('/api/llm/models/load', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ model: prevModel })
+            });
+            this.isGenerating = false;
+            if (loadRes.ok) {
+              sessionStorage.removeItem('previous_model_name');
+              this.showReloadBanner = false;
+            } else {
+              console.error("[Chat Tab] Auto-reload failed on send");
+            }
+          }
+        }
+      } catch (e) {
+        console.error("[Chat Tab] Auto-reload check failed", e);
+        this.isGenerating = false;
+      }
+    }
 
     // If there's a pending image attachment, send it with the message
     if (this.imageAttachment && this.visionCapable && !this.imageSent) {
@@ -992,6 +1105,14 @@ export class ChatTab extends LitElement {
 
   render() {
     return html`
+      ${this.showReloadBanner ? html`
+        <div style="background: rgba(245, 158, 11, 0.15); border-bottom: 1px solid rgba(245, 158, 11, 0.3); padding: 10px 16px; font-size: 0.85rem; color: #f59e0b; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+          <span>⚠️ Model "${this.previousModelName}" was not reloaded after generation.</span>
+          <button style="padding: 4px 10px; font-size: 0.75rem; font-weight: 600; background: var(--primary); color: #fff; border: none; border-radius: var(--radius-sm); cursor: pointer;" ?disabled="${this.isReloading}" @click="${this.reloadModel}">
+            ${this.isReloading ? 'Reloading...' : 'Reload Now'}
+          </button>
+        </div>
+      ` : ''}
       <div class="chat-container">
         ${this.messages.length === 0 ? html`
           <div style="margin: auto; text-align: center; color: var(--text-muted); max-width: 280px; padding-bottom: 40px;">

@@ -295,7 +295,9 @@ export class ServerTab extends LitElement {
     this.fetchLogs();
   }
 
-  firstUpdated() {
+  _handleVisibilityChange() { if (document.visibilityState === 'visible') { this.pollDownloads(); } }
+
+firstUpdated() {
     this.fetchModelsList();
     this.fetchActiveModel();
     this.pollDownloads();
@@ -323,7 +325,44 @@ export class ServerTab extends LitElement {
     }
   }
 
-  async fetchModelsList() {
+  async handleStopDownload(key) {
+        try {
+            const res = await fetch(`/api/models/downloads/${encodeURIComponent(key)}/stop`, { method: 'POST' });
+            const data = await res.json();
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: data.detail || 'Stopped' }, bubbles: true, composed: true }));
+            this.pollDownloads();
+        } catch (err) {
+            console.error(err);
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: 'Failed to stop download' }, bubbles: true, composed: true }));
+        }
+    }
+    async handleResumeDownload(key) {
+        try {
+            const res = await fetch(`/api/models/downloads/${encodeURIComponent(key)}/resume`, { method: 'POST' });
+            const data = await res.json();
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: data.detail || 'Resumed' }, bubbles: true, composed: true }));
+            this.pollDownloads();
+        } catch (err) {
+            console.error(err);
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: 'Failed to resume download' }, bubbles: true, composed: true }));
+        }
+    }
+    async handleCancelDownload(key) {
+        try {
+            const res = await fetch(`/api/models/downloads/${encodeURIComponent(key)}/cancel`, { method: 'POST' });
+            const data = await res.json();
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: data.detail || 'Cancelled' }, bubbles: true, composed: true }));
+            this.pollDownloads();
+        } catch (err) {
+            console.error(err);
+            this.dispatchEvent(new CustomEvent('op-queue-notification', { detail: { message: 'Failed to cancel download' }, bubbles: true, composed: true }));
+        }
+    }
+    async refreshDownloads() {
+        await this.pollDownloads();
+    }
+
+async fetchModelsList() {
     try {
       const res = await fetch('/models');
       if (res.ok) {
@@ -623,6 +662,10 @@ export class ServerTab extends LitElement {
           @search="${this.handleHfSearch}"
           @select-repo="${(e) => this.selectHfRepo(e.detail.repoId)}"
           @download="${(e) => this.triggerHfDownload(e.detail.filename)}"
+ @stop-download="${(e) => this.handleStopDownload(e.detail.key)}"
+ @resume-download="${(e) => this.handleResumeDownload(e.detail.key)}"
+ @cancel-download="${(e) => this.handleCancelDownload(e.detail.key)}"
+ @clear-finished="${this._handleClearFinishedDownloads}"
         >
         </model-downloader>
 

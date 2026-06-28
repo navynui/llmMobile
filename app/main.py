@@ -5,26 +5,23 @@ import datetime
 import traceback
 import time
 import uuid
-
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-
 from utils.common import (
     MODES_INI_PATH, MODELS_DIR, IMAGE_GEN_OUTPUT, WORKFLOW_PATH, PROMPTS_FILE,
     LLM_PROJECT_NAME, LLM_COMPOSE_DIR, COMFYUI_HOST, COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT, NODE_RESOLUTION, NODE_KSAMPLER,
-    VRAM_CRITICAL_THRESHOLD, VRAM_EMERGENCY_THRESHOLD, MQTT_CONFIG,
-    safe_join, _deep_copy, get_local_stats
+    VRAM_CRITICAL_THRESHOLD, VRAM_EMERGENCY_THRESHOLD,
+    MQTT_CONFIG, safe_join, _deep_copy, get_local_stats
 )
 from utils.db_utils import DB_PATH, get_db_conn, consolidate_database, _clean_model_id
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
 from models.requests import (
-    ModelsIniRequest, ModelActionRequest, GenerateRequest,
-    MkdirRequest, MoveRequest, DeleteRequest, DownloadRequest,
-    BenchmarkRunRequest, BenchmarkQueueRequest, JudgeRequest
+    ModelsIniRequest, ModelActionRequest, GenerateRequest, MkdirRequest,
+    MoveRequest, DeleteRequest, DownloadRequest, BenchmarkRunRequest,
+    BenchmarkQueueRequest, JudgeRequest
 )
-
 # ── Service imports ─────────────────────────────────────────────────────────────
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
@@ -46,10 +43,8 @@ from services.comfy_svc import (
     stream_queue as svc_stream_queue,
 )
 from services.gallery_svc import (
-    browse_gallery as svc_browse_gallery,
-    get_all_folders as svc_get_all_folders,
-    gallery_mkdir as svc_gallery_mkdir,
-    gallery_move as svc_gallery_move,
+    browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
+    gallery_mkdir as svc_gallery_mkdir, gallery_move as svc_gallery_move,
     gallery_delete as svc_gallery_delete,
 )
 from services.push_svc import (
@@ -63,13 +58,13 @@ from services.download_svc import (
     download_model as svc_download_model,
     get_downloads_status as svc_get_downloads_status,
     scan_and_register_models as svc_scan_and_register_models,
+    stop_download as svc_stop_download,
+    resume_download as svc_resume_download,
+    cancel_download as svc_cancel_download,
 )
 from services.benchmark_svc import (
-    get_benchmark_progress,
-    get_benchmarks,
-    get_benchmark_details,
-    get_benchmark_logs,
-    get_benchmark_outputs,
+    get_benchmark_progress, get_benchmarks, get_benchmark_details,
+    get_benchmark_logs, get_benchmark_outputs,
     run_benchmark as run_single_benchmark,
     run_benchmark_queue as run_queue_benchmark,
 )
@@ -82,7 +77,6 @@ app = FastAPI(title="LLM Mobile Manager")
 # ───────────────────────────────────────────────
 # Startup
 # ───────────────────────────────────────────────
-
 @app.on_event("startup")
 async def startup_event():
     os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
@@ -101,7 +95,6 @@ async def startup_event():
 # ───────────────────────────────────────────────
 # REST endpoints – server control
 # ───────────────────────────────────────────────
-
 @app.get("/status")
 def route_get_status():
     return get_status()
@@ -121,7 +114,6 @@ def route_stop_llm():
 # ───────────────────────────────────────────────
 # REST endpoints – model management
 # ───────────────────────────────────────────────
-
 @app.get("/models")
 def route_list_models():
     return list_models()
@@ -161,7 +153,6 @@ async def route_proxy_chat(request: Request):
 # ───────────────────────────────────────────────
 # SSE – /events/status
 # ───────────────────────────────────────────────
-
 @app.get("/events/status")
 async def route_stream_status(request: Request, since: str = "0"):
     return await stream_status(request, since)
@@ -169,7 +160,6 @@ async def route_stream_status(request: Request, since: str = "0"):
 # ───────────────────────────────────────────────
 # REST endpoints – generation queue
 # ───────────────────────────────────────────────
-
 @app.post("/api/generate/queue")
 async def submit_to_queue(req: GenerateRequest):
     return await svc_submit_to_queue(req)
@@ -189,7 +179,6 @@ async def clear_completed():
 # ───────────────────────────────────────────────
 # SSE – /events/queue
 # ───────────────────────────────────────────────
-
 @app.get("/events/queue")
 async def stream_queue(request: Request):
     return await svc_stream_queue(request)
@@ -197,7 +186,6 @@ async def stream_queue(request: Request):
 # ───────────────────────────────────────────────
 # REST endpoints – gallery
 # ───────────────────────────────────────────────
-
 @app.get("/api/gallery/browse")
 def browse_gallery(path: str = "", page: int = 1, limit: int = 24):
     return svc_browse_gallery(path=path, page=page, limit=limit)
@@ -221,7 +209,6 @@ def gallery_delete(req: DeleteRequest):
 # ───────────────────────────────────────────────
 # Phase F – Model Downloader
 # ───────────────────────────────────────────────
-
 @app.get("/api/models/search")
 async def route_search_hf_models(q: str):
     return await svc_search_hf_models(q)
@@ -234,6 +221,23 @@ async def route_get_hf_model_details(repo_id: str):
 def route_download_model(req: DownloadRequest):
     return svc_download_model(req)
 
+@app.post("/api/models/downloads/clear-finished")
+def route_clear_finished_downloads():
+    from services.download_svc import clear_finished_downloads
+    return clear_finished_downloads()
+
+@app.post("/api/models/downloads/{key:path}/stop")
+def route_stop_download(key: str):
+    return svc_stop_download(key)
+
+@app.post("/api/models/downloads/{key:path}/resume")
+def route_resume_download(key: str):
+    return svc_resume_download(key)
+
+@app.post("/api/models/downloads/{key:path}/cancel")
+def route_cancel_download(key: str):
+    return svc_cancel_download(key)
+
 @app.get("/api/models/downloads")
 def route_get_downloads_status():
     return svc_get_downloads_status()
@@ -245,7 +249,6 @@ def route_scan_and_register_models():
 # ───────────────────────────────────────────────
 # Benchmarks
 # ───────────────────────────────────────────────
-
 @app.get("/api/benchmarks")
 def route_get_benchmarks(show_all: bool = False):
     return get_benchmarks(show_all=show_all)
@@ -277,7 +280,6 @@ def route_get_benchmark_outputs():
 # ───────────────────────────────────────────────
 # Judge
 # ───────────────────────────────────────────────
-
 @app.post("/api/benchmarks/judge")
 async def route_judge_benchmark(req: JudgeRequest):
     return await svc_judge_benchmark(req)
@@ -285,7 +287,6 @@ async def route_judge_benchmark(req: JudgeRequest):
 # ───────────────────────────────────────────────
 # Logs
 # ───────────────────────────────────────────────
-
 @app.get("/api/logs")
 def route_get_logs(container_name: str = "llm-server", lines: int = 100):
     return get_logs(container_name=container_name, lines=lines)
@@ -293,7 +294,6 @@ def route_get_logs(container_name: str = "llm-server", lines: int = 100):
 # ───────────────────────────────────────────────
 # PWA manifest
 # ───────────────────────────────────────────────
-
 @app.get("/manifest.json")
 def pwa_manifest():
     manifest = {
@@ -325,8 +325,8 @@ def pwa_manifest():
 # ───────────────────────────────────────────────
 # Static file mounts (images + frontend dist)
 # ───────────────────────────────────────────────
-
 app.mount("/images", StaticFiles(directory=IMAGE_GEN_OUTPUT), name="images")
+
 dist_dir = os.path.join(os.path.dirname(__file__), "..", "dist")
 if os.path.exists(dist_dir):
     app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")

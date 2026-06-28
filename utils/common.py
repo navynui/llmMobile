@@ -4,14 +4,37 @@ import psutil
 import subprocess
 from fastapi import HTTPException
 
-MODES_INI_PATH = "/models/models.ini"
 MODELS_DIR = "/models"
+if not os.path.exists(MODELS_DIR):
+    MODELS_DIR = "/home/nui/llmaCPP/models"
+    os.makedirs(MODELS_DIR, exist_ok=True)
+
+MODES_INI_PATH = "/models/models.ini"
+if not os.path.exists(MODES_INI_PATH):
+    MODES_INI_PATH = "/home/nui/llmaCPP/models/models.ini"
+    os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
+
 IMAGE_GEN_OUTPUT = "/comfyui-output"
+if not os.path.exists(IMAGE_GEN_OUTPUT):
+    IMAGE_GEN_OUTPUT = "/home/nui/llmaCPP/comfyui-output"
+    if not os.path.exists(IMAGE_GEN_OUTPUT):
+        IMAGE_GEN_OUTPUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "comfyui-output")
+    os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+
 WORKFLOW_PATH = "/app/MyZimage_turbo.json"
+if not os.path.exists(WORKFLOW_PATH):
+    WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyZimage_turbo.json")
+
 KREA_WORKFLOW_PATH = "/app/My_krea2_turbo_t2i.json"
+if not os.path.exists(KREA_WORKFLOW_PATH):
+    KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "My_krea2_turbo_t2i.json")
+
 MODEL_ZIMAGE = "z-image-turbo"
 MODEL_KREA = "krea2-turbo"
+
 PROMPTS_FILE = "/app/PROMPTS"
+if not os.path.exists(PROMPTS_FILE):
+    PROMPTS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "PROMPTS")
 LLM_PROJECT_NAME = os.environ.get("LLM_PROJECT_NAME", "llmacpp")
 LLM_COMPOSE_DIR = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
 COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")

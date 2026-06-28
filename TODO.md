@@ -48,19 +48,19 @@ In the **server tab → HuggingFace download section**, add front-end controls t
 
 ### Item Checklist
 
-- [ ] Backend: `stop_download`, `resume_download`, `cancel_download` endpoints implemented in `services/download_svc.py`
-- [ ] Backend: Partial file cleanup verified on both host + container paths
-- [ ] Front-end: Stop / Resume / Cancel / Clear Finished controls added to download UI
-- [ ] Front-end: `npm run build` passes
-- [ ] Smoke test: Cancel + re-add same file does not create duplicates
-- [ ] Backend tests pass
+- [x] Backend: `stop_download`, `resume_download`, `cancel_download` endpoints implemented in `services/download_svc.py`
+- [x] Backend: Partial file cleanup verified on both host + container paths
+- [x] Front-end: Stop / Resume / Cancel / Clear Finished controls added to download UI
+- [x] Front-end: `npm run build` passes
+- [x] Smoke test: Cancel + re-add same file does not create duplicates
+- [x] Backend tests pass
 - [ ] Committed and pushed
 
 ---
 
 ## 1a. Server Tab — Persistent Download Queue Visibility
 
-**Priority:** Medium | **Status:** Not Started | **Complexity:** Low-Medium
+**Priority:** Medium | **Status:** Completed | **Complexity:** Low-Medium
 
 ### Requirements
 
@@ -83,20 +83,20 @@ The active download queue must remain visible and up-to-date when the user switc
 
 ### Item Checklist
 
-- [ ] Front-end: Queue state preserved across tab switch (verified not resetting to empty)
-- [ ] Front-end: Auto-refresh on tab focus implemented
-- [ ] Front-end: Background SSE subscription lifecycle managed (subscribe on mount, unsubscribe on leave)
-- [ ] Front-end: Manual refresh button added
-- [ ] Front-end: Empty-state message shown when queue is truly empty
-- [ ] Front-end: `npm run build` passes
-- [ ] Smoke test: Switch tabs, add download in background, switch back — queue updates correctly
+- [x] Front-end: Queue state preserved across tab switch (verified not resetting to empty)
+- [x] Front-end: Auto-refresh on tab focus implemented
+- [x] Front-end: Background SSE subscription lifecycle managed (subscribe on mount, unsubscribe on leave)
+- [x] Front-end: Manual refresh button added
+- [x] Front-end: Empty-state message shown when queue is truly empty
+- [x] Front-end: `npm run build` passes
+- [x] Smoke test: Switch tabs, add download in background, switch back — queue updates correctly
 - [ ] Committed and pushed
 
 ---
 
 ## 2. Generator Tab — VRAM-Aware Model Swapping
 
-**Priority:** High | **Status:** Not Started | **Complexity:** High
+**Priority:** High | **Status:** Completed | **Complexity:** High
 
 ### Requirements
 
@@ -125,18 +125,18 @@ When the user presses **Generate** in the generator tab:
 
 ### Item Checklist
 
-- [ ] Backend: `swap_vram_for_generation` helper implemented in `services/comfy_svc.py` or `services/model_svc.py`
-- [ ] Backend: Idle-check with timeout implemented
-- [ ] Backend: Unload + reload orchestration with retry logic added
-- [ ] Backend: Client-side timeout for ComfyUI prompt submission added
-- [ ] Front-end: Generate button disabled during swap; Force Generate override added
-- [ ] Front-end: Chat input disabled during model-swap window
-- [ ] Front-end: sessionStorage persistence for `(previous_model_name, previous_model_path)` added
-- [ ] Front-end: Reload-failure banner implemented
-- [ ] Front-end: `npm run build` passes
-- [ ] Smoke test: Full generate → swap → reload flow works; Verify chat is usable after generation
-- [ ] Smoke test: Unload failure shows toast and halts (no ComfyUI launch)
-- [ ] Backend tests pass
+- [x] Backend: `swap_vram_for_generation` helper implemented in `services/comfy_svc.py` or `services/model_svc.py`
+- [x] Backend: Idle-check with timeout implemented
+- [x] Backend: Unload + reload orchestration with retry logic added
+- [x] Backend: Client-side timeout for ComfyUI prompt submission added
+- [x] Front-end: Generate button disabled during swap; Force Generate override added
+- [x] Front-end: Chat input disabled during model-swap window
+- [x] Front-end: sessionStorage persistence for `(previous_model_name, previous_model_path)` added
+- [x] Front-end: Reload-failure banner implemented
+- [x] Front-end: `npm run build` passes
+- [x] Smoke test: Full generate → swap → reload flow works; Verify chat is usable after generation
+- [x] Smoke test: Unload failure shows toast and halts (no ComfyUI launch)
+- [x] Backend tests pass
 - [ ] Committed and pushed
 
 ---
