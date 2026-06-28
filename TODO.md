@@ -54,7 +54,7 @@ In the **server tab → HuggingFace download section**, add front-end controls t
 - [x] Front-end: `npm run build` passes
 - [x] Smoke test: Cancel + re-add same file does not create duplicates
 - [x] Backend tests pass
-- [ ] Committed and pushed
+- [x] Committed and pushed
 
 ---
 
@@ -90,7 +90,7 @@ The active download queue must remain visible and up-to-date when the user switc
 - [x] Front-end: Empty-state message shown when queue is truly empty
 - [x] Front-end: `npm run build` passes
 - [x] Smoke test: Switch tabs, add download in background, switch back — queue updates correctly
-- [ ] Committed and pushed
+- [x] Committed and pushed
 
 ---
 
@@ -137,7 +137,7 @@ When the user presses **Generate** in the generator tab:
 - [x] Smoke test: Full generate → swap → reload flow works; Verify chat is usable after generation
 - [x] Smoke test: Unload failure shows toast and halts (no ComfyUI launch)
 - [x] Backend tests pass
-- [ ] Committed and pushed
+- [x] Committed and pushed
 
 ---
 
