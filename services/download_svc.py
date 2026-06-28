@@ -152,6 +152,11 @@ async def _download_model_task(repo_id: str, filename: str):
 
                 with open(temp_path, mode) as f:
                     async for chunk in r.aiter_bytes(chunk_size=65536):
+                        with _downloads_lock:
+                            status = _active_downloads.get(key, {}).get("status") if key in _active_downloads else None
+                            if status != "downloading":
+                                print(f"[Download Task] Aborting chunk loop because status is: {status}")
+                                break
                         f.write(chunk)
                         current_bytes += len(chunk)
                         bytes_since_update += len(chunk)
@@ -176,6 +181,12 @@ async def _download_model_task(repo_id: str, filename: str):
 
                             last_update = now
                             bytes_since_update = 0
+
+                with _downloads_lock:
+                    status = _active_downloads.get(key, {}).get("status") if key in _active_downloads else None
+                    if status in ["paused", "cancelled"] or key not in _active_downloads:
+                        print(f"[Download Task] Exiting task, status is: {status}")
+                        return
 
                 if current_bytes >= total_bytes:
                     shutil.move(temp_path, dest_path)
@@ -204,6 +215,9 @@ async def _download_model_task(repo_id: str, filename: str):
     except Exception as e:
         with _downloads_lock:
             if key in _active_downloads:
+                status = _active_downloads[key].get("status")
+                if status in ["paused", "cancelled"]:
+                    return
                 _active_downloads[key].update({
                     "status": "failed",
                     "error": str(e),
@@ -344,3 +358,132 @@ def scan_and_register_models():
         return {"detail": f"Scan complete. Registered {len(added)} new models.", "registered": added}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ── Download control functions ─────────────────────────────────────────────────
+
+def stop_download(key: str):
+    """Stop/pause an active download."""
+    with _downloads_lock:
+        if key not in _active_downloads:
+            raise HTTPException(status_code=404, detail="Download not found")
+        
+        download = _active_downloads[key]
+        if download["status"] not in ["downloading", "queued"]:
+            raise HTTPException(status_code=400, detail=f"Cannot stop download in status: {download['status']}")
+        
+        download["status"] = "paused"
+        download["speed"] = "0 KB/s"
+        
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            model_id = _clean_model_id(download["filename"])
+            cursor.execute("""
+                UPDATE models
+                SET status = 'PAUSED', notes = 'Download paused by user'
+                WHERE model_id = ?
+            """, (model_id,))
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            print(f"[Download DB] Failed to update status to PAUSED: {db_err}")
+    
+    return {"detail": f"Download {key} paused"}
+
+
+def resume_download(key: str):
+    """Resume a paused or failed download."""
+    with _downloads_lock:
+        if key not in _active_downloads:
+            raise HTTPException(status_code=404, detail="Download not found")
+        
+        download = _active_downloads[key]
+        if download["status"] not in ["paused", "failed", "completed"]:
+            raise HTTPException(status_code=400, detail=f"Cannot resume download in status: {download['status']}")
+        
+        if download["status"] == "completed":
+            download.update({
+                "status": "queued",
+                "downloaded": 0,
+                "progress": 0.0,
+                "error": None
+            })
+        else:
+            download["status"] = "queued"
+            download["error"] = None
+        
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            model_id = _clean_model_id(download["filename"])
+            status = 'QUEUED' if download["status"] == "queued" else 'PAUSED'
+            notes = 'Download resumed by user' if download["status"] == "queued" else 'Download paused by user'
+            cursor.execute("""
+                UPDATE models
+                SET status = ?, notes = ?
+                WHERE model_id = ?
+            """, (status, notes, model_id))
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            print(f"[Download DB] Failed to update status: {db_err}")
+    
+    if download["status"] == "queued":
+        repo_id, filename = download["repo_id"], download["filename"]
+        _download_queue.put_nowait((repo_id, filename))
+        broadcast_notification(f"📥 Resumed download: {filename}")
+    
+    return {"detail": f"Download {key} resumed"}
+
+
+def cancel_download(key: str):
+    """Cancel a download and clean up partial files."""
+    with _downloads_lock:
+        if key not in _active_downloads:
+            raise HTTPException(status_code=404, detail="Download not found")
+        
+        download = _active_downloads[key]
+        repo_id, filename = download["repo_id"], download["filename"]
+        
+        download["status"] = "cancelled"
+        download["speed"] = "0 KB/s"
+        
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            model_id = _clean_model_id(filename)
+            cursor.execute("""
+                UPDATE models
+                SET status = 'CANCELLED', notes = 'Download cancelled by user'
+                WHERE model_id = ?
+            """, (model_id,))
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            print(f"[Download DB] Failed to update status to CANCELLED: {db_err}")
+        
+        dest_path = os.path.join(MODELS_DIR, filename)
+        temp_path = dest_path + ".download"
+        for path in [temp_path, dest_path]:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    print(f"[Download Cleanup] Removed {path}")
+            except Exception as e:
+                print(f"[Download Cleanup] Failed to remove {path}: {e}")
+    
+    return {"detail": f"Download {key} cancelled and cleaned up"}
+
+
+def clear_finished_downloads():
+    """Remove completed downloads from the active downloads list."""
+    with _downloads_lock:
+        to_remove = []
+        for key, download in _active_downloads.items():
+            if download["status"] in ["completed", "cancelled"]:
+                to_remove.append(key)
+        
+        for key in to_remove:
+            del _active_downloads[key]
+    
+    return {"detail": f"Cleared {len(to_remove)} finished downloads"}

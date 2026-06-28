@@ -22,7 +22,6 @@ export class ModelDownloader extends LitElement {
       transition: var(--transition);
       color: var(--text-secondary);
     }
-
     .arrow-expanded {
       transform: rotate(180deg);
     }
@@ -33,16 +32,35 @@ export class ModelDownloader extends LitElement {
       justify-content: space-between;
       align-items: center;
     }
-
     .switcher-body {
       max-height: 0;
       overflow: hidden;
       transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
-
     .switcher-body.expanded {
       max-height: none;
       margin-top: 16px;
+    }
+
+    .refresh-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 10px;
+    }
+    .refresh-btn {
+      padding: 6px 12px;
+      font-size: 0.75rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-secondary);
+      transition: var(--transition);
+      font-family: var(--font-sans);
+    }
+    .refresh-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
     }
 
     /* Text Inputs */
@@ -58,7 +76,6 @@ export class ModelDownloader extends LitElement {
       outline: none;
       transition: var(--transition);
     }
-
     .text-input:focus {
       border-color: var(--primary);
       box-shadow: 0 0 0 2px var(--primary-glow);
@@ -75,7 +92,6 @@ export class ModelDownloader extends LitElement {
     .downloads-container {
       margin-top: 8px;
     }
-
     .download-item {
       background: rgba(99, 102, 241, 0.04);
       border: 1px solid rgba(99, 102, 241, 0.2);
@@ -86,14 +102,12 @@ export class ModelDownloader extends LitElement {
       gap: 8px;
       margin-bottom: 10px;
     }
-
     .download-info {
       display: flex;
       justify-content: space-between;
       align-items: center;
       font-size: 0.85rem;
     }
-
     .download-filename {
       font-weight: 600;
       color: var(--text-primary);
@@ -101,13 +115,11 @@ export class ModelDownloader extends LitElement {
       flex: 1;
       margin-right: 8px;
     }
-
     .download-speed {
       color: var(--success);
       font-weight: 500;
       white-space: nowrap;
     }
-
     .progress-track {
       width: 100%;
       height: 4px;
@@ -115,18 +127,71 @@ export class ModelDownloader extends LitElement {
       border-radius: 2px;
       overflow: hidden;
     }
-
     .progress-fill {
       height: 100%;
       background: linear-gradient(90deg, var(--primary), #a5b4fc);
       transition: width 0.3s ease-out;
       border-radius: 2px;
     }
-
     .download-eta {
       font-size: 0.72rem;
       color: var(--text-secondary);
       white-space: nowrap;
+    }
+    .download-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .download-action-btn {
+      padding: 4px 10px;
+      font-size: 0.72rem;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+      transition: var(--transition);
+      font-family: var(--font-sans);
+    }
+    .download-action-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .download-action-btn.danger {
+      color: var(--danger);
+      border-color: rgba(239, 68, 68, 0.3);
+    }
+    .download-action-btn.danger:hover {
+      background: var(--danger-glow);
+    }
+    .clear-finished-btn {
+      margin-top: 8px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      border: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-secondary);
+      transition: var(--transition);
+      font-family: var(--font-sans);
+      width: 100%;
+      text-align: center;
+    }
+    .clear-finished-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-primary);
+    }
+    .empty-state {
+      margin-top: 10px;
+      padding: 16px;
+      text-align: center;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      border: 1px dashed rgba(255, 255, 255, 0.08);
+      border-radius: var(--radius-md);
+      background: rgba(0, 0, 0, 0.15);
     }
 
     /* Repo list styling */
@@ -136,7 +201,6 @@ export class ModelDownloader extends LitElement {
       gap: 10px;
       margin-top: 8px;
     }
-
     .repo-item {
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid var(--border-color);
@@ -148,12 +212,10 @@ export class ModelDownloader extends LitElement {
       cursor: pointer;
       transition: var(--transition);
     }
-
     .repo-item:hover {
       background: rgba(255, 255, 255, 0.04);
       border-color: rgba(99, 102, 241, 0.4);
     }
-
     .model-file-item {
       display: flex;
       align-items: center;
@@ -164,7 +226,6 @@ export class ModelDownloader extends LitElement {
       border: 1px solid var(--border-color);
       border-radius: var(--radius-md);
     }
-
     .search-result-item {
       background: rgba(255, 255, 255, 0.02);
       border: 1px solid var(--border-color);
@@ -176,12 +237,10 @@ export class ModelDownloader extends LitElement {
       flex-direction: column;
       gap: 6px;
     }
-
     .search-result-item:hover {
       background: rgba(99, 102, 241, 0.06);
       border-color: rgba(99, 102, 241, 0.3);
     }
-
     .meta-badge {
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid rgba(255, 255, 255, 0.08);
@@ -191,20 +250,17 @@ export class ModelDownloader extends LitElement {
       font-size: 0.72rem;
       font-weight: 500;
     }
-
     .model-file-name {
       font-size: 0.85rem;
       font-weight: 500;
       color: var(--text-primary);
       word-break: break-all;
     }
-
     .model-file-size {
       font-size: 0.72rem;
       color: var(--text-secondary);
       flex-shrink: 0;
     }
-
     .repo-title {
       font-weight: 600;
       font-size: 0.95rem;
@@ -222,7 +278,6 @@ export class ModelDownloader extends LitElement {
       animation: spin 0.8s linear infinite;
       display: inline-block;
     }
-
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
@@ -238,10 +293,31 @@ export class ModelDownloader extends LitElement {
     this.hfDetailsLoading = false;
     this.hfActiveDownloads = [];
     this.downloaderExpanded = false;
+    this._restoreExpandedState();
+  }
+
+  _restoreExpandedState() {
+    try {
+      const raw = localStorage.getItem('hf_downloader_expanded');
+      if (raw === 'true') {
+        this.downloaderExpanded = true;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _saveExpandedState() {
+    try {
+      localStorage.setItem('hf_downloader_expanded', String(this.downloaderExpanded));
+    } catch (e) {
+      // ignore
+    }
   }
 
   toggleDownloader() {
     this.downloaderExpanded = !this.downloaderExpanded;
+    this._saveExpandedState();
   }
 
   _handleQueryInput(e) {
@@ -266,6 +342,28 @@ export class ModelDownloader extends LitElement {
     }));
   }
 
+  _handleStopDownload(key) {
+    this.dispatchEvent(new CustomEvent('stop-download', {
+      detail: { key }
+    }));
+  }
+
+  _handleResumeDownload(key) {
+    this.dispatchEvent(new CustomEvent('resume-download', {
+      detail: { key }
+    }));
+  }
+
+  _handleCancelDownload(key) {
+    this.dispatchEvent(new CustomEvent('cancel-download', {
+      detail: { key }
+    }));
+  }
+
+  _handleClearFinished() {
+    this.dispatchEvent(new CustomEvent('clear-finished'));
+  }
+
   formatEta(seconds) {
     if (seconds < 60) return `${seconds}s`;
     const mins = Math.floor(seconds / 60);
@@ -276,30 +374,82 @@ export class ModelDownloader extends LitElement {
     return `${hrs}h ${remMins}m`;
   }
 
+  _getStatusColor(status) {
+    if (!status) return 'var(--text-secondary)';
+    switch (status.toLowerCase()) {
+      case 'downloading':
+      case 'queued':
+        return 'var(--primary)';
+      case 'completed':
+        return 'var(--success)';
+      case 'failed':
+      case 'cancelled':
+      case 'cancelling':
+        return 'var(--danger)';
+      case 'paused':
+      case 'pausing':
+        return 'var(--warning)';
+      default:
+        return 'var(--text-secondary)';
+    }
+  }
+
+  _getActionButtons(download) {
+    const status = (download.status || '').toLowerCase();
+    const key = `${download.repo_id}/${download.filename}`;
+
+    if (['completed', 'cancelled'].includes(status)) {
+      return html`<span style="font-size: 0.72rem; color: var(--text-muted);">— finished —</span>`;
+    }
+
+    if (['downloading', 'queued', 'pausing', 'cancelling'].includes(status)) {
+      return html`
+        <button class="download-action-btn" @click="${() => this._handleResumeDownload(key)}">▶ Resume</button>
+        <button class="download-action-btn" @click="${() => this._handleStopDownload(key)}">⏸ Stop</button>
+        <button class="download-action-btn danger" @click="${() => this._handleCancelDownload(key)}">✕ Cancel</button>
+      `;
+    }
+
+    if (['paused', 'failed'].includes(status)) {
+      return html`
+        <button class="download-action-btn" @click="${() => this._handleResumeDownload(key)}">▶ Resume</button>
+        <button class="download-action-btn danger" @click="${() => this._handleCancelDownload(key)}">✕ Cancel</button>
+      `;
+    }
+
+    return html`<span style="font-size: 0.72rem; color: var(--text-muted);">${download.status || 'Unknown'}</span>`;
+  }
+
   render() {
+    const hasActiveDownloads = this.hfActiveDownloads?.length > 0;
+    const hasFinishedDownloads = hasActiveDownloads && this.hfActiveDownloads.some(
+      d => ['completed', 'cancelled'].includes((d.status || '').toLowerCase())
+    );
+
     return html`
       <div class="card">
         <div class="switcher-header" @click="${this.toggleDownloader}">
           <div class="card-title" style="margin-bottom: 0;">📦 Hugging Face Model Downloader</div>
           <div class="arrow-icon ${this.downloaderExpanded ? 'arrow-expanded' : ''}">▼</div>
         </div>
-
         <div class="switcher-body ${this.downloaderExpanded ? 'expanded' : ''}">
-          <span class="card-subtitle" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">Search and download GGUF models directly from the Hub.</span>
+          <span class="card-subtitle" style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+            Search and download GGUF models directly from the Hub.
+          </span>
 
           <!-- Search Bar -->
           <div class="input-group">
-            <input 
-              type="text" 
-              class="text-input" 
+            <input
+              type="text"
+              class="text-input"
               placeholder="Search HuggingFace (e.g., llama.cpp)"
               .value="${this.hfSearchQuery}"
               @input="${this._handleQueryInput}"
               @keydown="${e => e.key === 'Enter' && this._handleSearch()}"
             >
-            <button 
-              class="btn btn-secondary" 
-              style="padding: 8px 14px; font-size: 0.85rem;" 
+            <button
+              class="btn btn-secondary"
+              style="padding: 8px 14px; font-size: 0.85rem;"
               @click="${this._handleSearch}"
               ?disabled="${this.hfSearchLoading}"
             >
@@ -335,7 +485,7 @@ export class ModelDownloader extends LitElement {
           ${!this.hfSearchLoading && this.hfSelectedRepo ? html`
             <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
               <h3 style="font-size: 0.9rem; margin-bottom: 8px; color: #a5b4fc;">📂 Repository: ${this.hfSelectedRepo}</h3>
-              
+
               <!-- Repo Info -->
               <div style="display: flex; gap: 6px; font-size: 0.72rem; margin-bottom: 12px; flex-wrap: wrap;">
                 ${this.hfRepoDetails ? html`
@@ -355,8 +505,8 @@ export class ModelDownloader extends LitElement {
                 <div class="repo-list">
                   ${[...this.hfRepoDetails.gguf_files].sort((a, b) => (b.size || 0) - (a.size || 0)).map(file => html`
                     <div class="model-file-item">
-                      <button 
-                        class="btn btn-primary" 
+                      <button
+                        class="btn btn-primary"
                         style="padding: 6px 12px; font-size: 0.75rem; white-space: nowrap; flex-shrink: 0;"
                         @click="${() => this._handleDownload(file.filename)}"
                       >
@@ -368,40 +518,60 @@ export class ModelDownloader extends LitElement {
                   `)}
                 </div>
               ` : ''}
-
-              <!-- Active Downloads -->
-              ${this.hfActiveDownloads?.length > 0 ? html`
-                <h4 style="font-size: 0.8rem; margin-top: 16px; color: var(--text-secondary);">📡 Active Downloads:</h4>
-                <div class="downloads-container">
-                  ${this.hfActiveDownloads.map(d => {
-                    const speedMatch = (d.speed || '').match(/([\d.]+)\s*(KB\/s|MB\/s)/);
-                    const speedBps = speedMatch ? parseFloat(speedMatch[1]) * (speedMatch[2] === 'KB/s' ? 1024 : 1048576) : 0;
-                    const remainingBytes = Math.max(0, d.total - (d.downloaded || 0));
-                    let etaSec = null;
-                    if (speedBps > 0 && remainingBytes > 0) {
-                      etaSec = Math.ceil(remainingBytes / speedBps);
-                    }
-                    const etaStr = etaSec !== null ? this.formatEta(etaSec) : '';
-                    return html`
-                      <div class="download-item">
-                        <div class="download-info">
-                          <span class="download-filename">${d.filename || d.repo_id + '/' + (d.filename || '')}</span>
-                          <span class="download-speed" style="color: var(--success);">✓ ${d.status || 'Complete'}</span>
-                        </div>
-                        <div class="progress-track">
-                          <div class="progress-fill" style="width: ${(d.progress * 100).toFixed(1)}%"></div>
-                        </div>
-                        <div class="download-eta">
-                          ${Math.round(d.progress * 100)}% — Speed: ${d.speed || 'N/A'}${etaStr ? ` — ETA: ${etaStr}` : ''}
-                        </div>
-                        ${d.error ? html`<div style="color: var(--danger); font-size: 0.72rem; margin-top: 2px;">Error: ${d.error}</div>` : ''}
-                      </div>
-                    `;
-                  })}
-                </div>
-              ` : ''}
             </div>
           ` : ''}
+
+          <!-- Active Downloads -->
+          ${hasActiveDownloads ? html`
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+              <h4 style="font-size: 0.8rem; color: var(--text-secondary); margin: 0;">📡 Active Downloads:</h4>
+            </div>
+            <div class="downloads-container">
+              ${this.hfActiveDownloads.map(d => {
+                const speedMatch = (d.speed || '').match(/([\d.]+)\s*(KB\/s|MB\/s)/);
+                const speedBps = speedMatch ? parseFloat(speedMatch[1]) * (speedMatch[2] === 'KB/s' ? 1024 : 1048576) : 0;
+                const remainingBytes = Math.max(0, d.total - (d.downloaded || 0));
+                let etaSec = null;
+                if (speedBps > 0 && remainingBytes > 0) {
+                  etaSec = Math.ceil(remainingBytes / speedBps);
+                }
+                const etaStr = etaSec !== null ? this.formatEta(etaSec) : '';
+
+                return html`
+                  <div class="download-item">
+                    <div class="download-info">
+                      <span class="download-filename">${d.filename || d.repo_id + '/' + (d.filename || '')}</span>
+                      <span class="download-speed" style="color: ${this._getStatusColor(d.status)};">
+                        ${d.status || 'Complete'}
+                      </span>
+                    </div>
+                    <div class="progress-track">
+                      <div class="progress-fill" style="width: ${(d.progress * 100).toFixed(1)}%"></div>
+                    </div>
+                    <div class="download-eta">
+                      ${Math.round(d.progress * 100)}% — Speed: ${d.speed || 'N/A'}${etaStr ? ` — ETA: ${etaStr}` : ''}
+                    </div>
+                    <div class="download-actions">
+                      ${this._getActionButtons(d)}
+                    </div>
+                    ${d.error ? html`<div style="color: var(--danger); font-size: 0.72rem; margin-top: 2px;">Error: ${d.error}</div>` : ''}
+                  </div>
+                `;
+              })}
+            </div>
+            ${hasFinishedDownloads ? html`
+              <button
+                class="clear-finished-btn"
+                @click="${this._handleClearFinished}"
+              >
+                🧹 Clear Finished Downloads
+              </button>
+            ` : ''}
+          ` : html`
+            <div class="empty-state" style="margin-top: 16px;">
+              No active downloads. Search and download a model to get started.
+            </div>
+          `}
         </div>
       </div>
     `;
