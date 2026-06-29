@@ -126,6 +126,10 @@ export class ServerStatusCard extends LitElement {
     this.dispatchEvent(new CustomEvent('restart', { bubbles: true, composed: true }));
   }
 
+  _handleFreeComfy() {
+    this.dispatchEvent(new CustomEvent('free-comfy', { bubbles: true, composed: true }));
+  }
+
   render() {
     const status = this.status || {};
     const stats = this.stats || {};
@@ -146,12 +150,12 @@ export class ServerStatusCard extends LitElement {
             <div><strong>Image:</strong> ${serverStatus.image || 'N/A'}</div>
             ${isServerRunning ? html`<div><strong>Uptime:</strong> ${serverStatus.uptime || 'N/A'}</div>` : ''}
           </div>
-          <div style="display: grid; gap: 8px; margin-top: 12px;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px;">
             <button 
               class="btn ${isServerRunning ? 'btn-danger' : 'btn-primary'}" 
               @click="${this._handleToggle}"
               ?disabled="${this.actionPending}"
-              style="width: 100%; justify-content: center; padding: 12px 8px;"
+              style="justify-content: center; padding: 12px 8px;"
             >
               ${isServerRunning ? 'Stop Server' : 'Start Server'}
             </button>
@@ -159,11 +163,19 @@ export class ServerStatusCard extends LitElement {
               class="btn ${isServerRunning ? 'btn-secondary' : 'btn-primary'}" 
               @click="${this._handleRestart}"
               ?disabled="${this.actionPending || !isServerRunning}"
-              style="width: 100%; justify-content: center; padding: 12px 8px; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.04); color: var(--text-primary);"
+              style="justify-content: center; padding: 12px 8px; border-color: rgba(99,102,241,0.3); background: rgba(99,102,241,0.04); color: var(--text-primary);"
             >
               ⟳ Restart Server
             </button>
           </div>
+          <button 
+            class="btn btn-secondary" 
+            @click="${this._handleFreeComfy}"
+            ?disabled="${this.actionPending}"
+            style="width: 100%; justify-content: center; padding: 12px 8px; margin-top: 8px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);"
+          >
+            🧹 Free ComfyUI
+          </button>
         </div>
 
         <!-- Telemetry Stats Card -->

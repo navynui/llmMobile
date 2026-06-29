@@ -41,6 +41,7 @@ from services.comfy_svc import (
     cancel_queue_item as svc_cancel_queue_item,
     clear_completed as svc_clear_completed,
     stream_queue as svc_stream_queue,
+    _free_comfy_cache as svc_free_comfy_cache,
 )
 from services.gallery_svc import (
     browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
@@ -163,6 +164,11 @@ async def route_stream_status(request: Request, since: str = "0"):
 @app.post("/api/generate/queue")
 async def submit_to_queue(req: GenerateRequest):
     return await svc_submit_to_queue(req)
+
+@app.post("/api/comfy/free")
+async def route_free_comfy():
+    success = await svc_free_comfy_cache()
+    return {"success": success, "detail": "ComfyUI memory freed" if success else "Failed to free ComfyUI memory"}
 
 @app.get("/api/generate/queue")
 def get_queue():

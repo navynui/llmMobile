@@ -615,6 +615,46 @@ async fetchModelsList() {
     }, 5000);
   }
 
+  async handleStopServer() {
+    if (!this.status?.server?.status || this.status.server.status !== 'running') return;
+    this.actionPending = true;
+    this.showStatus('Stopping LLM server...');
+    try {
+      const res = await fetch('/stop', {method:'POST'});
+      if (!res.ok) throw new Error('Failed to stop');
+      this.showStatus('Server stopped');
+      this.activeModel = '';
+    } catch (e) {
+      this.showStatus('Error stopping server: '+e.message, true);
+    } finally {
+      this.actionPending = false;
+    }
+  }
+
+  async handleRestartServer() {
+    // reuse existing handleRestart which already manages actionPending
+    await this.handleRestart();
+  }
+
+  async handleFreeComfyUI() {
+    this.actionPending = true;
+    this.showStatus('Freeing ComfyUI VRAM...');
+    try {
+      const res = await fetch('/api/comfy/free', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        this.showStatus('ComfyUI memory freed');
+      } else {
+        this.showStatus(data.detail || 'Failed to free ComfyUI', true);
+      }
+    } catch (e) {
+      console.error(e);
+      this.showStatus(`Error: ${e.message}`, true);
+    } finally {
+      this.actionPending = false;
+    }
+  }
+
   render() {
     return html`
       <div class="server-tab">
@@ -626,6 +666,7 @@ async fetchModelsList() {
           @start="${this.handleServerToggle}"
           @stop="${this.handleServerToggle}"
           @restart="${this.handleRestart}"
+          @free-comfy="${this.handleFreeComfyUI}"
         >
         </server-status-card>
 
