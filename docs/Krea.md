@@ -2,7 +2,7 @@
 
 ## 1. Backend Constants & Workflow Loading — Done
 **File:** `utils/common.py`
-- Added `KREA_WORKFLOW_PATH = "/app/My_krea2_turbo_t2i.json"`.
+- Added `KREA_WORKFLOW_PATH = "/app/MyKrea2_Turbo.json"`.
 - Added sidecar model-name keys `MODEL_ZIMAGE = "z-image-turbo"` and `MODEL_KREA = "krea2-turbo"`.
 - Added Krea2 node-ID constants (`NODE_KREA_PROMPT_TEXT`, `NODE_KREA_RESOLUTION`, `NODE_KREA_KSAMPLER`).
 
@@ -81,5 +81,5 @@ class GenerateRequest(BaseModel):
 8. ✅ LocalStorage reload preserves prompt, resolution, numImages, and selected mode.
 
 ## Pre-Requisite — Manual Verification
-1. `My_krea2_turbo_t2i.json` is deployed to `/app/` (Docker path).
+1. `MyKrea2_Turbo.json` is deployed to `/app/` (Docker path).
 2. ComfyUI has all referenced models and custom nodes installed; otherwise the workflow will fail at `/prompt` time and existing error handling applies.

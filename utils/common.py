@@ -25,9 +25,9 @@ WORKFLOW_PATH = "/app/MyZimage_turbo.json"
 if not os.path.exists(WORKFLOW_PATH):
     WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyZimage_turbo.json")
 
-KREA_WORKFLOW_PATH = "/app/My_krea2_turbo_t2i.json"
+KREA_WORKFLOW_PATH = "/app/MyKrea2_Turbo.json"
 if not os.path.exists(KREA_WORKFLOW_PATH):
-    KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "My_krea2_turbo_t2i.json")
+    KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyKrea2_Turbo.json")
 
 MODEL_ZIMAGE = "z-image-turbo"
 MODEL_KREA = "krea2-turbo"
@@ -43,9 +43,9 @@ COMFY_CLIENT_ID = "llm-mobile"
 NODE_PROMPT_TEXT = "57:27"
 NODE_RESOLUTION = "57:13"
 NODE_KSAMPLER = "57:3"
-NODE_KREA_PROMPT_TEXT = "30:19"
-NODE_KREA_RESOLUTION = "30:5"
-NODE_KREA_KSAMPLER = "30:3"
+NODE_KREA_PROMPT_TEXT = "4"
+NODE_KREA_RESOLUTION = "6"
+NODE_KREA_KSAMPLER = "3"
 
 VRAM_CRITICAL_THRESHOLD = 90.0
 VRAM_EMERGENCY_THRESHOLD = 95.0
