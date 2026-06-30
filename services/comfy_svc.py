@@ -78,7 +78,7 @@ def _build_workflow(
     if workflow in ("krea2", "krea2-turbo"):
         wf = _load_workflow(KREA_WORKFLOW_PATH)
         if NODE_KREA_PROMPT_TEXT in wf:
-            wf[NODE_KREA_PROMPT_TEXT]["inputs"]["value"] = prompt
+            wf[NODE_KREA_PROMPT_TEXT]["inputs"]["text"] = prompt
         w, h = resolution.split("x")
         if NODE_KREA_RESOLUTION in wf:
             wf[NODE_KREA_RESOLUTION]["inputs"]["width"] = int(w)
