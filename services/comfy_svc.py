@@ -405,6 +405,23 @@ async def _run_subtask(
 
 from contextlib import asynccontextmanager
 
+# ── Global cooldown task tracker ────────────────────────────────────────────
+_cooldown_task: asyncio.Task | None = None
+
+
+def _cancel_pending_cooldown() -> bool:
+    """Cancel any pending reload cooldown task. Returns True if one was cancelled."""
+    global _cooldown_task
+    if _cooldown_task is not None and not _cooldown_task.done():
+        _cooldown_task.cancel()
+        # don't await the task here — submit_to_queue is sync and we detach
+        # the task will handle CancelledError internally
+        _cooldown_task = None
+        return True
+    _cooldown_task = None  # Clear if already done
+    return False
+
+
 async def check_llama_cpp_idle() -> bool:
     try:
         async with httpx.AsyncClient() as client:
@@ -457,20 +474,52 @@ async def swap_vram_for_generation(force_generate: bool = False):
     try:
         yield
     finally:
-        if loaded_model and not force_generate:
-            print(f"[VRAM Swap] Reloading model: {loaded_model}")
-            reload_success = False
-            for attempt in range(2):
-                try:
-                    await proxy_llm_load(ModelActionRequest(model=loaded_model))
-                    reload_success = True
-                    break
-                except Exception as e:
-                    print(f"[VRAM Swap] Reload attempt {attempt+1} failed: {e}")
-                    if attempt == 0:
-                        await asyncio.sleep(3)
-            if not reload_success:
-                print(f"[VRAM Swap] CRITICAL: Failed to reload model: {loaded_model}")
+        pass
+
+
+async def _reload_llama_model(model: str):
+    """Reload a llama.cpp model with retry logic."""
+    from services.model_svc import proxy_llm_load
+    from models.requests import ModelActionRequest
+
+    print(f"[VRAM Swap] Reloading model: {model}")
+    reload_success = False
+    for attempt in range(2):
+        try:
+            await proxy_llm_load(ModelActionRequest(model=model))
+            reload_success = True
+            break
+        except Exception as e:
+            print(f"[VRAM Swap] Reload attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                await asyncio.sleep(3)
+    if not reload_success:
+        print(f"[VRAM Swap] CRITICAL: Failed to reload model: {model}")
+
+
+async def _post_queue_cleanup(loaded_model: str):
+    """Free ComfyUI VRAM immediately, then wait before reloading llama.cpp model."""
+    from utils.common import COMFY_IDLE_COOLDOWN_SECONDS
+
+    # Free ComfyUI VRAM immediately
+    freed = await _free_comfy_cache()
+    if freed:
+        print(f"[VRAM Swap] ComfyUI VRAM freed after generation.")
+    else:
+        print(f"[VRAM Swap] Warning: Failed to free ComfyUI VRAM.")
+
+    if COMFY_IDLE_COOLDOWN_SECONDS <= 0:
+        await _reload_llama_model(loaded_model)
+        return
+
+    print(f"[VRAM Swap] Waiting {COMFY_IDLE_COOLDOWN_SECONDS}s before reloading llama.cpp model...")
+    try:
+        await asyncio.sleep(COMFY_IDLE_COOLDOWN_SECONDS)
+    except asyncio.CancelledError:
+        print("[VRAM Swap] Cooldown cancelled — new generation request arrived.")
+        raise
+
+    await _reload_llama_model(loaded_model)
 
 
 async def queue_worker(send_push_fn=None):
@@ -479,19 +528,25 @@ async def queue_worker(send_push_fn=None):
     Args:
         send_push_fn: Optional callable(title, body) for push notifications.
     """
-    global _queue_running
-    
+    global _queue_running, _cooldown_task
+
     first_item = None
     with _queue_lock:
         for qi in _gen_queue:
             if qi["status"] == "queued":
                 first_item = qi
                 break
-                
+
     force_gen = first_item.get("force_generate", False) if first_item else False
-    
+
+    # Determine which model was loaded before we start, so we can restore it later
+    from services.chat_svc import _get_loaded_model
+    loaded_model = await _get_loaded_model()
+
+    # Unload llama.cpp model before generation (if applicable)
     try:
         async with swap_vram_for_generation(force_generate=force_gen):
+            # Generation loop inside the context manager (model is unloaded here)
             while True:
                 item = None
                 with _queue_lock:
@@ -501,10 +556,9 @@ async def queue_worker(send_push_fn=None):
                             break
                 if item is None:
                     _queue_running = False
-                    return
+                    break  # Exit loop, not the function — cleanup happens below
 
                 loop = asyncio.get_running_loop()
-                queue_id = item["id"]
                 with _queue_lock:
                     item["status"] = "running"
                     item["started_at"] = datetime.datetime.utcnow().isoformat() + "Z"
@@ -562,6 +616,7 @@ async def queue_worker(send_push_fn=None):
                                 f"Error: {error_msg} for: {item['prompt'][:40]}...",
                             )
                 await broadcast_queue()
+
     except Exception as e:
         print(f"[Queue Worker] Swapping or generation failed: {e}")
         with _queue_lock:
@@ -570,6 +625,19 @@ async def queue_worker(send_push_fn=None):
                     qi["status"] = "error"
                     qi["error"] = f"VRAM Swap failed: {str(e)}"
         await broadcast_queue()
+        # If we unloaded a model but generation failed, reload it immediately
+        if loaded_model and not force_gen:
+            print(f"[Queue Worker] Reloading model after failure: {loaded_model}")
+            await _reload_llama_model(loaded_model)
+        _queue_running = False
+        return
+
+    # After the generation loop finishes: free ComfyUI and schedule cooldown reload
+    if loaded_model and not force_gen:
+        print(f"[Queue Worker] Generation done. Starting cooldown cleanup for {loaded_model}")
+        _queue_running = False
+        _cooldown_task = asyncio.create_task(_post_queue_cleanup(loaded_model))
+    else:
         _queue_running = False
 
 
@@ -636,6 +704,11 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "total_images": max(1, min(req.num_images, 16)),
             "seeds": [],
         }
+
+    # Cancel any pending cooldown reload if new generation arrives mid-cooldown
+    cancelled = _cancel_pending_cooldown()
+    if cancelled:
+        print("[Queue] New generation request arrived during cooldown — cancelling pending llama.cpp reload.")
 
     should_start = not is_queue_running()
     with _queue_lock:

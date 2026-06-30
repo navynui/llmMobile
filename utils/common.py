@@ -50,6 +50,9 @@ NODE_KREA_KSAMPLER = "30:3"
 VRAM_CRITICAL_THRESHOLD = 90.0
 VRAM_EMERGENCY_THRESHOLD = 95.0
 
+# ComfyUI idle cooldown before reloading llama.cpp model (seconds)
+COMFY_IDLE_COOLDOWN_SECONDS = int(os.environ.get("COMFY_IDLE_COOLDOWN_SECONDS", "180"))
+
 MQTT_CONFIG = {
     "broker": "192.168.31.182",
     "user": "mqttuser",
