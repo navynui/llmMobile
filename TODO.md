@@ -8,6 +8,8 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 - **Color:** Inference Speed (15 → 85 token/s sequential gradient)
 - **Stroke:** `status == 'good'` (solid) vs `status == 'testing'` (dashed)
 
+*Constraints:* Do **not** alter the current Rankings table column layout. Any extra model data (VRAM, status, etc.) must be displayed as additional chips/badges inside the existing single Model column, not as new columns.
+
 ---
 
 ## 1. Database Schema Migration
@@ -22,15 +24,26 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 
 ## 2. Backend VRAM Collection Service
 
-- [ ] 2.1 Create `services/vram_svc.py`
-  - Implement `get_gpu_memory_used_gb() -> float | None` using `nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits`.
-  - Return `None` on failure (non-NVIDIA host / nvidia-smi missing).
+*Rationale:* The app already maintains live `vram_percent` in `docker_svc.py` via `_local_stats_poller()` and MQTT. **Do not** duplicate this by spawning new `nvidia-smi` processes. Instead, read from the existing `get_system_stats()` source-of-truth, compute GB, and store per-model.
+
+- [ ] 2.1 Add a helper (e.g., in `services/docker_svc.py` or a lightweight `services/vram_svc.py`) `get_model_v中兴` function:
+  - Call the existing `get_system_stats()`.
+  - Extract `vram_percent` (if missing or `0.0`, return `None`).
+  - Compute `vram_gb = (vram_percent / 100) * 16` (total VRAM is 16GB).
+  - Return the computed `vram_gb`.
 - [ ] 2.2 Update `services/model_svc.py` `proxy_llm_load`
-  - After successful HTTP 200 from `http://llm-server:8080/models/load`, pause briefly (e.g., 2–3s) for allocation to settle.
-  - Call `get_gpu_memory_used_gb()` and UPDATE the `models` table row for the loaded `model_id` with `vram_gb` and `status = 'good'` (or `status = 'testing'` if still in queue).
+  - After receiving a **200 OK** response, start a lightweight background coroutine that:
+    1. Listens for the log line containing either `"update_slots: all slots are idle"` or `"all slots are idle"` (the trigger used by the monitor to signal model readiness).
+    2. Once the trigger appears, wait an additional 2–3 seconds to allow VRAM allocation to settle.
+    3. Capture VRAM via the helper from **2.1** and store `vram_gb` together with `status = 'good'` for the corresponding `model_id` in the `models` table.
+    4. **Note:** This VRAM capture and status update should happen only once per model transition (i.e., when the model first becomes idle), not on every subsequent idle cycle.
 - [ ] 2.3 Update `services/benchmark_svc.py`
-  - In `run_benchmark_queue_task`, after each model load, capture VRAM and update the same `models` row.
-  - In `run_benchmark_task`, after model load, capture VRAM and update the same `models` row.
+  - In `run_benchmark_queue_task`, **after** the existing `for _ in range(60)` loop confirms the model is loaded and *before* starting the benchmark rounds:
+    - Wait for the **"update_slots: all slots are idle"** or **"all slots are idle"** log trigger (the same condition used by the monitor).
+    - After the trigger fires, wait 2 seconds, capture VRAM via the helper from **2.1**, and update the `models` row for this `model_id` with `vram_gb`.
+  - In `run_benchmark_task`, after the initial active-model validation and before starting rounds:
+    - Verify that the currently loaded model matches `model_id`.
+    - Wait for the **"update_slots: all slots are idle"** or **"all slots are idle"** trigger, then wait 2 seconds, capture VRAM via the helper from **2.1**, and update the same `models` row with `vram_gb`.
 - [ ] 2.4 Update `services/benchmark_svc.py` `get_benchmarks(show_all)`
   - Modify the CTE query to explicitly `SELECT m.vram_gb, m.status`.
   - Include `vram_gb` and `status` in every object returned in the `benchmarks` array.
@@ -52,9 +65,7 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 - [ ] 2.5 Normalize `status` values
   - Map existing DB values (`TESTING`, `FAILED`, `completed`) to lowercase API contract (`testing`, `failed`, `completed`, `good`).
   - Ensure frontend checks use the lowercase contract specified in the brief (`'good'`, `'testing'`).
-- [ ] 2.6 Calculate VRAM usage as a percentage of the total 16GB capacity and store it alongside `vram_gb`.
-    - Run this calculation only after the model is fully loaded and the system reports an idle state (e.g., `status == 'good'` with no pending inference).
-- [ ] 2.7 Persist the computed VRAM percentage in the database for reporting and visualization.
+- [ ] 2.6 Persist the computed VRAM percentage alongside `vram_gb` for reporting and visualization (e.g., store percent too, or compute on the fly from the 16GB baseline).
 
 ## 3. Frontend — Chart Library Bootstrap
 
@@ -119,20 +130,19 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 - [ ] 6.5 Verify the bubble chart renders above the table with correct colors, axes, and stroke styles.
 - [ ] 6.6 Verify bidirectional highlighting (chart click → table scroll, table hover → chart dim).
 
-## 7. Additional VRAM Integration Improvements
+## 7. Bubble Chart Scope & Filtering
 
-- [ ] 7.1 Ensure the VRAM percentage is computed against the full 16GB capacity and reflected in UI tooltips.
-- [ ] 7.2 Validate that the percentage calculation only triggers after confirming model idle status (no ongoing requests).
-- [ ] 7.3 Confirm that only models listed in `models.ini` are displayed as bubbles in the chart; filter out any entries not present in the INI file.
+- [ ] 7.1 **Filter data source to `models.ini` only.** The chart should not display all historical models; only those currently listed in `models.ini` should appear as bubbles.
+- [ ] 7.2 Keep the chart reactive: when `models.ini` changes (models added/removed), the bubble chart should re-render with the updated set.
+- [ ] 7.3 Ensure the chart gracefully handles models that are listed in `models.ini` but have no benchmark data yet (e.g., hide or show at origin with a different style).
 
-## 8. Positioning of Bubble Chart
+## 8. Rankings Table Structure Preservation
 
-- [ ] 8.1 Place the bubble chart container immediately above the LLM Benchmark Scores & Rankings container.
-- [ ] 8.2 Ensure the new container does not disrupt existing layout or scrolling behavior.
-- [ ] 8.3 Verify that the chart updates dynamically when `models.ini` changes (e.g., after adding/removing models).
+- [ ] 8.1 **Do not add new columns** to the existing LLM Benchmark Scores & Rankings table.
+- [ ] 8.2 Any additional model info (VRAM, status, etc.) must be rendered as extra chips/badges inside the existing single Model column, alongside the current Quant / Speed / Score chips.
+- [ ] 8.3 Ensure none of the new chips break sorting, filtering, or pagination logic on the original column set.
 
-## 9. Rankings Table Structure Preservation
+## 9. Additional VRAM Integration Notes
 
-- [ ] Keep the current Rankings table column structure unchanged; do **not** add new columns.
-- [ ] Any additional model information should be displayed via expandable chips, tooltips, or badge components rather than by extending the table schema.
-- [ ] Ensure sorting, filtering, and pagination logic remain intact and continue to operate on the original column set.
+- [ ] 9.1 If the system-stats `vram_percent` ever reports `0.0` or is stale (e.g., no stats within the last 5 seconds), the helper should fall back to a direct low-overhead `nvidia-smi` call so the capture is never missed.
+- [ ] 9.2 Ensure the 16GB total is configurable (e.g., a constant `VRAM_TOTAL_GB = 16` in `utils/common.py`), so the calculation is easy to adjust if the hardware changes.
