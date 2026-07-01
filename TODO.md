@@ -52,6 +52,9 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 - [ ] 2.5 Normalize `status` values
   - Map existing DB values (`TESTING`, `FAILED`, `completed`) to lowercase API contract (`testing`, `failed`, `completed`, `good`).
   - Ensure frontend checks use the lowercase contract specified in the brief (`'good'`, `'testing'`).
+- [ ] 2.6 Calculate VRAM usage as a percentage of the total 16GB capacity and store it alongside `vram_gb`.
+    - Run this calculation only after the model is fully loaded and the system reports an idle state (e.g., `status == 'good'` with no pending inference).
+- [ ] 2.7 Persist the computed VRAM percentage in the database for reporting and visualization.
 
 ## 3. Frontend — Chart Library Bootstrap
 
@@ -116,11 +119,20 @@ Render an interactive 2D Bubble Chart above the benchmark data table mapping:
 - [ ] 6.5 Verify the bubble chart renders above the table with correct colors, axes, and stroke styles.
 - [ ] 6.6 Verify bidirectional highlighting (chart click → table scroll, table hover → chart dim).
 
----
+## 7. Additional VRAM Integration Improvements
 
-## Notes & Constraints
-- Do not execute file modifications until this plan is approved.
-- The database is external to this repo at `/home/nui/llmaCPP/llm_bench.db` but accessible via the DB path fallback logic.
-- Existing `models.status` values in DB may be uppercase; the API layer must normalize to lowercase for frontend contract stability.
-- `src/components/_primitives.js` must remain the single source of truth for shared CSS primitives.
-- All new frontend icons must come from `src/assets/icons.js`.
+- [ ] 7.1 Ensure the VRAM percentage is computed against the full 16GB capacity and reflected in UI tooltips.
+- [ ] 7.2 Validate that the percentage calculation only triggers after confirming model idle status (no ongoing requests).
+- [ ] 7.3 Confirm that only models listed in `models.ini` are displayed as bubbles in the chart; filter out any entries not present in the INI file.
+
+## 8. Positioning of Bubble Chart
+
+- [ ] 8.1 Place the bubble chart container immediately above the LLM Benchmark Scores & Rankings container.
+- [ ] 8.2 Ensure the new container does not disrupt existing layout or scrolling behavior.
+- [ ] 8.3 Verify that the chart updates dynamically when `models.ini` changes (e.g., after adding/removing models).
+
+## 9. Rankings Table Structure Preservation
+
+- [ ] Keep the current Rankings table column structure unchanged; do **not** add new columns.
+- [ ] Any additional model information should be displayed via expandable chips, tooltips, or badge components rather than by extending the table schema.
+- [ ] Ensure sorting, filtering, and pagination logic remain intact and continue to operate on the original column set.
