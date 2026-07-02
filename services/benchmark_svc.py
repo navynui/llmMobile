@@ -655,7 +655,7 @@ def get_benchmarks(show_all: bool = False) -> dict:
                    rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps,
                    (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
             FROM models m
-            JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
+            LEFT JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
             ORDER BY rsa.total_score DESC;
         """
         cursor.execute(query)

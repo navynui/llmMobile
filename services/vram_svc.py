@@ -48,29 +48,33 @@ def get_model_vram_gb() -> Optional[float]:
 def _update_model_vram_row(model_id: str, vram_gb: Optional[float], status: str):
     """Persist VRAM and status for a given model_id."""
     try:
+        # Normalize the model_id to lowercase to prevent duplicate rows
+        # (e.g. 'Qwopus3.6-35B-A3B-v1-IQ4_XS.gguf' vs 'qwopus3.6-35b-a3b-v1-iq4_xs')
+        norm_model_id = _clean_model_id(model_id)
+
         conn = get_db_conn()
         cursor = conn.cursor()
 
         # If the row doesn't exist yet, create it.
-        cursor.execute("SELECT model_id FROM models WHERE model_id = ?", (model_id,))
+        cursor.execute("SELECT model_id FROM models WHERE model_id = ?", (norm_model_id,))
         exists = cursor.fetchone() is not None
 
         if exists:
             cursor.execute("""
                 UPDATE models SET vram_gb = ?, status = ? WHERE model_id = ?
-            """, (vram_gb, status, model_id))
+            """, (vram_gb, status, norm_model_id))
         else:
             quantization = "Unknown"
             try:
                 from services.judge_svc import get_quantization_from_name
-                quantization = get_quantization_from_name(model_id)
+                quantization = get_quantization_from_name(norm_model_id)
             except Exception:
                 pass
 
             cursor.execute("""
                 INSERT INTO models (model_id, name, quantization, status, vram_gb)
                 VALUES (?, ?, ?, ?, ?)
-            """, (model_id, model_id, quantization, status, vram_gb))
+            """, (norm_model_id, norm_model_id, quantization, status, vram_gb))
 
         conn.commit()
         conn.close()
@@ -92,8 +96,11 @@ async def capture_and_store_vram(model_id: str, status: str = "good", timeout: f
     """
     global _captured_vram
 
+    # Normalize the model_id to ensure consistent cache keys and DB lookups.
+    norm_model_id = _clean_model_id(model_id)
+
     # Skip if we already captured for this model (and the value hasn't changed much).
-    prev = _captured_vram.get(model_id)
+    prev = _captured_vram.get(norm_model_id)
     if prev is not None:
         cur = get_model_vram_gb()
         if cur is not None and abs(cur - prev) < 0.5:
@@ -109,9 +116,9 @@ async def capture_and_store_vram(model_id: str, status: str = "good", timeout: f
 
     # Normalize status to lowercase.
     norm_status = status.lower()
-    _update_model_vram_row(model_id, vram_gb, norm_status)
+    _update_model_vram_row(norm_model_id, vram_gb, norm_status)
     if vram_gb is not None:
-        _captured_vram[model_id] = vram_gb
+        _captured_vram[norm_model_id] = vram_gb
     return vram_gb
 
 
@@ -142,6 +149,7 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 120.0) -> bool
 def clear_vram_capture_cache(model_id: Optional[str] = None):
     """Clear the VRAM capture cache (for testing or forced refresh)."""
     if model_id:
-        _captured_vram.pop(model_id, None)
+        norm_model_id = _clean_model_id(model_id)
+        _captured_vram.pop(norm_model_id, None)
     else:
         _captured_vram.clear()
