@@ -118,6 +118,9 @@ export class BenchmarkBubbleChart extends LitElement {
       const yVal = b.score ?? null;
 
       if (xVal === null && yVal === null) return; // skip rows with no data at all
+      // Skip points without known VRAM — we can't meaningfully place them on the x-axis.
+      // A model with a score but unknown VRAM would incorrectly appear at x=0.
+      if (xVal === null && yVal !== null) return;
 
       const key = `${b.model_id}__${xVal ?? '0'}__${yVal ?? '0'}`;
       labels.set(key, { ...b, xVal: xVal ?? 0, yVal: yVal ?? 0 });
