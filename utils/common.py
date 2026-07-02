@@ -121,10 +121,12 @@ def get_local_stats() -> dict:
             if len(parts) >= 4:
                 stats["gpu_temp"] = float(parts[0].strip())
                 stats["gpu_util"] = float(parts[1].strip())
-                used = float(parts[2].strip())
-                total = float(parts[3].strip())
-                if total > 0:
-                    stats["vram_percent"] = round((used / total) * 100, 1)
+                used_gb = float(parts[2].strip()) / 1024.0
+                total_gb = float(parts[3].strip()) / 1024.0
+                if total_gb > 0:
+                    stats["vram_percent"] = round((used_gb / total_gb) * 100, 1)
+                # Absolute VRAM used in GB — more reliable than percentage.
+                stats["vram_used_gb"] = round(used_gb, 2)
     except Exception:
         pass
     return stats

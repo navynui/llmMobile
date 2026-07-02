@@ -20,7 +20,7 @@ except Exception as e:
 
 _stats_cache: dict = {"data": {
     "cpu_temp": 0.0, "cpu_util": 0.0, "ram_percent": 0.0,
-    "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0,
+    "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0, "vram_used_gb": 0.0,
     "storage_percent": 0.0, "storage_used_gb": 0.0,
     "storage_total_gb": 0.0, "storage_free_gb": 0.0,
 }}

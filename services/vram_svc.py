@@ -20,11 +20,21 @@ _captured_vram: dict[str, float] = {}
 
 
 def get_model_vram_gb() -> Optional[float]:
-    """Read live vram_percent from the telemetry pipeline and return GB used.
+    """Read live VRAM from the telemetry pipeline and return GB used.
+
+    Prefers absolute vram_used_gb (from nvidia-smi memory.used in MB) when
+    available — this is more reliable than percentage-based calculation
+    which can be misleading on GPUs with large total memory where a single
+    model's footprint is only a small fraction of the total.
 
     Returns None if telemetry is missing or zero (model not loaded / idle).
     """
     stats = get_system_stats()
+    # Prefer absolute value from nvidia-smi (memory.used in MB → GB).
+    vram_used_gb = stats.get("vram_used_gb")
+    if vram_used_gb is not None and vram_used_gb > 0:
+        return round(vram_used_gb, 2)
+    # Fallback: percentage-based calculation.
     vram_pct = stats.get("vram_percent", 0.0)
     if not vram_pct:
         return None
@@ -68,8 +78,18 @@ def _update_model_vram_row(model_id: str, vram_gb: Optional[float], status: str)
         print(f"[VRAM] Failed to update DB row for {model_id}: {e}")
 
 
-async def capture_and_store_vram(model_id: str, status: str = "good") -> Optional[float]:
-    """Capture current VRAM and persist it. Idempotent — only captures once per model."""
+async def capture_and_store_vram(model_id: str, status: str = "good", timeout: float = 15.0) -> Optional[float]:
+    """Capture current VRAM and persist it.
+
+    Waits for a non-zero reading from the MQTT telemetry pipeline before
+    capturing — the external sensor needs time to poll GPU memory after
+    the model loads, so an immediate read may return stale/zero data.
+
+    Args:
+        model_id: Model identifier.
+        status: Status label to persist in the DB.
+        timeout: Seconds to wait for a non-zero reading before giving up.
+    """
     global _captured_vram
 
     # Skip if we already captured for this model (and the value hasn't changed much).
@@ -79,7 +99,14 @@ async def capture_and_store_vram(model_id: str, status: str = "good") -> Optiona
         if cur is not None and abs(cur - prev) < 0.5:
             return prev
 
-    vram_gb = get_model_vram_gb()
+    # Wait for a real (non-zero) VRAM reading from the telemetry pipeline.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        vram_gb = get_model_vram_gb()
+        if vram_gb is not None and vram_gb > 1.0:  # at least 1 GB to be meaningful for a model
+            break
+        await asyncio.sleep(1)
+
     # Normalize status to lowercase.
     norm_status = status.lower()
     _update_model_vram_row(model_id, vram_gb, norm_status)

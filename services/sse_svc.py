@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from services.docker_svc import get_docker_client, get_status, _stats_cache, _stats_lock
 from services.chat_svc import _get_loaded_model
+from services.vram_svc import capture_and_store_vram
 
 _sse_subscribers = []
 
@@ -56,6 +57,12 @@ async def log_monitor_task():
                 except Exception:
                     pass
                 broadcast_notification(f"🎉 {model_name} loaded and ready!")
+                # Capture VRAM right after the idle notification — the telemetry
+                # pipeline should have updated by now since it's polling nvidia-smi.
+                try:
+                    asyncio.create_task(capture_and_store_vram(model_name, status="good"))
+                except Exception as e:
+                    print(f"[Log Monitor] VRAM capture error: {e}")
         except Exception as e:
             print(f"[Log Monitor] Task encountered unexpected error: {e}")
 
