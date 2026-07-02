@@ -25,9 +25,9 @@ WORKFLOW_PATH = "/app/MyZimage_turbo.json"
 if not os.path.exists(WORKFLOW_PATH):
     WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyZimage_turbo.json")
 
-KREA_WORKFLOW_PATH = "/app/MyKrea2_Turbo.json"
+KREA_WORKFLOW_PATH = "/app/MyKrea2E_Turbo.json"
 if not os.path.exists(KREA_WORKFLOW_PATH):
-    KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyKrea2_Turbo.json")
+    KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyKrea2E_Turbo.json")
 
 MODEL_ZIMAGE = "z-image-turbo"
 MODEL_KREA = "krea2-turbo"

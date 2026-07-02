@@ -74,6 +74,8 @@ def _build_workflow(
     queue_id: str,
     img_index: int,
     workflow: str = "zimage",
+    krea_multiplier: Optional[float] = None,
+    enhancer_strength: Optional[float] = None,
 ) -> dict:
     if workflow in ("krea2", "krea2-turbo"):
         wf = _load_workflow(KREA_WORKFLOW_PATH)
@@ -85,6 +87,15 @@ def _build_workflow(
             wf[NODE_KREA_RESOLUTION]["inputs"]["height"] = int(h)
         if NODE_KREA_KSAMPLER in wf:
             wf[NODE_KREA_KSAMPLER]["inputs"]["seed"] = seed
+        # Apply krea-specific overrides (node 10: ConditioningKrea2Rebalance, node 11: Enhancer)
+        for nid, node in wf.items():
+            if not isinstance(node, dict):
+                continue
+            ct = node.get("class_type", "")
+            if ct == "ConditioningKrea2Rebalance" and krea_multiplier is not None:
+                node["inputs"]["multiplier"] = krea_multiplier
+            elif ct == "ComfyUI-Krea2T-Enhancer" and enhancer_strength is not None:
+                node["inputs"]["strength"] = enhancer_strength
         for node in wf.values():
             if isinstance(node, dict) and node.get("class_type") == "SaveImage":
                 node["inputs"]["filename_prefix"] = (
@@ -332,6 +343,8 @@ async def _run_subtask(
     prompt = item["prompt"]
     resolution = item.get("resolution", "1920x1088")
     workflow = sub_item.get("workflow", "zimage")
+    krea_multiplier = item.get("krea_multiplier") if workflow in ("krea2", "krea2-turbo") else None
+    enhancer_strength = item.get("enhancer_strength") if workflow in ("krea2", "krea2-turbo") else None
     num_images = sub_item.get("num_images", 1)
     seed = sub_item.get("seed")
     image_ids: list = []
@@ -362,6 +375,8 @@ async def _run_subtask(
             item["id"],
             img_index,
             workflow=workflow,
+            krea_multiplier=krea_multiplier,
+            enhancer_strength=enhancer_strength,
         )
 
         def on_progress(event_type, event_data):
@@ -671,6 +686,8 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "seed": req.seed,
             "model": model,
             "force_generate": getattr(req, "force_generate", False) or False,
+            "krea_multiplier": req.krea_multiplier,
+            "enhancer_strength": req.enhancer_strength,
             "sub_items": sub_items,
             "current_sub_index": 0,
             "status": "queued",
@@ -692,6 +709,8 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "seed": req.seed,
             "model": model,
             "force_generate": getattr(req, "force_generate", False) or False,
+            "krea_multiplier": req.krea_multiplier if model in ("krea2", "krea2-turbo") else None,
+            "enhancer_strength": req.enhancer_strength if model in ("krea2", "krea2-turbo") else None,
             "sub_items": [],
             "current_sub_index": 0,
             "status": "queued",

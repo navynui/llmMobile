@@ -14,6 +14,8 @@ class GenerateRequest(BaseModel):
     seed: Optional[int] = None
     model: str = "zimage"
     force_generate: Optional[bool] = False
+    krea_multiplier: Optional[float] = None
+    enhancer_strength: Optional[float] = None
 
 class MkdirRequest(BaseModel):
     current_path: str

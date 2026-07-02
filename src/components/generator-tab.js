@@ -18,6 +18,8 @@ export class GeneratorTab extends LitElement {
     genMode: { type: String },
     seed: { type: String },
     forceGenerate: { type: Boolean },
+    kreaMultiplier: { type: Number },
+    enhancerStrength: { type: Number },
   };
 
   static styles = css`
@@ -93,6 +95,8 @@ export class GeneratorTab extends LitElement {
     this._lightbox = null;
     this.activeThumbnailMenu = null;
     this.forceGenerate = false;
+    this.kreaMultiplier = parseFloat(localStorage.getItem('krea_multiplier')) || 4;
+    this.enhancerStrength = parseFloat(localStorage.getItem('enhancer_strength')) || 1;
   }
 
   connectedCallback() {
@@ -111,6 +115,8 @@ export class GeneratorTab extends LitElement {
     localStorage.setItem('gen_resolution', this.resolution);
     localStorage.setItem('gen_num_images', String(this.numImages));
     localStorage.setItem('gen_mode', this.genMode);
+    localStorage.setItem('krea_multiplier', String(this.kreaMultiplier));
+    localStorage.setItem('enhancer_strength', String(this.enhancerStrength));
   }
 
   async _submit() {
@@ -142,6 +148,8 @@ export class GeneratorTab extends LitElement {
       model: this.genMode,
       seed: (seedVal !== '' && !isNaN(seedNum)) ? seedNum : null,
       force_generate: this.forceGenerate,
+      krea_multiplier: this.kreaMultiplier,
+      enhancer_strength: this.enhancerStrength,
     };
     if (!navigator.onLine) {
       opQueue.push('/api/generate/queue', { method: 'POST', body: JSON.stringify(body) });
@@ -350,6 +358,18 @@ export class GeneratorTab extends LitElement {
               <input type="text" .value="${this.seed}" @input="${e => { this.seed = e.target.value; }}" placeholder="Random" style="width:100%; padding:11px 14px; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:var(--radius-md); color:var(--text-primary); font-family:var(--font-sans); font-size:0.9rem; outline:none; box-sizing:border-box;">
             </div>
           </div>
+          ${this.genMode === 'krea2' || this.genMode === 'both' ? html`
+            <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+              <div>
+                <label>Conditioning Multiplier: <span style="color:var(--primary);">${this.kreaMultiplier.toFixed(1)}</span></label>
+                <input type="range" min="0" max="4" step="0.1" value="${this.kreaMultiplier}" @input="${e => { this.kreaMultiplier = parseFloat(e.target.value); this._savePrefs(); }}" style="width:100%; accent-color: var(--primary);" />
+              </div>
+              <div>
+                <label>Enhancer Strength: <span style="color:var(--primary);">${this.enhancerStrength.toFixed(1)}</span></label>
+                <input type="range" min="0" max="2" step="0.1" value="${this.enhancerStrength}" @input="${e => { this.enhancerStrength = parseFloat(e.target.value); this._savePrefs(); }}" style="width:100%; accent-color: var(--primary);" />
+              </div>
+            </div>
+          ` : ''}
           <div style="margin-top:14px;">
             <label>Prompt</label>
             <textarea .value="${this.prompt}" @input="${e => { this.prompt = e.target.value; }}" placeholder="Describe the image you want to generate…"></textarea>
