@@ -127,7 +127,7 @@ async def _download_model_task(repo_id: str, filename: str):
                         cursor = conn.cursor()
                         cursor.execute("""
                             UPDATE models
-                            SET status = 'COMPLETED', notes = 'Download completed successfully'
+                            SET status = 'completed', notes = 'Download completed successfully'
                             WHERE model_id = ?
                         """, (model_id,))
                         conn.commit()
@@ -202,7 +202,7 @@ async def _download_model_task(repo_id: str, filename: str):
                         cursor = conn.cursor()
                         cursor.execute("""
                             UPDATE models
-                            SET status = 'COMPLETED', notes = 'Download completed successfully'
+                            SET status = 'completed', notes = 'Download completed successfully'
                             WHERE model_id = ?
                         """, (model_id,))
                         conn.commit()
@@ -228,7 +228,7 @@ async def _download_model_task(repo_id: str, filename: str):
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE models
-                SET status = 'FAILED', notes = ?
+                SET status = 'failed', notes = ?
                 WHERE model_id = ?
             """, (f"Error: {str(e)}", model_id))
             conn.commit()
@@ -294,9 +294,9 @@ def download_model(req: DownloadRequest):
         model_id = _clean_model_id(req.filename)
         cursor.execute("""
             INSERT INTO models (model_id, name, quantization, status, notes)
-            VALUES (?, ?, ?, 'QUEUED', ?)
+            VALUES (?, ?, ?, 'queued', ?)
             ON CONFLICT(model_id) DO UPDATE SET
-                status = 'QUEUED',
+                status = 'queued',
                 notes = ?
         """, (model_id, req.filename, get_quantization_from_name(req.filename),
               "Queued for download", "Queued for download"))
@@ -416,7 +416,7 @@ def resume_download(key: str):
             conn = get_db_conn()
             cursor = conn.cursor()
             model_id = _clean_model_id(download["filename"])
-            status = 'QUEUED' if download["status"] == "queued" else 'PAUSED'
+            status = 'queued' if download["status"] == "queued" else 'PAUSED'
             notes = 'Download resumed by user' if download["status"] == "queued" else 'Download paused by user'
             cursor.execute("""
                 UPDATE models

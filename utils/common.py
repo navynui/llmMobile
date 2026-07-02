@@ -50,6 +50,9 @@ NODE_KREA_KSAMPLER = "3"
 VRAM_CRITICAL_THRESHOLD = 90.0
 VRAM_EMERGENCY_THRESHOLD = 95.0
 
+# Total VRAM in GB — matches the Tesla P100 16GB platform string used elsewhere.
+VRAM_TOTAL_GB = 16.0
+
 # ComfyUI idle cooldown before reloading llama.cpp model (seconds)
 COMFY_IDLE_COOLDOWN_SECONDS = int(os.environ.get("COMFY_IDLE_COOLDOWN_SECONDS", "180"))
 

@@ -281,7 +281,7 @@ You must return a JSON object exactly matching this structure (do not output any
 
         model_name = raw_data.get("model_name") or model_id
         quant = get_quantization_from_name(model_name)
-        status = "⚠️ HALLUCINATION WARNING" if hallucinations else "✅ FAST"
+        status = "failed" if hallucinations else "good"
 
         cursor.execute("""
         INSERT INTO models (model_id, name, quantization, status, notes)

@@ -1,5 +1,6 @@
 import os
 import re
+import asyncio
 import httpx
 from fastapi import HTTPException
 from typing import Optional
@@ -164,7 +165,25 @@ async def proxy_llm_load(req: ModelActionRequest):
     async with httpx.AsyncClient() as c:
         try:
             preset_id = await _get_preset_id_for_model(req.model)
-            return (await c.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)).json()
+            resp = await c.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
+            result = resp.json()
+
+            # On success, spawn a background coroutine to capture VRAM.
+            if resp.status_code == 200:
+                model_id = req.model
+                async def _capture_vram():
+                    from services.vram_svc import wait_for_idle_trigger, capture_and_store_vram
+                    await wait_for_idle_trigger()
+                    await asyncio.sleep(3)
+                    vram_gb = await capture_and_store_vram(model_id, status="good")
+                    if vram_gb is not None:
+                        print(f"[VRAM] Captured VRAM for {model_id}: {vram_gb} GB")
+                try:
+                    asyncio.create_task(_capture_vram())
+                except Exception as e:
+                    print(f"[VRAM] Failed to create capture task: {e}")
+
+            return result
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))
 

@@ -1,5 +1,6 @@
 import { LitElement, html, css } from 'lit';
 import { styleMap } from 'lit/directives/style-map.js';
+import './benchmark-bubble-chart.js';
 
 export class BenchmarkTab extends LitElement {
   static properties = {
@@ -25,6 +26,9 @@ export class BenchmarkTab extends LitElement {
     selectedBenchmarkDetails: { type: Object },
     detailsModalLoading: { type: Boolean },
     showDetailsModal: { type: Boolean },
+
+    // Chart linkage
+    highlightedModelId: { type: String },
   };
 
   static styles = css`
@@ -532,6 +536,21 @@ export class BenchmarkTab extends LitElement {
       text-decoration: underline;
       color: #a5b4fc !important;
     }
+
+    /* Chart dimming & row highlight */
+    .row-highlighted td {
+      background: rgba(20, 184, 166, 0.06) !important;
+      border-bottom-color: rgba(20, 184, 166, 0.3) !important;
+    }
+
+    .row-highlighted {
+      animation: rowHighlightPulse 1.5s ease-out;
+    }
+
+    @keyframes rowHighlightPulse {
+      0%   { background: rgba(20,184,166,0.2); }
+      100% { background: rgba(20,184,166,0.06); }
+    }
   `;
 
   constructor() {
@@ -1037,6 +1056,13 @@ export class BenchmarkTab extends LitElement {
           </label>
         </div>
 
+        <!-- VRAM Bubble Chart -->
+        <benchmark-bubble-chart
+          .benchmarks="${list}"
+          .highlightedModelId="${this.highlightedModelId}"
+          @bubble-click="${(e) => this.handleBubbleClick(e)}"
+        ></benchmark-bubble-chart>
+
         <!-- Ranking Scores Table Card -->
         <div class="card">
           <div class="benchmarks-header">
@@ -1102,8 +1128,15 @@ export class BenchmarkTab extends LitElement {
                     else speedColor = '#f87171';
                   }
 
+                  const isHighlighted = this.highlightedModelId === b.model_id;
                   return html`
-                    <tr class="${inQueue ? 'row-queued' : ''}" style="${inQueue ? 'background: rgba(99,102,241,0.03);' : ''}">
+                    <tr
+                      data-model-id="${b.model_id}"
+                      class="${inQueue ? 'row-queued' : ''}${isHighlighted ? ' row-highlighted' : ''}"
+                      style="${inQueue ? 'background: rgba(99,102,241,0.03);' : ''}${isHighlighted && !inQueue ? 'background: rgba(20,184,166,0.06);' : ''}"
+                      @mouseenter="${() => this.handleRowHover(b.model_id)}"
+                      @mouseleave="${() => this.handleRowLeave()}"
+                    >
                       <td style="text-align: center; padding: 8px 4px 8px 8px; vertical-align: middle;">
                         ${b.is_ready ? html`
                           <input 
@@ -1254,6 +1287,33 @@ export class BenchmarkTab extends LitElement {
   fetchLocalModels() {
     // Helper to fetch local models - defined but not used in this simplified version
     return Promise.resolve([]);
+  }
+
+  handleBubbleClick(e) {
+    const modelId = e.detail?.model_id;
+    if (!modelId) return;
+    this.highlightedModelId = modelId;
+    // Scroll the corresponding table row into view.
+    requestAnimationFrame(() => {
+      const row = this.shadowRoot?.querySelector(
+        `tr[data-model-id="${modelId}"]`
+      );
+      if (row) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Add temporary highlight class.
+        row.classList.add('row-highlighted');
+        setTimeout(() => row.classList.remove('row-highlighted'), 1500);
+      }
+    });
+  }
+
+  handleRowHover(modelId) {
+    this.highlightedModelId = modelId;
+  }
+
+  handleRowLeave() {
+    // Only clear if no external highlight is set.
+    // We don't have a way to know, so just leave it as-is for now.
   }
 
   render() {

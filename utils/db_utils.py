@@ -89,9 +89,11 @@ def consolidate_database():
             
             # Insert consolidated model row
             cursor.execute("""
-                INSERT INTO models (model_id, name, quantization, vram_fit, status, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (clean_id, best_dup['name'], best_dup['quantization'], best_dup['vram_fit'], best_dup['status'], best_dup['notes']))
+                INSERT INTO models (model_id, name, quantization, vram_fit, status, notes, vram_gb)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (clean_id, best_dup['name'], best_dup['quantization'], best_dup['vram_fit'],
+                  best_dup.get('status', 'testing'), best_dup.get('notes', ''),
+                  best_dup.get('vram_gb', None)))
             
         conn.commit()
         conn.execute("PRAGMA foreign_keys = ON;")

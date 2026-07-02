@@ -16,6 +16,7 @@ import httpx
 from fastapi import BackgroundTasks, HTTPException
 
 from utils.db_utils import get_db_conn, _clean_model_id
+from services.vram_svc import capture_and_store_vram, wait_for_idle_trigger
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
@@ -142,6 +143,14 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     rounds_list = []
     server_url = get_llm_server_url()
     api_url = f"{server_url}/v1/chat/completions"
+
+    # Capture VRAM after model is confirmed loaded and idle.
+    log_benchmark("Waiting for server to be idle before capturing VRAM...")
+    await wait_for_idle_trigger()
+    await asyncio.sleep(2)
+    vram_gb = await capture_and_store_vram(model_id, status="good")
+    if vram_gb is not None:
+        log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
 
     try:
         async with httpx.AsyncClient(timeout=600.0) as client:
@@ -283,9 +292,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             cursor = conn.cursor()
             cursor.execute("""
             INSERT INTO models (model_id, name, quantization, status, notes)
-            VALUES (?, ?, ?, 'FAILED', ?)
+            VALUES (?, ?, ?, 'failed', ?)
             ON CONFLICT(model_id) DO UPDATE SET
-                status = 'FAILED',
+                status = 'failed',
                 notes = ?
             """, (model_id, os.path.basename(model_id), get_quantization_from_name(model_id),
                   f"Failed: {str(run_err)}", f"Failed: {str(run_err)}"))
@@ -361,7 +370,13 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                 log_benchmark_error(f"Model: {model_id}, Timeout loading model")
                 continue
 
-            log_benchmark(f"Queue: Success! {model_id} loaded. Running benchmark...")
+            # Capture VRAM after confirming the model is loaded and idle.
+            log_benchmark(f"Queue: Waiting for server to be idle before capturing VRAM...")
+            await wait_for_idle_trigger()
+            await asyncio.sleep(2)
+            vram_gb = await capture_and_store_vram(model_id, status="good")
+            if vram_gb is not None:
+                log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB")
 
             # 3. Create run_id and run benchmark rounds
             run_id = str(uuid.uuid4())
@@ -377,9 +392,9 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                 cursor = conn.cursor()
                 cursor.execute("""
                 INSERT INTO models (model_id, name, quantization, status, notes)
-                VALUES (?, ?, ?, 'TESTING', ?)
+                VALUES (?, ?, ?, 'testing', ?)
                 ON CONFLICT(model_id) DO UPDATE SET
-                    status = 'TESTING',
+                    status = 'testing',
                     notes = ?
                 """, (norm_model_id, display_name, get_quantization_from_name(model_id),
                       f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
@@ -635,7 +650,8 @@ def get_benchmarks(show_all: bool = False) -> dict:
                 WHERE lr.rn = 1
                 GROUP BY lr.model_id, lr.run_id, lr.timestamp
             )
-            SELECT m.model_id, m.name, m.quantization, m.status, m.notes,
+            SELECT m.model_id, m.name, m.quantization, LOWER(m.status) as status, m.notes,
+                   m.vram_gb,
                    rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps,
                    (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
             FROM models m
@@ -673,6 +689,8 @@ def get_benchmarks(show_all: bool = False) -> dict:
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
                 "score": total_score,
+                "vram_gb": r.get("vram_gb"),
+                "status": r.get("status", "testing"),
                 "is_ready": is_model_ready,
                 "is_tested": True,
             })
@@ -695,6 +713,19 @@ def get_benchmarks(show_all: bool = False) -> dict:
                                 base_name = raw_name
                             filename = base_name + ".gguf"
                             if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
+                                # Fetch vram_gb and status from DB for this model
+                                try:
+                                    conn = get_db_conn()
+                                    cursor = conn.cursor()
+                                    cursor.execute(
+                                        "SELECT LOWER(status) as status, vram_gb FROM models WHERE model_id = ?",
+                                        (filename.lower(),)
+                                    )
+                                    db_row = cursor.fetchone()
+                                    conn.close()
+                                except Exception:
+                                    db_row = None
+
                                 benchmarks.append({
                                     "model_id": filename,
                                     "model": filename,
@@ -702,6 +733,8 @@ def get_benchmarks(show_all: bool = False) -> dict:
                                     "quant": get_quantization_from_name(filename),
                                     "tokens_sec": None,
                                     "score": None,
+                                    "vram_gb": db_row["vram_gb"] if db_row else None,
+                                    "status": db_row["status"] if db_row and db_row.get("status") else "testing",
                                     "is_ready": True,
                                     "is_tested": False,
                                 })
@@ -720,7 +753,7 @@ def get_benchmark_details(model_id: str) -> dict:
         model_id = _clean_model_id(model_id)
         conn = get_db_conn()
         cursor = conn.cursor()
-        cursor.execute("SELECT model_id, name, quantization, status, notes FROM models WHERE model_id = ?", (model_id,))
+        cursor.execute("SELECT model_id, name, quantization, LOWER(status) as status, vram_gb, notes FROM models WHERE model_id = ?", (model_id,))
         model_row = cursor.fetchone()
         if not model_row:
             conn.close()
@@ -743,7 +776,8 @@ def get_benchmark_details(model_id: str) -> dict:
             "model_id": model_row["model_id"],
             "name": model_row["name"],
             "quantization": model_row["quantization"],
-            "status": model_row["status"],
+            "status": model_row.get("status", "testing"),
+            "vram_gb": model_row.get("vram_gb"),
             "notes": model_row["notes"],
             "run_id": run_id,
             "timestamp": timestamp,
@@ -816,9 +850,9 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO models (model_id, name, quantization, status, notes)
-                VALUES (?, ?, ?, 'TESTING', ?)
+                VALUES (?, ?, ?, 'testing', ?)
                 ON CONFLICT(model_id) DO UPDATE SET
-                    status = 'TESTING',
+                    status = 'testing',
                     notes = ?
             """, (model_id, display_name, get_quantization_from_name(raw_model_id),
                   f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
