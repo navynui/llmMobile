@@ -852,6 +852,12 @@ export class BenchmarkTab extends LitElement {
     return list;
   }
 
+  getChartBenchmarks() {
+    // Only show models that are ready (available in models.ini) on the bubble chart.
+    const list = this.getFilteredAndSortedBenchmarks().filter(b => b.is_ready);
+    return list;
+  }
+
   // --- Benchmark Execution Logs Logic ---
   async fetchBenchmarkLogs() {
     this.benchmarkLogsLoading = true;
@@ -1058,7 +1064,7 @@ export class BenchmarkTab extends LitElement {
 
         <!-- VRAM Bubble Chart -->
         <benchmark-bubble-chart
-          .benchmarks="${list}"
+          .benchmarks="${this.getChartBenchmarks()}"
           .highlightedModelId="${this.highlightedModelId}"
           @bubble-click="${(e) => this.handleBubbleClick(e)}"
         ></benchmark-bubble-chart>
@@ -1095,21 +1101,19 @@ export class BenchmarkTab extends LitElement {
                   <th @click="${() => this.handleSort('model')}" style="text-align: left; padding: 8px 12px 8px 8px;">Model
                     <span class="sort-indicator">${this.sortField === 'model' ? (this.sortAscending ? '▲' : '▼') : ''}</span>
                   </th>
-                  <th @click="${() => this.handleSort('vram')}" style="text-align: center; padding: 8px 12px 8px 8px;">VRAM
-                    <span class="sort-indicator">${this.sortField === 'vram' ? (this.sortAscending ? '▲' : '▼') : ''}</span>
-                  </th>
+
                 </tr>
               </thead>
               <tbody>
                 ${this.benchmarksLoading ? html`
                   <tr>
-                    <td colspan="3" style="text-align: center; padding: 30px;">
+                    <td colspan="2" style="text-align: center; padding: 30px;">
                       <span class="loader" style="border-top-color: var(--primary);"></span> Loading benchmarking scores...
                     </td>
                   </tr>
                 ` : list.length === 0 ? html`
                   <tr>
-                    <td colspan="3" style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                    <td colspan="2" style="text-align: center; padding: 30px; color: var(--text-secondary);">
                       No benchmark matches your criteria.
                     </td>
                   </tr>
@@ -1174,23 +1178,25 @@ export class BenchmarkTab extends LitElement {
                               <span class="bench-chip" style="background: rgba(99,102,241,0.08); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
                               <span class="bench-chip" style="background: rgba(16,185,129,0.08); color: ${speedColor}; border: 1px solid rgba(16,185,129,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ ${b.tokens_sec} t/s</span>
                               <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">★ ${b.score}</span>
+                              ${b.vram_gb !== null && b.vram_gb !== undefined ? html`
+                                <span class="bench-chip" style="background: rgba(139,92,246,0.08); color: #a78bfa; border: 1px solid rgba(139,92,246,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚙️ ${b.vram_gb} GB</span>
+                              ` : ''}
                             </div>
                           ` : html`
                             <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
                               <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
                               <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
                               <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
+                              ${b.vram_gb !== null && b.vram_gb !== undefined ? html`
+                                <span class="bench-chip" style="background: rgba(139,92,246,0.08); color: #a78bfa; border: 1px solid rgba(139,92,246,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚙️ ${b.vram_gb} GB</span>
+                              ` : html`
+                                <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
+                              `}
                             </div>
                           `}
                         </div>
                       </td>
-                      <td style="text-align: center; padding: 12px; vertical-align: middle;">
-                        ${b.vram_gb !== null && b.vram_gb !== undefined ? html`
-                          <span class="bench-chip" style="background: rgba(139,92,246,0.08); color: #a78bfa; border: 1px solid rgba(139,92,246,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚙️ ${b.vram_gb} GB</span>
-                        ` : html`
-                          <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
-                        `}
-                      </td>
+
                     </tr>
                   `;
                 })}
