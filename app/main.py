@@ -13,7 +13,7 @@ from utils.common import (
     LLM_PROJECT_NAME, LLM_COMPOSE_DIR, COMFYUI_HOST, COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT, NODE_RESOLUTION, NODE_KSAMPLER,
     VRAM_CRITICAL_THRESHOLD, VRAM_EMERGENCY_THRESHOLD,
-    MQTT_CONFIG, safe_join, _deep_copy, get_local_stats
+    MQTT_CONFIG, safe_join, _deep_copy
 )
 from utils.db_utils import DB_PATH, get_db_conn, consolidate_database, _clean_model_id
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
@@ -25,7 +25,7 @@ from models.requests import (
 # ── Service imports ─────────────────────────────────────────────────────────────
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
-    _start_mqtt_listener, _local_stats_poller, get_logs
+    _start_mqtt_listener, get_logs
 )
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
@@ -85,7 +85,6 @@ async def startup_event():
     init_download_queue()
     asyncio.create_task(download_queue_worker())
     _start_mqtt_listener()
-    asyncio.create_task(_local_stats_poller())
     sse_startup()
     init_push()
     has_queued = load_persisted_queue()

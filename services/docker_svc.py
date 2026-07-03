@@ -3,12 +3,11 @@ import time
 import datetime
 import threading
 import subprocess
-import asyncio
 import docker as _docker_module
 import paho.mqtt.client as mqtt
 from fastapi import HTTPException
 
-from utils.common import LLM_PROJECT_NAME, LLM_COMPOSE_DIR, MQTT_CONFIG, get_local_stats
+from utils.common import LLM_PROJECT_NAME, LLM_COMPOSE_DIR, MQTT_CONFIG
 
 # OWNED GLOBAL — no other file may import this directly from main.py
 _docker_client = None
@@ -120,17 +119,6 @@ def _start_mqtt_listener():
         print("MQTT Telemetry Listener started.")
     except Exception as e:
         print(f"MQTT Connection Error: {e}")
-
-async def _local_stats_poller():
-    while True:
-        try:
-            if time.time() - last_mqtt_update_time > 5.0:
-                local = get_local_stats()
-                with _stats_lock:
-                    _stats_cache["data"].update(local)
-        except Exception as e:
-            print(f"Stats poller error: {e}")
-        await asyncio.sleep(2)
 
 
 def get_logs(container_name: str = "llm-server", lines: int = 100):
