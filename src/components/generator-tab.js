@@ -95,7 +95,7 @@ export class GeneratorTab extends LitElement {
     this._lightbox = null;
     this.activeThumbnailMenu = null;
     this.forceGenerate = false;
-    this.kreaMultiplier = parseFloat(localStorage.getItem('krea_multiplier')) || 4;
+    this.kreaMultiplier = parseFloat(localStorage.getItem('krea_multiplier')) || 1;
     this.enhancerStrength = parseFloat(localStorage.getItem('enhancer_strength')) || 1;
   }
 
