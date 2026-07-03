@@ -1070,7 +1070,7 @@ export class BenchmarkTab extends LitElement {
         ></benchmark-bubble-chart>
 
         <!-- Ranking Scores Table Card -->
-        <div class="card">
+        <div class="card" style="margin-bottom: 16px;">
           <div class="benchmarks-header">
             <h2>🏆 LLM Benchmark Scores & Rankings</h2>
             <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 0.8rem;" @click="${() => { this.fetchBenchmarks(); this.fetchActiveModelId(); }}">⟳ Refresh</button>
