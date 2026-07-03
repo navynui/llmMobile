@@ -37,28 +37,23 @@ export class ServerTab extends LitElement {
   static styles = css`
     :host {
       display: block;
-      padding: 1.5rem;
-      padding-bottom: 3rem;
+      padding: 16px;
+      color: var(--text-primary);
+      background-color: var(--bg-color);
+      min-height: calc(var(--app-dvh) - 80px);
+      box-sizing: border-box;
     }
-    
+
     .server-tab {
       display: flex;
       flex-direction: column;
-      gap: 2rem;
-      max-width: 600px;
+      gap: 20px;
+      max-width: 800px;
       margin: 0 auto;
+      padding-bottom: 40px;
     }
     
-    @media (max-width: 768px) {
-      :host {
-        padding: 0.5rem;
-        padding-bottom: 2rem;
-      }
-      
-      .server-tab {
-        gap: 1rem;
-      }
-    }
+
 
     server-status-card, models-config-editor, model-downloader, server-logs {
       width: 100%;
