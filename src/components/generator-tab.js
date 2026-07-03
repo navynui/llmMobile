@@ -327,8 +327,7 @@ export class GeneratorTab extends LitElement {
     const hasDone = combinedQueue.some(q => ['completed','error','cancelled'].includes(q.status));
     const buttonLabel = this.submitting ? 'Submitting…' : (this.genMode === 'krea2' ? '🎨 Generate' : this.genMode === 'both' ? '🔀 Generate both' : '⚡ Generate');
     return html`
-      <div class="container">
-        <div class="card">
+      <div class="card">
           <h2>🎨 Image Generator</h2>
           <div class="row">
             <div>
@@ -431,7 +430,6 @@ export class GeneratorTab extends LitElement {
             </div>
           </div>
         `}
-      </div>
       ${this._lightbox ? html`
         <div class="lightbox" @click="${e => e.target === e.currentTarget && this._closeLightbox()}">
           <button class="lightbox-close" @click="${this._closeLightbox}">✕</button>
