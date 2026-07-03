@@ -1334,9 +1334,7 @@ export class BenchmarkTab extends LitElement {
 
   render() {
     return html`
-      <div class="container">
-        ${this.renderBenchmarksView()}
-      </div>
+      ${this.renderBenchmarksView()}
 
       <!-- Benchmark Execution Logs -->
       <div class="card">
