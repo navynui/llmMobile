@@ -135,6 +135,13 @@ The `traceback` module **must** be imported at the top of `app/main.py` (and any
 
 * Always verify `import traceback` exists at the top of backend entry points. If it's missing, error traces inside `except` blocks are swallowed.
 
+### 8. System Stats Must Come From MQTT Only
+
+The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/VRAM, storage) sourced **exclusively from Home Assistant via MQTT**. Local hardware queries (e.g., `nvidia-smi`, `psutil`) must **never** be used to populate system stats.
+
+* The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
+* Home Assistant publishes the correct per-GPU values (e.g., Tesla P100 VRAM, GPU utilization) via its own MQTT topics. Rely on those rather than trying to parse `nvidia-smi` output locally, which is unreliable with multi-GPU setups.
+
 ---
 
 ## 💾 Path Configuration Guide
