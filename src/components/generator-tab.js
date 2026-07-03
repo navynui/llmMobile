@@ -327,7 +327,7 @@ export class GeneratorTab extends LitElement {
     const hasDone = combinedQueue.some(q => ['completed','error','cancelled'].includes(q.status));
     const buttonLabel = this.submitting ? 'Submitting…' : (this.genMode === 'krea2' ? '🎨 Generate' : this.genMode === 'both' ? '🔀 Generate both' : '⚡ Generate');
     return html`
-      <div class="card">
+      <div class="card" style="margin-bottom: 16px;">
           <h2>🎨 Image Generator</h2>
           <div class="row">
             <div>
