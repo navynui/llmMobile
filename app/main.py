@@ -34,15 +34,16 @@ from services.model_svc import (
 )
 from services.chat_svc import proxy_chat
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
-from services.comfy_svc import (
-    queue_worker, broadcast_queue, get_queue_snapshot, load_persisted_queue,
-    is_queue_running, set_queue_running, get_queue as svc_get_queue,
+from services.comfy.worker import queue_worker
+from services.comfy.queue_state import broadcast_queue, get_queue_snapshot, load_persisted_queue, is_queue_running, set_queue_running
+from services.comfy.api import (
+    get_queue as svc_get_queue,
     submit_to_queue as svc_submit_to_queue,
     cancel_queue_item as svc_cancel_queue_item,
     clear_completed as svc_clear_completed,
     stream_queue as svc_stream_queue,
-    _free_comfy_cache as svc_free_comfy_cache,
 )
+from services.comfy.comfyio import _free_comfy_cache as svc_free_comfy_cache
 from services.gallery_svc import (
     browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
     gallery_mkdir as svc_gallery_mkdir, gallery_move as svc_gallery_move,
@@ -52,10 +53,10 @@ from services.push_svc import (
     init_push, get_vapid_public_key, subscribe as push_subscribe,
     unsubscribe as push_unsubscribe, send_push
 )
-from services.download_svc import (
-    init_download_queue, download_queue_worker,
-    search_hf_models as svc_search_hf_models,
-    get_hf_model_details as svc_get_hf_model_details,
+from services.download.state import init_download_queue
+from services.download.worker import download_queue_worker
+from services.download.hf import search_hf_models as svc_search_hf_models, get_hf_model_details as svc_get_hf_model_details
+from services.download.api import (
     download_model as svc_download_model,
     get_downloads_status as svc_get_downloads_status,
     scan_and_register_models as svc_scan_and_register_models,
@@ -63,15 +64,10 @@ from services.download_svc import (
     resume_download as svc_resume_download,
     cancel_download as svc_cancel_download,
 )
-from services.benchmark_svc import (
-    get_benchmark_progress, get_benchmarks, get_benchmark_details,
-    get_benchmark_logs, get_benchmark_outputs,
-    run_benchmark as run_single_benchmark,
-    run_benchmark_queue as run_queue_benchmark,
-)
-from services.judge_svc import (
-    judge_benchmark as svc_judge_benchmark,
-)
+from services.benchmark.state import get_benchmark_progress
+from services.benchmark.reader import get_benchmarks, get_benchmark_details, get_benchmark_logs, get_benchmark_outputs
+from services.benchmark.api import run_benchmark as run_single_benchmark, run_benchmark_queue as run_queue_benchmark
+from services.judge.judge import judge_benchmark as svc_judge_benchmark
 
 app = FastAPI(title="LLM Mobile Manager")
 

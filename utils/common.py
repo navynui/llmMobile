@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import psutil
 import subprocess
@@ -130,3 +131,10 @@ def get_local_stats() -> dict:
     except Exception:
         pass
     return stats
+
+
+def get_quantization_from_name(name: str) -> str:
+    match = re.search(r'\b(Q[0-9]_[K_M_L_S_X_]+|IQ[0-9]_[A-Z_]+)\b', name, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return "Unknown"

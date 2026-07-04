@@ -1,9 +1,3 @@
-"""
-services/judge_svc.py
-Owns: judge helper functions, /api/benchmarks/judge route logic
-Called by: benchmark_svc.py and main.py route delegation
-"""
-
 import re
 import time
 import traceback
@@ -13,9 +7,9 @@ import httpx
 from fastapi import HTTPException
 
 from utils.db_utils import get_db_conn
+from utils.common import get_quantization_from_name
 from models.requests import JudgeRequest
-
-# ── Re-exported for benchmark_svc and main.py ──────────────────────────────────
+from .gold import get_gold_key, get_gold_answers, load_raw_json
 
 def get_llm_server_url() -> str:
     try:
@@ -24,30 +18,6 @@ def get_llm_server_url() -> str:
         return "http://llm-server:8080"
     except Exception:
         return "http://localhost:8080"
-
-
-def get_gold_key(round_name: str) -> Optional[str]:
-    round_map = {
-        "round 1": "knowledge_qa",
-        "round 2": "technical_reasoning",
-        "round 3": "code_generation",
-        "round 4": "abstract_logic",
-        "round 5": "creative_writing"
-    }
-    r_lower = round_name.lower().strip()
-    if r_lower in ["knowledge_qa", "technical_reasoning", "code_generation", "abstract_logic", "creative_writing"]:
-        return r_lower
-    for key, val in round_map.items():
-        if key in r_lower:
-            return val
-    return None
-
-
-def get_quantization_from_name(name: str) -> str:
-    match = re.search(r'\b(Q[0-9]_[K_M_L_S_X_]+|IQ[0-9]_[A-Z_]+)\b', name, re.IGNORECASE)
-    if match:
-        return match.group(1).upper()
-    return "Unknown"
 
 
 def parse_judge_json(raw_text: str) -> dict:
@@ -60,46 +30,6 @@ def parse_judge_json(raw_text: str) -> dict:
     json_str = clean_text[start_idx:end_idx + 1]
     import json
     return json.loads(json_str)
-
-
-def get_gold_answers() -> dict:
-    paths = [
-        "/app/answers1.json",
-        "/home/nui/llmaCPP/answers1.json",
-        "/llm-server/answers1.json"
-    ]
-    for path in paths:
-        if __import__("os").path.exists(path):
-            try:
-                import json
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    raise FileNotFoundError("Could not locate answers1.json")
-
-
-def load_raw_json(path_str: str) -> dict:
-    import os, json
-    if os.path.exists(path_str):
-        with open(path_str, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    basename = os.path.basename(path_str)
-    alternates = [
-        os.path.join("/home/nui/workspace/llmTest/model_test_output", basename),
-        os.path.join("/llm-server/benchmark_results", basename),
-        os.path.join("/app/benchmark_results", basename),
-        os.path.join("/home/nui/llmaCPP/benchmark_results", basename),
-    ]
-    for alt in alternates:
-        if os.path.exists(alt):
-            try:
-                with open(alt, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    raise FileNotFoundError(f"Could not load raw JSON for path: {path_str}")
 
 
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
@@ -125,8 +55,6 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         log_benchmark(f"Grading round completed for Judge model: {preset_id}")
         return res_data["choices"][0]["message"]["content"]
 
-
-# ── Route handler ──────────────────────────────────────────────────────────────
 
 async def judge_benchmark(req: JudgeRequest):
     import os, time

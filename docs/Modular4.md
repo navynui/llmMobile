@@ -375,13 +375,13 @@ Always run G1 or G2 after each step.
 
 ## 5. Definition of Done
 
-- [ ] Cross-cutting cleanup from §1A applied and gates pass.
-- [ ] Every original large file either split into a package/folder **or** documented as intentionally kept.
-- [ ] `python -c "import app.main"` clean.
-- [ ] `python -m pytest -q tests/` — 9/9 green (or more, never fewer).
-- [ ] `npm run build` — zero Vite errors; zero Lit console warnings.
-- [ ] Public surface diff (G6) identical for every split file.
-- [ ] Route paths, HTTP methods, response shapes, component tag names, event payloads unchanged.
-- [ ] Docker rebuild (G7) succeeds and app boots.
-- [ ] `AGENTS.md` layout section updated.
-- [ ] No compat shims remain (or, if kept, explicitly listed as intentional).
+- [x] Cross-cutting cleanup from §1A applied and gates pass.
+- [x] Every original large file either split into a package/folder **or** documented as intentionally kept.
+- [x] `python -c "import app.main"` clean.
+- [x] `python -m pytest -q tests/` — 9/9 green (or more, never fewer).
+- [x] `npm run build` — zero Vite errors; zero Lit console warnings.
+- [x] Public surface diff (G6) identical for every split file.
+- [x] Route paths, HTTP methods, response shapes, component tag names, event payloads unchanged.
+- [x] Docker rebuild (G7) succeeds and app boots.
+- [x] `AGENTS.md` layout section updated.
+- [x] No compat shims remain (or, if kept, explicitly listed as intentional).

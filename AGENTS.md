@@ -2,7 +2,7 @@
 
 > This document outlines coding standards, structural rules, and critical invariants for AI coding assistants working in the `llmMobile` repository.
 >
-> **Status:** All planned development phases (A–I) are complete. The repository is fully modular, test-covered, and follows strict separation of concerns on both backend and frontend.
+> **Status:** All planned development phases (A–J) are complete. The repository is fully modular, test-covered, and follows strict separation of concerns on both backend and frontend.
 
 ---
 
@@ -22,48 +22,103 @@ It is deployed as a Docker container (`llm-mobile`) defined in the `/home/nui/ll
 
 ### 1. Backend (Service Layer)
 
-The backend is a **thin FastAPI router** (`app/main.py`) that delegates all business logic to dedicated service modules under `services/`:
+The backend is a **thin FastAPI router** (`app/main.py`) that delegates all business logic to dedicated service modules under `services/`. After Phase J modularization, the four large service domains are sub-packages (benchmark, comfy, download, judge); smaller services remain single files. Legacy top-level `*_svc.py` compat files were removed after all callers were migrated.
 
-* **`docker_svc.py`**: Container lifecycle (start/stop/restart), system stats, log retrieval.
+**Sub-packages (Phase J splits):**
+
+* **`services/benchmark/`** — Benchmark sequence execution, score consolidation, database idempotency:
+  - `__init__.py` — re-export shim (public surface unchanged)
+  - `logging.py` — `log_benchmark_progress`, `log_benchmark_error`, `log_benchmark`
+  - `state.py` — progress/running/lock getters & setters
+  - `runner.py` — `run_benchmark_task`, `run_benchmark_queue_task` (retry + cooldown + DB idempotency — G5)
+  - `reader.py` — `get_benchmarks`, `get_benchmark_details`, `get_benchmark_logs`, `get_benchmark_outputs`
+  - `api.py` — `run_benchmark`, `run_benchmark_queue` (FastAPI entry points)
+
+* **`services/comfy/`** — ComfyUI workflow validation, prompt injection, image generation queue:
+  - `__init__.py` — re-export shim
+  - `client.py` — `get_comfy_http`, `set_comfy_http`
+  - `workflow.py` — `_load_workflow`, `_build_workflow`
+  - `comfyio.py` — `_free_comfy_cache`, `_queue_comfy`, `_wait_comfy`, `_get_comfy_history`, `_write_sidecar`
+  - `queue_state.py` — locks, running flag, snapshot, persist (load/save), SSE subscribers, `broadcast_queue`
+  - `worker.py` — `_run_subtask`, `queue_worker`, VRAM swap helpers
+  - `api.py` — `submit_to_queue`, `get_queue`, `cancel_queue_item`, `clear_completed`, `stream_queue`
+
+* **`services/download/`** — Model download queue, progress tracking, HuggingFace search:
+  - `__init__.py` — re-export shim
+  - `state.py` — `init_download_queue`, queue state dicts
+  - `hf.py` — `search_hf_models`, `get_hf_model_details`
+  - `worker.py` — `download_queue_worker`, `_download_model_task`
+  - `api.py` — `download_model`, `get_downloads_status`, `stop/resume/cancel_download`, `clear_finished_downloads`, `scan_and_register_models`
+
+* **`services/judge/`** — AI-as-a-Judge scoring, rubric evaluation:
+  - `__init__.py` — re-export shim
+  - `gold.py` — `get_gold_key`, `get_gold_answers`, `load_raw_json`
+  - `judge.py` — `parse_judge_json` (resilient `<think>` tag stripping — G5), `query_judge_model`, `judge_benchmark`
+
+**Single-file services (intentionally kept whole):**
+
+* **`docker_svc.py`**: Container lifecycle (start/stop/restart), system stats via MQTT, log retrieval.
 * **`model_svc.py`**: Model scanning, loading, INI management, weight deletion.
 * **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses.
 * **`sse_svc.py`**: Server-Sent Event subscription management.
-* **`comfy_svc.py`**: ComfyUI workflow validation, prompt injection, image generation triggers.
-* **`queue_svc.py`**: Benchmark queue orchestration, round-robin model swapping.
 * **`gallery_svc.py`**: Image gallery CRUD, metadata extraction, file cleanup.
 * **`push_svc.py`**: Push notification dispatching.
-* **`download_svc.py`**: Model download queue, progress tracking, file validation.
-* **`benchmark_svc.py`**: Benchmark sequence execution, score consolidation, database idempotency.
-* **`judge_svc.py`**: AI-as-a-Judge scoring, resilient `<think>` tag stripping, rubric evaluation.
+* **`vram_svc.py`**: VRAM capture, idle-trigger detection — shared leaf dependency; never split.
 
-Shared utilities live in `utils/` (`common.py`, `db_utils.py`, `bench_log.py`), and Pydantic schemas in `models/requests.py`.
+Shared utilities live in `utils/` (`common.py` — path resolution + `get_quantization_from_name`, `db_utils.py`, `bench_log.py`), and Pydantic schemas in `models/requests.py`.
 
 ### 2. Frontend (`src/`)
 
-A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components)** and compiled with **Vite**. The frontend has been refactored from monolithic tabs into a library of reusable, single-responsibility components:
+A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components)** and compiled with **Vite**. After Phase J modularization, each large component is split into a `_styles.js` / `_logic.js` / `_templates.js` sibling folder. The main class file imports those modules and owns the `customElements.define` call.
 
-* **`src/llm-app.js`**: SPA shell, view router, SSE client, global `<toast-host>` mount point.
-* **`src/assets/icons.js`**: Centralized SVG icon set (replaces all inline SVGs).
+**SPA shell:**
+* **`src/llm-app.js`**: SPA shell class, `<toast-host>` mount point. Imports from `src/llm-app/`:
+  - `_styles.js` — top-level app styles
+  - `_router.js` — view-switching logic
+  - `_templates.js` — nav bar + view render helpers
+  - `_sse.js` — global SSE client wiring
+
+**Shared primitives & utilities:**
+* **`src/assets/icons.js`**: Centralized SVG icon set (zero inline `<svg>` allowed elsewhere).
 * **`src/components/_primitives.js`**: Shared CSS primitives (`.card`, `.btn-primary`, `.btn-secondary`, `.btn-danger`, `.pill`, `.text-input`, `.modal-overlay`, `.spinner`, `.slide-in`, `.fade-in`).
 * **`src/components/_confirm.js`**: Async confirmation dialog primitive (`Confirm.show()`).
-* **`src/components/_data-table.js`**: Generic sortable, filterable, paginated data table component.
+* **`src/components/data-table.js`**: Generic sortable, filterable, paginated data table component.
 * **`src/components/toast-host.js`**: Global toast notification singleton consumed by `Toast.show()`.
-* **`src/components/server-tab.js`**: Thin orchestrator composing:
-  - `<server-status-card>` — health display & start/stop/restart controls.
-  - `<models-config-editor>` — `models.ini` editor with scan/save/delete.
-  - `<model-downloader>` — HuggingFace search & download queue UI.
-  - `<server-logs>` — Live log viewer with container selector & auto-scroll.
-* **`src/components/chat-tab.js`**: Markdown-rendered streaming assistant with context preservation.
-* **`src/components/generator-tab.js`**: ComfyUI parameter sliders, prompt input, aspect-ratio presets.
-* **`src/components/gallery-tab.js`**: Responsive image grid, full-screen viewer, metadata inspector.
-* **`src/components/benchmark-tab.js`**: Thin orchestrator composing:
-  - `<benchmark-table>` — Sortable/filterable results table.
-  - `<benchmark-runner>` — Queue builder, run/cancel controls, progress bar, live log stream.
-* **`src/components/models-config.js`**: Database inspector, model file deletion, INI management.
 * **`src/utils/api.js`**: Centralized fetch wrapper (`apiFetch`, `apiPost`, `apiDelete`) with built-in toast and loading state support.
 * **`src/utils/polling.js`**: Safe polling mixin with concurrency guards and disconnect cleanup.
 * **`src/utils/state-mixin.js`**: Reusable loading/error state management for tab components.
 * **`src/utils/toast.js`**: Static `Toast.show()` service wrapping the toast-host.
+* **`src/utils/op-queue.js`**: Standalone offline-operation queue utility.
+
+**Tab components (each split into a sibling folder):**
+
+* **`src/components/benchmark-tab.js`** + **`benchmark-tab/`**:
+  - `_styles.js`, `_logic.js` (queue building, status polling, SSE, bubble-click handlers), `_templates.js` (table, runner, progress, log, details modal)
+  - Composes `<benchmark-bubble-chart>` (kept whole at 291 lines)
+
+* **`src/components/chat-tab.js`** + **`chat-tab/`**:
+  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering), `_templates.js` (messages, input, composer)
+
+* **`src/components/gallery-tab.js`** + **`gallery-tab/`**:
+  - `_styles.js`, `_logic.js` (folder browsing, metadata fetch, delete/move), `_templates.js` (grid, viewer, inspector)
+
+* **`src/components/server-tab.js`** + **`server-tab/`**:
+  - `_styles.js`, `_logic.js` (status polling, SSE, INI save/scan), `_templates.js` (status, models config, downloader, logs)
+  - Composes `<server-status-card>`, `<models-config-editor>`, `<model-downloader>`, `<server-logs>` (children kept whole)
+
+* **`src/components/model-downloader.js`** + **`model-downloader/`**:
+  - `_styles.js`, `_logic.js` (HF search, download queue polling), `_templates.js`
+
+* **`src/components/models-config-editor.js`** + **`models-config-editor/`**:
+  - `_styles.js`, `_logic.js` (INI parse/serialize, scan/delete), `_templates.js`
+
+* **`src/components/generator-tab.js`** + **`generator-tab/`**:
+  - `_styles.js`, `_logic.js` (workflow param mapping, aspect-ratio presets, queue submit), `_templates.js`
+
+**Standalone child components (kept whole, no sub-folder):**
+* `src/components/server-status-card.js` — health display & start/stop/restart controls
+* `src/components/server-logs.js` — live log viewer with container selector & auto-scroll
+* `src/components/benchmark-bubble-chart.js` — D3/Canvas bubble chart for benchmark results
 
 ---
 
@@ -83,7 +138,7 @@ Lit template literals are highly sensitive to unclosed tags or duplicate blocks.
 
 Reasoning LLMs (like DeepSeek-R1) generate reasoning streams inside `<think>...</think>` tags before returning JSON outputs. Simple JSON parsers will crash when reading this text.
 
-* Always preserve the custom regex stripper in `services/judge_svc.py`:
+* Always preserve the custom regex stripper in `services/judge/judge.py`:
   ```python
   def parse_judge_json(raw_text: str) -> dict:
       clean_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL)
@@ -106,7 +161,7 @@ To prevent orphaned scores and hallucinations, any new benchmark run or import f
 
 ### 4. Empty Response Retry Logic
 
-If a model returns an empty response (typically hitting its token limit during long-form reasoning), the system retries the same prompt up to **3 times** with a 5-second pause between attempts in both `run_benchmark_task` and `run_benchmark_queue_task`.
+If a model returns an empty response (typically hitting its token limit during long-form reasoning), the system retries the same prompt up to **3 times** with a 5-second pause between attempts in both `run_benchmark_task` and `run_benchmark_queue_task` (both live in `services/benchmark/runner.py`).
 
 * Server errors (non-200 HTTP responses) are **not retried** — they result in an error entry like `{"error": "Server error (non-200 response), no content"}` instead of empty strings.
 * After exhausting retries, the round is saved with `"error": "Empty response after 3 retries"` to prevent silent empty-string scoring by the AI Judge.
@@ -166,9 +221,9 @@ Do not hardcode a single path without checking for fallback options.
 
 ---
 
-## 🏗️ Frontend Refactor Rules (Phase I)
+## 🏗️ Frontend & Backend Modularization Rules (Phases I & J)
 
-The frontend has been refactored from monolithic tabs into reusable components. New code must follow these constraints:
+The entire codebase has been refactored from monolithic files into focused, single-responsibility modules. New code must follow these constraints:
 
 **1. Primitives First**
 * All shared CSS must be extracted into `src/components/_primitives.js`.
@@ -193,7 +248,21 @@ The frontend has been refactored from monolithic tabs into reusable components. 
 * Check browser console for Lit warnings (unclosed templates, duplicate blocks) before considering work complete.
 
 **6. No Feature Creep**
-* The Phase I refactor was a zero-feature-change initiative. Do not alter behavior, API contracts, or visual design when extracting or splitting components.
+* Phase I and Phase J were zero-feature-change initiatives. Do not alter behavior, API contracts, or visual design when extracting or splitting components.
+
+**7. Phase J — Sub-folder Modularization Pattern (JS)**
+* Each large Lit component is split into a sibling folder `<component-name>/` containing `_styles.js`, `_logic.js`, and `_templates.js`.
+* The main class file (`<component-name>.js`) owns the `customElements.define` call and imports from the sub-folder — no new `customElements.define` calls in sub-folder files.
+* `_templates.js` functions take explicit args (no closures over `this`). Pass state/handlers as parameters to keep them pure and testable.
+* `llm-app.js` is split via `src/llm-app/` containing `_styles.js`, `_router.js`, `_templates.js`, and `_sse.js`.
+
+**8. Phase J — Sub-package Modularization Pattern (Python)**
+* Large services are split into `services/<name>/` packages with an `__init__.py` that re-exports the full public surface (compat shim).
+* `app/main.py` continues to `from services.<name>_svc import ...` via the shim — no route edits required.
+* Module-level shared state lives in **one** sub-module only (e.g., `queue_state.py`, `state.py`) and is imported everywhere else — never duplicated.
+* `get_quantization_from_name` is canonical in `utils/common.py` — import from there, not from service modules.
+* `services/vram_svc.py` is a shared leaf — never import `benchmark` or `comfy` from it; the dependency arrow is one-way.
+* Legacy `services/<name>_svc.py` compat files were removed after callers were migrated; imports should now target the sub-package modules directly (e.g., `from services.benchmark.api import run_benchmark`).
 
 ---
 
@@ -213,5 +282,8 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### Frontend Refactor (Phase I)
 - **Phase I – Component Extraction**: Decomposed monolithic tabs into reusable primitives (`_primitives.js`, `_confirm.js`, `_data-table.js`, `toast-host.js`), shared utilities (`utils/api.js`, `utils/polling.js`, `utils/state-mixin.js`), and clean child-component trees for `server-tab` and `benchmark-tab`. Centralized icons in `assets/icons.js`.
+
+### Large-File Modularization (Phase J)
+- **Phase J – Sub-package & Sub-folder Splits**: Centralized `get_quantization_from_name` in `utils/common.py`. Split `download_svc.py` → `services/download/` (state, hf, worker, api). Split `comfy_svc.py` → `services/comfy/` (client, workflow, comfyio, queue_state, worker, api). Split `benchmark_svc.py` → `services/benchmark/` (logging, state, runner, reader, api). Split `judge_svc.py` → `services/judge/` (gold, judge). Split all large Lit components (`generator-tab`, `models-config-editor`, `model-downloader`, `server-tab`, `llm-app`, `gallery-tab`, `chat-tab`, `benchmark-tab`) into `_styles.js`/`_logic.js`/`_templates.js` sub-folder pattern. Removed all compat shims after callers were migrated.
 
 All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend.
