@@ -12,18 +12,27 @@ async def download_queue_worker():
     print("[Download Queue] Asynchronous Sequential Download Worker started.")
     while True:
         try:
-            repo_id, filename = await _download_queue.get()
+            # Import inside loop to get fresh reference to possibly-initialized queue
+            from .state import _download_queue as queue_ref
+            if queue_ref is None:
+                print("[Download Queue] WARNING: Queue not initialized, waiting...")
+                await asyncio.sleep(5)
+                continue
+            
+            repo_id, filename = await queue_ref.get()
             print(f"[Download Queue] Starting sequential download for: {repo_id}/{filename}")
             try:
                 await _download_model_task(repo_id, filename)
             except Exception as e:
                 print(f"[Download Queue] Exception in download task for {filename}: {e}")
             finally:
-                _download_queue.task_done()
+                queue_ref.task_done()
         except asyncio.CancelledError:
             break
         except Exception as e:
+            import traceback
             print(f"[Download Queue] Queue worker error: {e}")
+            traceback.print_exc()
             await asyncio.sleep(2)
 
 

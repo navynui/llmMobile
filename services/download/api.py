@@ -12,43 +12,62 @@ from .state import _downloads_lock, _active_downloads, _download_queue
 # ── Public API functions (called by route handlers in main.py) ─────────────────
 
 def download_model(req: DownloadRequest):
-    key = f"{req.repo_id}/{req.filename}"
-    with _downloads_lock:
-        if key in _active_downloads and _active_downloads[key]["status"] in ["downloading", "queued"]:
-            return {"detail": "Already in download queue or actively downloading", "key": key}
-
-        _active_downloads[key] = {
-            "repo_id": req.repo_id,
-            "filename": req.filename,
-            "status": "queued",
-            "downloaded": 0,
-            "total": 0,
-            "speed": "Pending",
-            "progress": 0.0,
-            "error": None
-        }
-
-    # Save QUEUED state in DB
     try:
-        conn = get_db_conn()
-        cursor = conn.cursor()
-        model_id = _clean_model_id(req.filename)
-        cursor.execute("""
-            INSERT INTO models (model_id, name, quantization, status, notes)
-            VALUES (?, ?, ?, 'queued', ?)
-            ON CONFLICT(model_id) DO UPDATE SET
-                status = 'queued',
-                notes = ?
-        """, (model_id, req.filename, get_quantization_from_name(req.filename),
-              "Queued for download", "Queued for download"))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"[Download Queue] Failed to write QUEUED state to DB: {e}")
+        print(f"[Download Queue] Starting download for: {req.repo_id}/{req.filename}")
+        key = f"{req.repo_id}/{req.filename}"
+        with _downloads_lock:
+            if key in _active_downloads and _active_downloads[key]["status"] in ["downloading", "queued"]:
+                return {"detail": "Already in download queue or actively downloading", "key": key}
 
-    _download_queue.put_nowait((req.repo_id, req.filename))
-    broadcast_notification(f"📥 Added {req.filename} to download queue.")
-    return {"detail": "Added to download queue", "key": key}
+            _active_downloads[key] = {
+                "repo_id": req.repo_id,
+                "filename": req.filename,
+                "status": "queued",
+                "downloaded": 0,
+                "total": 0,
+                "speed": "Pending",
+                "progress": 0.0,
+                "error": None
+            }
+
+        # Save QUEUED state in DB
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            model_id = _clean_model_id(req.filename)
+            cursor.execute("""
+                INSERT INTO models (model_id, name, quantization, status, notes)
+                VALUES (?, ?, ?, 'queued', ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    status = 'queued',
+                    notes = ?
+            """, (model_id, req.filename, get_quantization_from_name(req.filename),
+                  "Queued for download", "Queued for download"))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[Download Queue] Failed to write QUEUED state to DB: {e}")
+            import traceback
+            traceback.print_exc()
+
+        # Check if queue is initialized (import fresh reference)
+        from .state import _download_queue as current_queue
+        if current_queue is None:
+            print("[Download Queue] ERROR: Queue not initialized!")
+            raise HTTPException(status_code=500, detail="Download queue not initialized. Please restart the server.")
+        
+        print(f"[Download Queue] Putting {req.repo_id}/{req.filename} into queue...")
+        current_queue.put_nowait((req.repo_id, req.filename))
+        broadcast_notification(f"📥 Added {req.filename} to download queue.")
+        print(f"[Download Queue] Successfully added to queue: {key}")
+        return {"detail": "Added to download queue", "key": key}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"[Download Queue] Error in download_model: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def get_downloads_status():
