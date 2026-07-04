@@ -23,7 +23,7 @@ from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
 
 async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
     global _benchmark_running
-    from services.judge_svc import judge_benchmark, get_gold_key, get_llm_server_url
+    from services.judge import judge_benchmark, get_gold_key, get_llm_server_url
     from services.model_svc import _get_preset_id_for_model
 
     _benchmark_progress["running"] = True
@@ -215,7 +215,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
 async def run_benchmark_queue_task(models: list, judge_model_id: str):
     global _benchmark_running
     import json
-    from services.judge_svc import (
+    from services.judge import (
         judge_benchmark, get_gold_key, get_quantization_from_name, get_llm_server_url
     )
     from services.chat_svc import _get_loaded_model
