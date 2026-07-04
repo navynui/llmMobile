@@ -139,7 +139,8 @@ export async function runQueueBenchmark(ctx) {
     alert('Please select at least one model to benchmark.');
     return;
   }
-  if (!ctx.selectedJudgeModelId) {
+    const effectiveJudge = (ctx.selectedJudgeModelId || '').trim();
+    if (!effectiveJudge) {
     alert('Please designate a Judge LLM.');
     return;
   }

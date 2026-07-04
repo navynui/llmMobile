@@ -219,8 +219,9 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
     global _benchmark_running
     import json
     from services.judge import (
-        judge_benchmark, get_gold_key, get_quantization_from_name, get_llm_server_url
+        judge_benchmark, get_gold_key, get_llm_server_url
     )
+    from utils.common import get_quantization_from_name
     from services.chat_svc import _get_loaded_model
     _benchmark_progress["running"] = True
     _benchmark_progress["queue_running"] = True
