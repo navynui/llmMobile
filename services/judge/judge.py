@@ -34,7 +34,7 @@ def parse_judge_json(raw_text: str) -> dict:
 
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
     from services.model_svc import _get_preset_id_for_model
-    from services.benchmark_svc import log_benchmark
+    from services.benchmark.logging import log_benchmark
 
     url = f"{get_llm_server_url()}/v1/chat/completions"
     preset_id = await _get_preset_id_for_model(judge_model)
@@ -59,7 +59,7 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
 async def judge_benchmark(req: JudgeRequest):
     import os, time
     from services.chat_svc import _get_loaded_model
-    from services.benchmark_svc import log_benchmark, log_benchmark_error
+    from services.benchmark.logging import log_benchmark, log_benchmark_error
 
     model_id = None  # initialise for error handler scope
     try:
@@ -253,7 +253,7 @@ You must return a JSON object exactly matching this structure (do not output any
         }
     except Exception as e:
         traceback.format_exc()
-        from services.benchmark_svc import log_benchmark_error
+        from services.benchmark.logging import log_benchmark_error
         log_benchmark_error(f"Judge grading error for model {model_id}: {e}")
         print(f"Error in judge_benchmark: {e}")
         raise HTTPException(status_code=500, detail=str(e))
