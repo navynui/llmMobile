@@ -293,6 +293,20 @@ def route_get_logs(container_name: str = "llm-server", lines: int = 100):
     return get_logs(container_name=container_name, lines=lines)
 
 # ───────────────────────────────────────────────
+# Push Notifications / VAPID
+# ───────────────────────────────────────────────
+@app.get("/api/notifications/vapid-key")
+def route_get_vapid_key():
+    """Return the VAPID public key for push notification subscription."""
+    return JSONResponse(content={"public_key": get_vapid_public_key()})
+
+@app.post("/api/notifications/subscribe")
+def route_subscribe_push(req: dict):
+    """Subscribe a client to push notifications."""
+    push_subscribe(req)
+    return {"status": "subscribed"}
+
+# ───────────────────────────────────────────────
 # PWA manifest
 # ───────────────────────────────────────────────
 @app.get("/manifest.json")
