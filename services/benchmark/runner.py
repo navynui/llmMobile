@@ -17,6 +17,7 @@ from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueReq
 from services.chat_svc import _get_loaded_model
 from services.model_svc import _get_preset_id_for_model
 from utils.common import get_quantization_from_name
+from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
 from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
 # ── Benchmark execution tasks ──────────────────────────────────────────────────
@@ -59,6 +60,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
                 log_benchmark(f"Executing {round_name}...")
+                broadcast_notification(f"📊 Round {idx}/5: {round_name}")
 
                 preset_id = await _get_preset_id_for_model(model_id)
                 payload = {
@@ -182,6 +184,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         try:
             await judge_benchmark(req)
             log_benchmark("AI Judge grading sequence completed successfully!")
+            broadcast_notification(f"✅ Benchmark complete for {model_id}")
         except Exception as j_err:
             traceback.format_exc()
             log_benchmark_error(f"Judge grading failed: {j_err}")
@@ -227,11 +230,13 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
     _benchmark_progress["logs"] = []
 
     log_benchmark(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
+    broadcast_notification(f"📊 Benchmark queue started with {len(models)} models")
 
     try:
         for idx, model_id in enumerate(models):
             _benchmark_progress["queue_current_index"] = idx
             log_benchmark(f"--- Queue Progress: {idx+1}/{len(models)} | Starting Model: {model_id} ---")
+            broadcast_notification(f"📊 Benchmark queue progress: {idx+1}/{len(models)} - Testing {model_id}")
 
             # 1. Load the test model via the server API
             preset_id = await _get_preset_id_for_model(model_id)
@@ -485,6 +490,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                 await judge_benchmark(req)
                 log_benchmark(f"Queue: AI Judge grading completed successfully for {model_id}!")
                 _benchmark_progress["queue_completed"].append(model_id)
+                broadcast_notification(f"✅ Benchmark complete for {model_id}")
             except Exception as judge_err:
                 traceback.format_exc()
                 log_benchmark_error(f"Judge: Grading failed for model {model_id}: {judge_err}")
@@ -495,11 +501,13 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                 await asyncio.sleep(10)
 
         log_benchmark("--- Automated Benchmark Queue Completed Successfully! ---")
+        broadcast_notification(f"🏁 Benchmark queue completed successfully for {len(models)} models")
 
     except Exception as queue_err:
         traceback.format_exc()
         log_benchmark_error(f"Benchmark queue execution failed: {queue_err}")
     finally:
+        broadcast_notification(f"🏁 All {len(models)} benchmark models completed")
         async with _benchmark_lock:
             _benchmark_running = False
         _benchmark_progress["running"] = False
