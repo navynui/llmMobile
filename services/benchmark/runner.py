@@ -20,6 +20,15 @@ from utils.common import get_quantization_from_name
 from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
 from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
+
+# ── Token-budget ramp for empty-response retries ───────────────────────────────
+# Initial attempt + 3 retries, each step widens the output budget so the model
+# has room to finish (esp. during long-form reasoning, code generation, or
+# creative writing rounds). 4096 (baseline) → 6144 → 8192 → 12288.
+RETRY_MAX_TOKENS_RAMP = (4096, 6144, 8192, 12288)
+RETRY_MAX_ATTEMPTS = len(RETRY_MAX_TOKENS_RAMP) - 1  # = 3
+RETRY_PAUSE_SECONDS = 5
+
 # ── Benchmark execution tasks ──────────────────────────────────────────────────
 
 async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
@@ -67,7 +76,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     "messages": [{"role": "user", "content": prompt_text}],
                     "temperature": 0.7,
                     "stream": False,
-                    "max_tokens": 4096
+                    "max_tokens": RETRY_MAX_TOKENS_RAMP[0]  # 4096 baseline
                 }
 
                 start_time = time.time()
@@ -108,15 +117,17 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     content = ""
                     has_server_error = True
 
-                # Retry on empty (not on server errors)
+                # Retry on empty (not on server errors) with stepped token budget
                 retry_count = 0
-                max_retries = 3
+                max_retries = RETRY_MAX_ATTEMPTS
                 while not content and retry_count < max_retries and not has_server_error:
                     retry_count += 1
-                    log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
-                    await asyncio.sleep(5)
+                    next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
+                    log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
+                    await asyncio.sleep(RETRY_PAUSE_SECONDS)
                     try:
                         start_time = time.time()
+                        payload["max_tokens"] = next_budget
                         response = await client.post(api_url, json=payload)
                         _parse_response(response)
                         if not content and response.status_code == 200 and tokens_predicted > 0:
@@ -344,7 +355,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                         "messages": [{"role": "user", "content": prompt_text}],
                         "temperature": 0.7,
                         "stream": False,
-                        "max_tokens": 4096
+                        "max_tokens": RETRY_MAX_TOKENS_RAMP[0]  # 4096 baseline
                     }
                     start_time = time.time()
                     content = ""
@@ -382,14 +393,17 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                         content = ""
                         has_server_error = True
 
+                    # Retry on empty (not on server errors) with stepped token budget
                     retry_count = 0
-                    max_retries = 3
+                    max_retries = RETRY_MAX_ATTEMPTS
                     while not content and retry_count < max_retries and not has_server_error:
                         retry_count += 1
-                        log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries}...")
-                        await asyncio.sleep(5)
+                        next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
+                        log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
+                        await asyncio.sleep(RETRY_PAUSE_SECONDS)
                         try:
                             start_time = time.time()
+                            payload["max_tokens"] = next_budget
                             response = await client.post(api_url, json=payload)
                             _parse_response(response)
                             if not content and response.status_code == 200 and tokens_predicted > 0:
