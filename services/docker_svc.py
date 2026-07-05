@@ -18,10 +18,10 @@ except Exception as e:
     print(f"Error connecting to Docker socket: {e}")
 
 _stats_cache: dict = {"data": {
-    "cpu_temp": 0.0, "cpu_util": 0.0, "ram_percent": 0.0,
-    "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0, "vram_used_gb": 0.0,
-    "storage_percent": 0.0, "storage_used_gb": 0.0,
-    "storage_total_gb": 0.0, "storage_free_gb": 0.0,
+  "cpu_temp": 0.0, "cpu_util": 0.0, "ram_percent": 0.0,
+  "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0,
+  "storage_percent": 0.0, "storage_used_gb": 0.0, "storage_total_gb": 0.0,
+  "gpu_temp_gtx": 0.0, "gpu_util_gtx": 0.0, "vram_percent_gtx": 0.0,
 }}
 _stats_lock = threading.Lock()
 last_mqtt_update_time: float = 0.0

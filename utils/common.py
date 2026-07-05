@@ -62,14 +62,17 @@ MQTT_CONFIG = {
     "user": "mqttuser",
     "pass": "mqttpass",
     "topics": {
-        "home/129/sensor/cpu_temp": "cpu_temp",
-        "home/129/sensor/tesla_p100_temp": "gpu_temp",
-        "home/129/sensor/cpu_utilization": "cpu_util",
-        "home/129/sensor/ram_utilization": "ram_percent",
-        "home/129/sensor/vram_utilization": "vram_percent",
-        "home/129/sensor/gpu_utilization": "gpu_util",
-        "home/129/sensor/disk_utilization_root": "storage_percent",
-    },
+            "home/129/sensor/cpu_temp": "cpu_temp",
+            "home/129/sensor/tesla_p100_temp": "gpu_temp",
+            "home/129/sensor/cpu_utilization": "cpu_util",
+            "home/129/sensor/ram_utilization": "ram_percent",
+            "home/129/sensor/vram_utilization": "vram_percent",
+            "home/129/sensor/gpu_utilization": "gpu_util",
+            "home/129/sensor/disk_utilization_root": "storage_percent",
+            "home/129/sensor/gtx_1060_temp": "gpu_temp_gtx",
+            "home/129/sensor/gtx_utilization": "gpu_util_gtx",
+            "home/129/sensor/gram_utilization": "vram_percent_gtx",
+        },
 }
 
 

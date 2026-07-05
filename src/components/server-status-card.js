@@ -204,6 +204,20 @@ ${buttonStyles}
               <div class="stat-header"><span>Host Storage (${stats.storage_used_gb || 0}GB / ${stats.storage_total_gb || 0}GB)</span><span>${Math.round(stats.storage_percent || 0)}%</span></div>
               <div class="stat-progress"><div class="stat-bar ${this.getUtilColorClass(stats.storage_percent || 0)}" style="width: ${stats.storage_percent || 0}%"></div></div>
             </div>
+
+            <!-- GTX (secondary GPU) metrics -->
+            <div class="stat-box">
+              <div class="stat-header"><span>GTX GPU Utility</span><span>${Math.round((stats && stats.gpu_util_gtx) || 0)}%</span></div>
+              <div class="stat-progress"><div class="stat-bar ${this.getUtilColorClass((stats && stats.gpu_util_gtx) || 0)}" style="width: ${(stats && stats.gpu_util_gtx) || 0}%"></div></div>
+            </div>
+            <div class="stat-box">
+              <div class="stat-header"><span>GTX GPU Temp</span><span>${Math.round((stats && stats.gpu_temp_gtx) || 0)}°C</span></div>
+              <div class="stat-progress"><div class="stat-bar ${this.getTempColorClass((stats && stats.gpu_temp_gtx) || 0)}" style="width: ${(stats && stats.gpu_temp_gtx) || 0}%"></div></div>
+            </div>
+            <div class="stat-box full-width">
+              <div class="stat-header"><span>GTX VRAM Usage</span><span>${Math.round((stats && stats.vram_percent_gtx) || 0)}%</span></div>
+              <div class="stat-progress"><div class="stat-bar ${this.getUtilColorClass((stats && stats.vram_percent_gtx) || 0)}" style="width: ${(stats && stats.vram_percent_gtx) || 0}%"></div></div>
+            </div>
           </div>
         </div>
       </div>
