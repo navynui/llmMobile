@@ -2,7 +2,7 @@
 
 > This document outlines coding standards, structural rules, and critical invariants for AI coding assistants working in the `llmMobile` repository.
 >
-> **Status:** All planned development phases (A–J) are complete. The repository is fully modular, test-covered, and follows strict separation of concerns on both backend and frontend.
+> **Status:** All planned development phases (A–K) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs.
 
 ---
 
@@ -15,6 +15,16 @@
 3. **`llm_bench.db`** (SQLite database for models and benchmarking runs)
 
 It is deployed as a Docker container (`llm-mobile`) defined in the `/home/nui/llmaCPP/docker-compose.yml` file.
+
+### Multi-Server Architecture
+The app manages **two independent `llama-server` instances**:
+
+| Server | Container | Port | GPU | INI File |
+|---|---|---|---|---|
+| **Primary** | `llm-server` | 8080 | GPU 0 (Tesla P100) | `models.ini` |
+| **Secondary** | `llm-server-mini` | 8081 | GPU 1 (GTX 1060) | `modelg.ini` |
+
+Both servers share the `/models` volume but maintain separate preset configs and can load different models simultaneously.
 
 ---
 
@@ -57,9 +67,9 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 
 **Single-file services (intentionally kept whole):**
 
-* **`docker_svc.py`**: Container lifecycle (start/stop/restart), system stats via MQTT, log retrieval.
-* **`model_svc.py`**: Model scanning, loading, INI management, weight deletion.
-* **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses.
+* **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval.
+* **`model_svc.py`**: Model scanning, loading, INI management (`models.ini` + `modelg.ini`), weight deletion — supports both primary and mini servers.
+* **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports both primary (`/api/chat/completions`) and mini (`/api/chat-mini/completions`) servers.
 * **`sse_svc.py`**: Server-Sent Event subscription management.
 * **`gallery_svc.py`**: Image gallery CRUD, metadata extraction, file cleanup.
 * **`push_svc.py`**: Push notification dispatching.
@@ -97,14 +107,14 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
   - Composes `<benchmark-bubble-chart>` (kept whole at 291 lines)
 
 * **`src/components/chat-tab.js`** + **`chat-tab/`**:
-  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering), `_templates.js` (messages, input, composer)
+  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering, server-aware API routing via `_api()` helper), `_templates.js` (messages, input, composer, server selector pills with loaded model name)
 
 * **`src/components/gallery-tab.js`** + **`gallery-tab/`**:
   - `_styles.js`, `_logic.js` (folder browsing, metadata fetch, delete/move), `_templates.js` (grid, viewer, inspector)
 
 * **`src/components/server-tab.js`** + **`server-tab/`**:
-  - `_styles.js`, `_logic.js` (status polling, SSE, INI save/scan), `_templates.js` (status, models config, downloader, logs)
-  - Composes `<server-status-card>`, `<models-config-editor>`, `<model-downloader>`, `<server-logs>` (children kept whole)
+  - `_styles.js`, `_logic.js` (status polling, SSE, server actions, INI save/scan for both primary and mini), `_templates.js` (dual-server status, dual model config editors, downloader, logs)
+  - Composes `<server-status-card>` (dual LLM servers with per-server Start/Stop/Restart), `<models-config-editor>` (reused for both `models.ini` and `modelg.ini`), `<model-downloader>`, `<server-logs>` (children kept whole)
 
 * **`src/components/model-downloader.js`** + **`model-downloader/`**:
   - `_styles.js`, `_logic.js` (HF search, download queue polling), `_templates.js`
@@ -207,7 +217,8 @@ When writing or editing filesystem operations, always map paths according to the
 |---|---|---|
 | **SQLite DB** | `/app/llm_bench.db` | `/home/nui/llmaCPP/llm_bench.db` |
 | **GGUF Models** | `/models/` | `/home/nui/llmaCPP/models/` |
-| **Models INI** | `/models/models.ini` | `/home/nui/llmaCPP/models/models.ini` |
+| **Models INI (Primary)** | `/models/models.ini` | `/home/nui/llmaCPP/models/models.ini` |
+| **Models INI (Secondary)** | `/models/modelg.ini` | `/home/nui/llmaCPP/models/modelg.ini` |
 | **Benchmark Results** | `/app/benchmark_results/` | `/home/nui/llmaCPP/benchmark_results/` |
 | **Gold Standard Answers** | `/app/answers1.json` | `/home/nui/llmaCPP/answers1.json` |
 
@@ -286,4 +297,7 @@ This repository implements the complete roadmap for the `llmMobile` project:
 ### Large-File Modularization (Phase J)
 - **Phase J – Sub-package & Sub-folder Splits**: Centralized `get_quantization_from_name` in `utils/common.py`. Split `download_svc.py` → `services/download/` (state, hf, worker, api). Split `comfy_svc.py` → `services/comfy/` (client, workflow, comfyio, queue_state, worker, api). Split `benchmark_svc.py` → `services/benchmark/` (logging, state, runner, reader, api). Split `judge_svc.py` → `services/judge/` (gold, judge). Split all large Lit components (`generator-tab`, `models-config-editor`, `model-downloader`, `server-tab`, `llm-app`, `gallery-tab`, `chat-tab`, `benchmark-tab`) into `_styles.js`/`_logic.js`/`_templates.js` sub-folder pattern. Removed all compat shims after callers were migrated.
 
-All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend.
+### Multi-Server Support (Phase K)
+- **Phase K – Dual llama-server Management**: Added per-server status/control (Start/Stop/Restart) for both `llama-server` and `llama-server-mini` via the Server tab. Full `modelg.ini` model management (load/unload/scan/delete) alongside the existing `models.ini` support. Chat tab server selector (Primary/Secondary) with corresponding streaming chat endpoints and vision capability detection on both servers. GTX secondary GPU telemetry (temperature, utilization, VRAM) via MQTT.
+
+All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend, now supporting dual independent inference servers on separate GPUs.

@@ -5,31 +5,36 @@
 
 ## 🔍 Overview
 
-**llmMobile** is a high-fidelity, responsive Single Page Application (SPA) designed to manage local LLM inference engines and image generation pipelines on modern GPU infrastructures (such as Nvidia Tesla P100 / RTX). It features a modular Python/FastAPI backend, a reactive Lit-based frontend, and integrations with `llama.cpp` (`llama-server`) and `ComfyUI` Docker containers.
+**llmMobile** is a high-fidelity, responsive Single Page Application (SPA) designed to manage local LLM inference engines and image generation pipelines on modern GPU infrastructures (such as Nvidia Tesla P100 + GTX 1060). It features a modular Python/FastAPI backend, a reactive Lit-based frontend, and integrations with `llama.cpp` (`llama-server`/`llama-server-mini`) and `ComfyUI` Docker containers.
 
 ```mermaid
 graph TD
     User([📱 Mobile Browser / Web UI]) <-->|HTTP / SSE| MobileBack[🐍 FastAPI Backend: llm-mobile]
     MobileBack <-->|Docker Socket| DockerEngine[🐋 Docker Daemon]
-    MobileBack <-->|Control & Prompt API| LLMServer[🧠 llama-server: Port 8080]
+    MobileBack <-->|Control & Chat API| LLMServer[🧠 llama-server: Port 8080<br/>GPU 0 / Tesla P100]
+    MobileBack <-->|Control & Chat API| LLMServerMini[🧠 llama-server-mini: Port 8081<br/>GPU 1 / GTX 1060]
     MobileBack <-->|WS / Prompt API| ComfyUI[🎨 ComfyUI Container: Port 8188]
+    MobileBack <-->|MQTT Telemetry| MQTT[📡 MQTT Broker: GPU/CPU/RAM/VRAM stats]
     MobileBack <-->|SQLite Query / Upsert| SQLite[(💾 SQLite: llm_bench.db)]
     SQLite <--- Read/Write
     LLMServer <-->|GGUF Weights / models.ini| ModelsFolder[📁 Local GGUF Storage]
+    LLMServerMini <-->|GGUF Weights / modelg.ini| ModelsFolder
 ```
 
 ---
 
 ## 🚀 Key Features
 
-### 1. 🧠 LLM Orchestration & Server Control
-* **Container Management:** Directly start, stop, restart, and monitor health of `llama-server` via the Docker SDK.
-* **Stream Logs:** Live container output streaming directly in the UI.
-* **Router Mode / models.ini Integration:** Dynamically inspect, edit, save, reload `models.ini`, and delete model weights. Automatically handles cascading deletions inside the configuration file.
+### 1. 🧠 Dual LLM Orchestration & Server Control
+* **Multi-Server Management:** Independently start, stop, restart, and monitor health of **two `llama-server` instances** — primary (Tesla P100, port 8080) and secondary (GTX 1060, port 8081).
+* **Per-Server Model Control:** Each server has its own model preset INI file (`models.ini` for primary, `modelg.ini` for secondary) with full load/unload, scan, and delete capabilities.
+* **Stream Logs:** Live container output streaming from either server directly in the UI.
 
 ### 2. 💬 Interactive Streaming Chat
+* **Server Selector:** Choose which `llama-server` instance to chat with via pill buttons at the top of the Chat tab. Currently loaded model name is displayed inline.
 * **SSE Streaming:** Real-time token delivery via Server-Sent Events (SSE).
 * **Rich Text Rendering:** Full Markdown, inline code blocks, and lists parsed on-the-fly.
+* **Vision Support:** Automatic detection of mmproj/vision models on the selected server, enabling image upload and multimodal chat.
 * **Context Preservation:** Interactive chat history management.
 
 ### 3. 🎨 ComfyUI Image Pipeline
@@ -52,6 +57,10 @@ The system features an automated, background-scheduled 5-round evaluation suite:
   2. *Hallucination:* Zero factual hallucinations flagged by the Judge in Round 1 and Round 4.
   3. *Quality:* Cumulative qualitative + speed score $\ge 50$ out of 100 points.
 
+### 5. 📡 MQTT-Powered System Metrics
+* **Multi-GPU Telemetry:** CPU/GPU temperature, utilization, RAM, VRAM, and storage stats sourced exclusively from Home Assistant via MQTT.
+* **Per-GPU Breakdown:** Separate metrics for Tesla P100 and GTX 1060 (temperature, utilization, VRAM usage).
+
 ---
 
 ## 🛠️ Technology Stack
@@ -62,6 +71,7 @@ The system features an automated, background-scheduled 5-round evaluation suite:
 * **Container Management:** **Docker SDK for Python**
 * **Async Network Client:** **httpx**
 * **Schemas:** **Pydantic v2**
+* **Messaging:** **MQTT** (Paho client) for hardware telemetry
 
 ### Frontend
 * **UI Components:** **Lit** (Reactive Web Components)
@@ -73,66 +83,81 @@ The system features an automated, background-scheduled 5-round evaluation suite:
 
 ## 📂 Repository Layout
 
-``` llmMobile/
+```
+llmMobile/
 ├── app/
-│   └── main.py # Thin FastAPI router — delegates all logic to services/
-├── services/ # Backend service layer (modular business logic)
-│   ├── docker_svc.py # Container lifecycle & system stats
-│   ├── model_svc.py # Model loading, scanning, deletion
-│   ├── chat_svc.py # Streaming chat orchestration
-│   ├── sse_svc.py # Server-Sent Event management
-│   ├── comfy_svc.py # ComfyUI image pipeline integration
-│   ├── queue_svc.py # Benchmark queue orchestration
-│   ├── gallery_svc.py # Image gallery & metadata handling
-│   ├── push_svc.py # Push notification service
-│   ├── download_svc.py # Model download management
-│   ├── benchmark_svc.py # Benchmark run & scoring logic
-│   └── judge_svc.py # AI-as-a-Judge evaluation & JSON parsing
-├── utils/ # Shared utilities
-│   ├── common.py # Constants, paths, helpers
-│   ├── db_utils.py # SQLite connection & transaction helpers
-│   └── bench_log.py # Benchmark logging & rotation
+│   └── main.py                   # Thin FastAPI router — delegates all logic to services/
+├── services/                     # Backend service layer (modular business logic)
+│   ├── docker_svc.py             # Container lifecycle & MQTT system stats
+│   ├── model_svc.py              # Model loading, scanning, INI management (primary + mini)
+│   ├── chat_svc.py               # Streaming chat orchestration (primary + mini)
+│   ├── sse_svc.py                # Server-Sent Event management
+│   ├── comfy/                    # ComfyUI image pipeline (sub-package)
+│   │   ├── __init__.py, client.py, workflow.py, comfyio.py
+│   │   ├── queue_state.py, worker.py, api.py
+│   ├── download/                 # Model download queue (sub-package)
+│   │   ├── __init__.py, state.py, hf.py, worker.py, api.py
+│   ├── benchmark/                # Benchmark execution & scoring (sub-package)
+│   │   ├── __init__.py, logging.py, state.py, runner.py, reader.py, api.py
+│   ├── judge/                    # AI-as-a-Judge evaluation (sub-package)
+│   │   ├── __init__.py, gold.py, judge.py
+│   ├── gallery_svc.py            # Image gallery CRUD & metadata
+│   ├── push_svc.py               # Push notification service
+│   └── vram_svc.py               # VRAM capture & idle-trigger detection
+├── utils/                        # Shared utilities
+│   ├── common.py                 # Constants, paths, helpers
+│   ├── db_utils.py               # SQLite connection & transaction helpers
+│   └── bench_log.py              # Benchmark logging & rotation
 ├── models/
-│   └── requests.py # Pydantic request schemas
-├── tests/ # Automated verification (Phase H)
+│   └── requests.py               # Pydantic request schemas
+├── tests/                        # Automated verification (Phase H)
 │   ├── conftest.py
 │   └── test_endpoints.py
-├── main.py # Re-exports app for Uvicorn
-├── Dockerfile # Multi-stage Dockerfile (Vite build + Python env)
-├── package.json # Frontend dependencies & Vite scripts
-├── requirements.txt # Python dependencies
-├── MyZimage_turbo.json # Turbo Image Generator template
-├── PROMPTS # Predefined prompt templates
-├── benchmark.md # System implementation plan
-├── public/ # Static frontend assets (icons, images)
-└── src/ # Frontend source code (Lit + Vite)
-    ├── index.css # Core design tokens & animations
-    ├── llm-app.js # SPA shell, view router, SSE client, toast host
-    ├── assets/
-    │   └── icons.js # Centralized SVG icon set
-    ├── components/ # Lit web components
-    │   ├── _primitives.js # Shared CSS primitives (card, buttons, etc.)
-    │   ├── _confirm.js # Async confirm-dialog primitive
-    │   ├── _data-table.js # Generic sortable/paginated data table
-    │   ├── server-tab.js # Thin orchestrator for server sub-components
-    │   ├── server-status-card.js # Status display & start/stop/restart
-    │   ├── models-config-editor.js # models.ini editor with save/scan/delete
-    │   ├── model-downloader.js # Model search & download queue UI
-    │   ├── server-logs.js # Live log viewer with auto-scroll
-    │   ├── chat-tab.js # Streaming chat interface
-    │   ├── generator-tab.js # ComfyUI prompt & parameter console
-    │   ├── gallery-tab.js # Responsive image gallery & inspector
-    │   ├── toast-host.js # Global toast notification singleton
-    │   ├── benchmark-tab.js # Thin orchestrator for benchmark sub-components
-    │   ├── benchmark-table.js # Sortable/filterable benchmark results
-    │   ├── benchmark-runner.js # Queue builder & live progress tracker
-    │   └── models-config.js # Database inspector & file management
-    └── utils/
-        ├── api.js # Centralized fetch wrapper with toast/loading support
-        ├── polling.js # Polling mixin/hook with concurrency guards
-        ├── state-mixin.js # Loading/error state mixin
-        └── toast.js # Toast.show() static service
+├── main.py                       # Re-exports app for Uvicorn
+├── Dockerfile                    # Multi-stage Dockerfile (Vite build + Python env)
+├── package.json                  # Frontend dependencies & Vite scripts
+├── requirements.txt              # Python dependencies
+├── PROMPTS/                      # Predefined prompt templates
+├── public/                       # Static frontend assets
+├── src/                          # Frontend source code (Lit + Vite)
+│   ├── index.css                 # Core design tokens & animations
+│   ├── llm-app/                  # SPA shell (styles, router, templates, SSE)
+│   ├── assets/                   # Centralized SVG icons
+│   ├── components/               # Lit web components
+│   │   ├── _primitives.js        # Shared CSS primitives
+│   │   ├── _confirm.js           # Async confirm-dialog primitive
+│   │   ├── data-table.js         # Generic sortable/paginated data table
+│   │   ├── toast-host.js         # Global toast notification singleton
+│   │   ├── server-status-card.js # Dual-server status with Start/Stop/Restart
+│   │   ├── models-config-editor.js # Generic INI editor (models.ini / modelg.ini)
+│   │   ├── model-downloader.js   # HuggingFace search & download queue
+│   │   ├── server-logs.js        # Multi-container live log viewer
+│   │   ├── server-tab/           # Server tab orchestrator (styles, logic, templates)
+│   │   ├── chat-tab/             # Chat tab (styles, logic, templates)
+│   │   ├── generator-tab/        # ComfyUI prompt & parameter console
+│   │   ├── gallery-tab/          # Image gallery & inspector
+│   │   └── benchmark-tab/        # Benchmark tab (table, runner, bubble chart)
+│   └── utils/
+│       ├── api.js                # Centralized fetch wrapper
+│       ├── polling.js            # Polling mixin with concurrency guards
+│       ├── state-mixin.js        # Loading/error state mixin
+│       ├── toast.js              # Toast.show() static service
+│       └── op-queue.js           # Offline operation queue
+└── AGENTS.md                     # AI Agent coding guidelines
 ```
+
+---
+
+## 🏗️ Multi-Server Architecture
+
+The app manages two independent `llama-server` instances:
+
+| Server | Container | Port | GPU | INI File | Role |
+|---|---|---|---|---|---|
+| **Primary** | `llm-server` | 8080 | GPU 0 (Tesla P100) | `models.ini` | Main inference server |
+| **Secondary** | `llm-server-mini` | 8081 | GPU 1 (GTX 1060) | `modelg.ini` | Secondary / lightweight models |
+
+Both servers share the same `/models` volume but maintain separate model preset configurations.
 
 ---
 
@@ -141,82 +166,104 @@ The system features an automated, background-scheduled 5-round evaluation suite:
 ### Option A: Local Development Run (Frontend + Backend)
 
 #### 1. Start Frontend (Vite)
-Ensure you have Node.js (v20+) installed:
 ```bash
 cd /home/nui/dev/llmMobile
 npm install
 npm run dev
 ```
-The frontend dev server will start at `http://localhost:5173`.
+Frontend dev server at `http://localhost:5173`.
 
 #### 2. Run Backend (FastAPI)
-Ensure you have python-3.11/pip installed:
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
-The backend server will start at `http://localhost:8000`.
+Backend server at `http://localhost:8000`.
 
 ---
 
 ### Option B: Deploying inside Docker Compose (Recommended)
 
-This repository is pre-integrated into the main `llmaCPP` stack. To rebuild and deploy the mobile manager container:
 ```bash
-# Navigate to the main compose stack
 cd /home/nui/llmaCPP
-
-# Rebuild and recreate the container
 docker compose build llm-mobile
 docker compose up -d --force-recreate llm-mobile
 ```
-The mobile portal will be live at `http://localhost:8000`.
+Mobile portal at `http://localhost:8000`.
 
 ---
 
 ## 📡 API Reference Highlight
 
+### Server Management
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/server/status` | `GET` | Retrieves the current state of `llama-server` |
-| `/api/server/start` | `POST` | Triggers container startup via Docker SDK |
-| `/api/server/stop` | `POST` | Stops container via Docker SDK |
-| `/api/models` | `GET` | Scans `models.ini` and physical files in `/models` |
-| `/api/models/load` | `POST` | Switches active model loaded inside `llama-server` |
-| `/api/benchmarks` | `GET` | Queries SQLite. Returns ranked list with the **3 Quality Filters** applied |
+| `/status` | `GET` | Retrieves state of both `llama-server` instances and `llm-mobile` |
+| `/system_stats` | `GET` | System telemetry (CPU/GPU/RAM/VRAM via MQTT) |
+| `/servers/{name}/start` | `POST` | Start a managed server by name |
+| `/servers/{name}/stop` | `POST` | Stop a managed server by name |
+| `/servers/{name}/restart` | `POST` | Restart a managed server by name |
+| `/api/logs` | `GET` | Container logs (supports all containers) |
+
+### Model Management (Primary / `models.ini`)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/models` | `GET` | List models from `models.ini` |
+| `/api/models_ini` | `GET` | Raw content of `models.ini` |
+| `/api/models_ini` | `POST` | Save `models.ini` content |
+| `/api/llm/models` | `GET` | Active model status on primary server |
+| `/api/llm/models/load` | `POST` | Load a model on primary server |
+| `/api/llm/models/unload` | `POST` | Unload model from primary server |
+| `/api/models/scan_and_register` | `POST` | Scan disk and auto-add to `models.ini` |
+| `/models/{filename}` | `DELETE` | Delete model file + clean `models.ini` |
+
+### Model Management (Secondary / `modelg.ini`)
+| Endpoint | Method | Description |
+|---|---|---|
+| `/models-mini` | `GET` | List models from `modelg.ini` |
+| `/api/models_mini_ini` | `GET` | Raw content of `modelg.ini` |
+| `/api/models_mini_ini` | `POST` | Save `modelg.ini` content |
+| `/api/llm-mini/models` | `GET` | Active model status on secondary server |
+| `/api/llm-mini/models/load` | `POST` | Load a model on secondary server |
+| `/api/llm-mini/models/unload` | `POST` | Unload model from secondary server |
+| `/api/models-mini/scan_and_register` | `POST` | Scan disk and auto-add to `modelg.ini` |
+| `/models-mini/{filename}` | `DELETE` | Delete model file + clean `modelg.ini` |
+
+### Chat
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/chat/completions` | `POST` | Stream chat from primary server |
+| `/api/chat-mini/completions` | `POST` | Stream chat from secondary server |
+
+### Vision
+| Endpoint | Method | Description |
+|---|---|---|
+| `/models/vision-capabilities` | `GET` | mmproj/vision detection on primary server |
+| `/models-mini/vision-capabilities` | `GET` | mmproj/vision detection on secondary server |
+
+### Benchmarks
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/benchmarks` | `GET` | Queries SQLite. Returns ranked list with **3 Quality Filters** applied |
 | `/api/benchmarks/run` | `POST` | Starts a background automated 5-round benchmark sequence |
 | `/api/benchmarks/judge` | `POST` | Sequentially scores a target run using the AI Judge model |
 | `/api/benchmarks/status` | `GET` | Returns live telemetry of the current active run or queue progress |
 | `/api/benchmarks/queue/run` | `POST` | Launches batch queue testing and automatic scoring |
 
----
-
-## 🔒 Guidelines for System Modifiers
-
-* Always keep the frontend build-safe. Verify changes by executing `npm run build` locally or inside the multi-stage Docker workflow.
-* Always preserve database transaction safety when performing idempotent upserts or cascading deletions during re-testing.
-* Ensure all database locks inside Python are handled using asynchronous primitives (`asyncio.Lock()`) to prevent deadlock starvation during sequential model swaps.
+### Generation
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/generate/queue` | `GET` `POST` `DELETE` | ComfyUI generation queue management |
+| `/api/comfy/free` | `POST` | Free ComfyUI VRAM cache |
 
 ---
 
-## 🏗️ Architectural Evolution
+## 🔒 Critical Guidelines
 
-### Phase G — Thin Router & Service Layer
-
-The core backend (`app/main.py`) has been refactored into a **thin router**. All functional logic now resides in dedicated service modules under `services/`. This fully modularizes the codebase, improves testability, and enforces strict separation of concerns.
-
-Phase H verification tests have been added to ensure endpoint contract compliance.
-
-### Phase I — Frontend Component Refactor
-
-The monolithic frontend tabs have been decomposed into a library of reusable, single-responsibility components:
-- **Shared Primitives:** `_primitives.js` consolidates CSS (cards, buttons, pills, modals) into one source of truth.
-- **Generic Widgets:** `_data-table` (sort/paginate), `_confirm` (async confirmation), `toast-host` (global notifications).
-- **Split Tabs:** `server-tab` and `benchmark-tab` are now thin orchestrators composing child elements (`<server-status-card>`, `<models-config-editor>`, `<model-downloader>`, `<server-logs>`, `<benchmark-table>`, `<benchmark-runner>`).
-- **Shared Utilities:** `utils/api.js` centralizes fetch logic with built-in toast/loading support; `utils/polling.js` manages safe async intervals; `utils/state-mixin.js` standardizes loading/error state patterns.
-- **Asset Centralization:** `assets/icons.js` replaces inline SVGs across every component.
-
-All changes are build-safe (`npm run build` passes), visually pixel-identical to the pre-refactor baseline, and fully backward-compatible with existing backend APIs.
+* **Build Safety:** Always run `npm run build` after any frontend change. Fix all Vite/Lit errors before considering work complete.
+* **Docker Rebuild Required:** Code changes are not hot-reloaded in production. Use `docker compose build llm-mobile && docker compose up -d --no-deps llm-mobile` to deploy.
+* **MQTT Only:** System stats must come from MQTT. Do not reintroduce local `nvidia-smi` or `psutil` queries for telemetry.
+* **Database Idempotency:** Benchmark re-runs must prune historical `test_runs` and rely on `ON DELETE CASCADE` for related tables.
 
 ---
 
@@ -237,4 +284,8 @@ This repository implements the complete roadmap for the `llmMobile` project:
 ### Frontend Refactor (Phase I)
 - **Phase I – Component Extraction**: Decomposed monolithic tabs into reusable primitives (`_primitives.js`, `_confirm.js`, `_data-table.js`, `toast-host.js`), shared utilities (`utils/api.js`, `utils/polling.js`, `utils/state-mixin.js`), and clean child-component trees for `server-tab` and `benchmark-tab`. Centralized icons in `assets/icons.js`.
 
-All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend.
+### Large-File Modularization (Phase J)
+- **Phase J – Sub-package & Sub-folder Splits**: Centralized `get_quantization_from_name` in `utils/common.py`. Split `download_svc.py` → `services/download/`, `comfy_svc.py` → `services/comfy/`, `benchmark_svc.py` → `services/benchmark/`, `judge_svc.py` → `services/judge/`. Split all large Lit components into `_styles.js`/`_logic.js`/`_templates.js` sub-folder pattern.
+
+### Multi-Server Support (Phase K)
+- **Phase K – Dual llama-server Management**: Added per-server status/control (Start/Stop/Restart) for both `llama-server` and `llama-server-mini`. Full model management for both servers including separate INI files (`models.ini` / `modelg.ini`), model load/unload, scan/delete. Chat server selector with dual streaming endpoints. GTX secondary GPU telemetry via MQTT. Vision capability detection on both servers.
