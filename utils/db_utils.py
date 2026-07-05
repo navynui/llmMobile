@@ -17,6 +17,26 @@ def _clean_model_id(mid: str) -> str:
         return ""
     return os.path.basename(mid).lower().replace(".gguf", "")
 
+def run_migrations():
+    """Apply any outstanding schema migrations."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # Check if 'server' column exists in test_runs
+        cursor.execute("PRAGMA table_info(test_runs)")
+        columns = [col["name"] for col in cursor.fetchall()]
+        if "server" not in columns:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN server TEXT DEFAULT 'primary'")
+            print("[Migration] Added 'server' column to test_runs (default 'primary')")
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Migration] Error: {e}")
+
+
 def consolidate_database():
     try:
         conn = sqlite3.connect(DB_PATH)

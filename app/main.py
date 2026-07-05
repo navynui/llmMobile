@@ -15,7 +15,7 @@ from utils.common import (
     VRAM_CRITICAL_THRESHOLD, VRAM_EMERGENCY_THRESHOLD,
     MQTT_CONFIG, safe_join, _deep_copy
 )
-from utils.db_utils import DB_PATH, get_db_conn, consolidate_database, _clean_model_id
+from utils.db_utils import DB_PATH, get_db_conn, consolidate_database, run_migrations, _clean_model_id
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
 from models.requests import (
     ModelsIniRequest, ModelActionRequest, GenerateRequest, MkdirRequest,
@@ -81,6 +81,7 @@ app = FastAPI(title="LLM Mobile Manager")
 @app.on_event("startup")
 async def startup_event():
     os.makedirs(IMAGE_GEN_OUTPUT, exist_ok=True)
+    run_migrations()
     consolidate_database()
     init_download_queue()
     asyncio.create_task(download_queue_worker())
