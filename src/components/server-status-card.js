@@ -122,6 +122,7 @@ ${buttonStyles}
     const stats = this.stats || {};
     const status = this.status || {};
     const managerStatus = status.manager || {};
+    const comfyuiStatus = status.comfyui || {};
     const servers = Array.isArray(this.servers) ? this.servers : (status.servers || []);
 
     return html`
@@ -162,11 +163,19 @@ ${buttonStyles}
 
         <div class="card" style="margin-top: 16px;">
           <div class="card-title">App Manager</div>
-          <div class="server-meta">
-            <div><strong>llm-mobile</strong></div>
-            <div class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</div>
-            <div>Image: ${managerStatus.image || 'N/A'}</div>
-            ${managerStatus.status === 'running' ? html`<div>Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
+          <div class="server-meta" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <div><strong>llm-mobile</strong></div>
+              <div class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</div>
+              <div>Image: ${managerStatus.image || 'N/A'}</div>
+              ${managerStatus.status === 'running' ? html`<div>Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
+            </div>
+            <div>
+              <div><strong>comfyui</strong></div>
+              <div class="status-badge ${statusClass(comfyuiStatus.status)}">● ${comfyuiStatus.status || 'Unknown'}</div>
+              <div>Image: ${comfyuiStatus.image || 'N/A'}</div>
+              ${comfyuiStatus.status === 'running' ? html`<div>Uptime: ${comfyuiStatus.uptime || 'N/A'}</div>` : ''}
+            </div>
           </div>
           <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="width: 100%; justify-content: center; padding: 12px 8px; margin-top: 12px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);">
             🧹 Free ComfyUI

@@ -98,6 +98,7 @@ def get_status():
         "manager": _container_info("llm-mobile"),
         "server": primary_info or {"status": "not_found", "image": None, "uptime": None},
         "servers": servers,
+        "comfyui": _container_info("comfyui"),
     }
 
 def get_system_stats():
