@@ -83,6 +83,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
             log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
 
         async with httpx.AsyncClient(timeout=3600.0) as client:
+            too_slow = False
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
                 log_benchmark(f"Executing {round_name}...")
@@ -170,6 +171,23 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 elif content:
                     duration = time.time() - start_time
                     log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                    # Abort if model is too slow for practical use
+                    if speed_tps < 10 and speed_tps > 0:
+                        log_benchmark(f"Speed {speed_tps:.2f} t/s is below 10 t/s — {model_id} is too slow, aborting benchmark")
+                        rounds_list.append({
+                            "round_name": get_gold_key(round_name) or round_name,
+                            "prompt": prompt_text,
+                            "response": content,
+                            "metrics": {
+                                "duration_seconds": round(duration, 2),
+                                "tokens_generated": tokens_predicted,
+                                "tokens_per_second": round(speed_tps, 2)
+                            },
+                            "error": f"Aborted: speed {speed_tps:.2f} t/s below minimum 10 t/s"
+                        })
+                        too_slow = True
+                        broadcast_notification(f"⛔ {model_id} too slow ({speed_tps:.2f} t/s) — benchmark aborted")
+                        break
                     rounds_list.append({
                         "round_name": get_gold_key(round_name) or round_name,
                         "prompt": prompt_text,
@@ -182,6 +200,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     })
 
                 _benchmark_progress["rounds_completed"] = idx
+
+                if too_slow:
+                    break
 
                 if idx < len(prompts):
                     log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
@@ -204,18 +225,22 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
 
         log_benchmark(f"Saved raw results to {raw_output_path}")
 
-        # Trigger judge
-        log_benchmark("Starting AI Judge grading sequence...")
-        _benchmark_progress["current_round"] = "AI Judge Grading..."
+        if too_slow:
+            log_benchmark(f"Skipping AI Judge — {model_id} was aborted due to low speed")
+            broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
+        else:
+            # Trigger judge
+            log_benchmark("Starting AI Judge grading sequence...")
+            _benchmark_progress["current_round"] = "AI Judge Grading..."
 
-        req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
-        try:
-            await judge_benchmark(req)
-            log_benchmark("AI Judge grading sequence completed successfully!")
-            broadcast_notification(f"✅ Benchmark complete for {model_id}")
-        except Exception as j_err:
-            traceback.format_exc()
-            log_benchmark_error(f"Judge grading failed: {j_err}")
+            req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
+            try:
+                await judge_benchmark(req)
+                log_benchmark("AI Judge grading sequence completed successfully!")
+                broadcast_notification(f"✅ Benchmark complete for {model_id}")
+            except Exception as j_err:
+                traceback.format_exc()
+                log_benchmark_error(f"Judge grading failed: {j_err}")
 
     except Exception as run_err:
         traceback.format_exc()
@@ -368,6 +393,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
             rounds_list = []
 
             async with httpx.AsyncClient(timeout=3600.0) as client:
+                too_slow = False
                 for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                     _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
                     _benchmark_progress["rounds_completed"] = r_idx - 1
@@ -451,6 +477,23 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                     elif content:
                         duration = time.time() - start_time
                         log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                        # Abort if model is too slow for practical use
+                        if speed_tps < 10 and speed_tps > 0:
+                            log_benchmark(f"Speed {speed_tps:.2f} t/s is below 10 t/s — {model_id} is too slow, aborting benchmark")
+                            rounds_list.append({
+                                "round_name": get_gold_key(round_name) or round_name,
+                                "prompt": prompt_text,
+                                "response": content,
+                                "metrics": {
+                                    "duration_seconds": round(duration, 2),
+                                    "tokens_generated": tokens_predicted,
+                                    "tokens_per_second": round(speed_tps, 2)
+                                },
+                                "error": f"Aborted: speed {speed_tps:.2f} t/s below minimum 10 t/s"
+                            })
+                            too_slow = True
+                            broadcast_notification(f"⛔ {model_id} too slow ({speed_tps:.2f} t/s) — benchmark aborted")
+                            break
                         rounds_list.append({
                             "round_name": get_gold_key(round_name) or round_name,
                             "prompt": prompt_text,
@@ -463,6 +506,8 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                         })
 
                     _benchmark_progress["rounds_completed"] = r_idx
+                    if too_slow:
+                        break
                     if r_idx < len(prompts):
                         log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
                         await asyncio.sleep(10)
@@ -478,6 +523,11 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
             with open(raw_output_path, "w", encoding="utf-8") as f:
                 json.dump(results, f, indent=4, ensure_ascii=False)
             log_benchmark("Saved raw test results.")
+
+            if too_slow:
+                log_benchmark(f"Skipping AI Judge — {model_id} was aborted due to low speed")
+                broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
+                continue
 
             # 4. Switch to Judge Model for evaluation
             preset_id = await _get_preset_id_for_model(judge_model_id)
