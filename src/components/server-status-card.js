@@ -93,6 +93,12 @@ ${buttonStyles}
 .bar-danger { background: var(--danger); }
 .full-width { grid-column: span 2; }
 
+.server-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
 .server-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -104,6 +110,28 @@ ${buttonStyles}
 .server-row:first-child { border-top: none; }
 .server-meta { font-size: 0.85rem; color: var(--text-secondary); }
 .server-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
+@media (max-width: 600px) {
+  .server-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .server-row .server-actions {
+    justify-content: flex-start;
+  }
+  .server-meta-grid {
+    grid-template-columns: 1fr;
+  }
+  .stats-grid {
+    gap: 10px;
+  }
+  .stat-box {
+    padding: 10px;
+  }
+  .stat-value {
+    font-size: 1.05rem;
+  }
+}
 `;
 
   getUtilColorClass(percent) { if (percent < 50) return 'bar-normal'; if (percent < 85) return 'bar-warning'; return 'bar-danger'; }
@@ -163,7 +191,7 @@ ${buttonStyles}
 
         <div class="card" style="margin-top: 16px;">
           <div class="card-title">App Manager</div>
-          <div class="server-meta" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <div class="server-meta-grid">
             <div>
               <div><strong>llm-mobile</strong></div>
               <div class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</div>

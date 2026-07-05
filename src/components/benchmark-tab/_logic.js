@@ -215,6 +215,10 @@ export function handleSort(ctx, field) {
 export function getFilteredAndSortedBenchmarks(ctx) {
   let list = [...ctx.benchmarks];
 
+  if (ctx.platformFilter && ctx.platformFilter !== 'all') {
+    list = list.filter(b => b.server === ctx.platformFilter);
+  }
+
   if (ctx.filterQuery.trim()) {
     const q = ctx.filterQuery.toLowerCase();
     list = list.filter(

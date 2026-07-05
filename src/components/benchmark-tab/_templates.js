@@ -230,9 +230,9 @@ export function renderBenchmarksView(ctx) {
         </div>
 
         <div class="filter-pills">
-          <button class="pill ${ctx.platformFilter === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All GPUs</button>
-          <button class="pill ${ctx.platformFilter === 'tesla' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'tesla'}">Tesla</button>
-          <button class="pill ${ctx.platformFilter === 'rtx' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'rtx'}">RTX</button>
+          <button class="pill ${ctx.platformFilter === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All Server</button>
+          <button class="pill ${ctx.platformFilter === 'primary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'primary'}">Primary</button>
+          <button class="pill ${ctx.platformFilter === 'secondary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'secondary'}">Secondary</button>
         </div>
 
         <div class="table-wrapper">
