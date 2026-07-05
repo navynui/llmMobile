@@ -17,14 +17,27 @@ from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueReq
 from services.chat_svc import _get_loaded_model
 from services.model_svc import _get_preset_id_for_model
 from utils.common import get_quantization_from_name
-from .state import get_benchmark_lock, get_benchmark_running, set_benchmark_running
+from .state import get_benchmark_lock, get_benchmark_running, set_benchmark_running, get_benchmark_progress
 from .runner import run_benchmark_task, run_benchmark_queue_task
+
+
+async def _check_and_set_running():
+    """Check if a benchmark is running. Auto-heal if flags are out of sync."""
+    if get_benchmark_running():
+        progress = get_benchmark_progress()
+        # If the task flag is True but progress says False, the previous task
+        # crashed before its finally block — auto-heal and allow the new request.
+        if not progress.get("running"):
+            set_benchmark_running(False)
+        else:
+            raise HTTPException(status_code=400, detail="A benchmark is already actively running. Please wait for it to complete.")
+    set_benchmark_running(True)
+
+
 async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTasks) -> dict:
     """Route handler for single benchmark run: validate, record to DB, start background task."""
     async with get_benchmark_lock():
-        if get_benchmark_running():
-            raise HTTPException(status_code=400, detail="A benchmark is already actively running. Please wait for it to complete.")
-        set_benchmark_running(True)
+        await _check_and_set_running()
         try:
             raw_model_id = await _get_loaded_model()
             if not raw_model_id:
@@ -73,9 +86,7 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
 async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: BackgroundTasks) -> dict:
     """Route handler for benchmark queue: validate, then start background queue task."""
     async with get_benchmark_lock():
-        if get_benchmark_running():
-            raise HTTPException(status_code=400, detail="A benchmark or queue is already actively running. Please wait for it to complete.")
-        set_benchmark_running(True)
+        await _check_and_set_running()
         try:
             background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id, req.server)
             return {

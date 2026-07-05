@@ -34,5 +34,6 @@ def get_benchmark_lock() -> asyncio.Lock:
 def set_benchmark_running(value: bool):
     global _benchmark_running
     _benchmark_running = value
+    _benchmark_progress["running"] = value
 
 

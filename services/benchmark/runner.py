@@ -73,15 +73,15 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
 
     rounds_list = []
 
-    # Capture VRAM after model is confirmed loaded and idle.
-    log_benchmark("Waiting for server to be idle before capturing VRAM...")
-    await wait_for_idle_trigger()
-    await asyncio.sleep(2)
-    vram_gb = await capture_and_store_vram(model_id, status="good")
-    if vram_gb is not None:
-        log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
-
     try:
+        # Capture VRAM after model is confirmed loaded and idle.
+        log_benchmark("Waiting for server to be idle before capturing VRAM...")
+        await wait_for_idle_trigger()
+        await asyncio.sleep(2)
+        vram_gb = await capture_and_store_vram(model_id, status="good")
+        if vram_gb is not None:
+            log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
+
         async with httpx.AsyncClient(timeout=600.0) as client:
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
