@@ -5,7 +5,19 @@ import asyncio
 import httpx
 from utils.common import MODELS_DIR, MODES_INI_PATH
 from utils.db_utils import get_db_conn, _clean_model_id
-from services.model_svc import _add_to_models_ini
+from services.model_svc import _add_to_models_ini, _add_to_ini, MINI_MODELS_INI
+
+# Models larger than this on disk are unlikely to fit on the GTX�1060 (6 GB VRAM)
+# once KV cache and runtime overhead are accounted for.
+GTX_MAX_MODEL_BYTES = 6 * 1024**3  # 6 GB
+
+
+def _should_register_on_secondary(filepath: str) -> bool:
+    """Check if a GGUF file is small enough to run on the secondary GTX�1060."""
+    try:
+        return os.path.getsize(filepath) <= GTX_MAX_MODEL_BYTES
+    except Exception:
+        return False
 from .state import _downloads_lock, _active_downloads, _download_queue
 
 async def download_queue_worker():
@@ -86,6 +98,8 @@ async def _download_model_task(repo_id: str, filename: str):
                     current_bytes = total_bytes
                     shutil.move(temp_path, dest_path)
                     _add_to_models_ini(filename)
+                    if _should_register_on_secondary(dest_path):
+                        _add_to_ini(filename, MINI_MODELS_INI)
                     with _downloads_lock:
                         _active_downloads[key].update({
                             "status": "completed",
@@ -162,6 +176,8 @@ async def _download_model_task(repo_id: str, filename: str):
                 if current_bytes >= total_bytes:
                     shutil.move(temp_path, dest_path)
                     _add_to_models_ini(filename)
+                    if _should_register_on_secondary(dest_path):
+                        _add_to_ini(filename, MINI_MODELS_INI)
                     with _downloads_lock:
                         _active_downloads[key].update({
                             "status": "completed",

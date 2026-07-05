@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from utils.common import MODELS_DIR, MODES_INI_PATH, get_quantization_from_name
 from utils.db_utils import get_db_conn, _clean_model_id
 from models.requests import DownloadRequest
-from services.model_svc import _add_to_models_ini
+from services.model_svc import _add_to_models_ini, _add_to_ini, MINI_MODELS_INI
 from services.sse_svc import broadcast_notification
 from .state import _downloads_lock, _active_downloads, _download_queue
 
@@ -114,6 +114,12 @@ def scan_and_register_models():
             if filename.lower() not in registered_in_ini:
                 _add_to_models_ini(filename)
                 added.append(filename)
+                # Also register on secondary if file fits on GTX�1060
+                filepath = os.path.join(MODELS_DIR, filename)
+                if os.path.exists(filepath):
+                    file_size = os.path.getsize(filepath)
+                    if file_size <= 6 * 1024**3:  # 6 GB
+                        _add_to_ini(filename, MINI_MODELS_INI)
 
         return {"detail": f"Scan complete. Registered {len(added)} new models.", "registered": added}
     except Exception as e:
