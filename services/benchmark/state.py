@@ -9,6 +9,7 @@ _benchmark_progress: dict = {
     "rounds_completed": 0,
     "total_rounds": 5,
     "logs": [],
+    "server": "primary",
     "queue_running": False,
     "queue": [],
     "queue_completed": [],

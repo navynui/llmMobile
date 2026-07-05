@@ -15,57 +15,104 @@ from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
 from services.chat_svc import _get_loaded_model
-from services.model_svc import _get_preset_id_for_model
+from services.model_svc import _get_preset_id_for_model, MINI_MODELS_INI
 from utils.common import get_quantization_from_name
+
+# ── Server platform labels ─────────────────────────────────────────────────────
+_PLATFORM_LABELS = {
+    "primary": "Tesla P100 (16GB)",
+    "secondary": "GTX 1060 (6GB)",
+}
+
+def _get_platform(server: str) -> str:
+    return _PLATFORM_LABELS.get(server, "Tesla P100 (16GB)")
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _read_ini_models(ini_path: str) -> set:
+    """Return set of lowercased model filenames found in the given INI."""
+    filenames = set()
+    if not os.path.exists(ini_path):
+        return filenames
+    try:
+        with open(ini_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(";"):
+                    continue
+                m = re.match(r'^\[(.+?)\]$', line)
+                if m:
+                    raw_name = m.group(1)
+                    if raw_name == "*":
+                        continue
+                    if raw_name.lower().endswith(".gguf"):
+                        base_name = raw_name[:-5]
+                    else:
+                        base_name = raw_name
+                    filename = base_name + ".gguf"
+                    if os.path.exists(os.path.join(MODELS_DIR, filename)):
+                        filenames.add(filename.lower())
+                        filenames.add(base_name.lower())
+    except Exception as e:
+        print(f"[Benchmarks API] Failed to parse {ini_path}: {e}")
+    return filenames
+
+
+def _db_lookup_model(filename: str) -> tuple:
+    """Return (status, vram_gb) from models table, or (None, None)."""
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT LOWER(status) as status, vram_gb FROM models WHERE model_id = ?",
+            (filename.lower(),)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return (row["status"], row["vram_gb"]) if row else (None, None)
+    except Exception:
+        return (None, None)
+
+
 # ── Query endpoints ─────────────────────────────────────────────────────────────
 
-def get_benchmarks(show_all: bool = False) -> dict:
+def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict:
     """Return benchmark list (fulfills /api/benchmarks)."""
     try:
-        local_ready_filenames = set()
-        if os.path.exists(MODES_INI_PATH):
-            try:
-                with open(MODES_INI_PATH) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith(";"):
-                            continue
-                        m = re.match(r'^\[(.+?)\]$', line)
-                        if m:
-                            raw_name = m.group(1)
-                            if raw_name == "*":
-                                continue
-                            if raw_name.lower().endswith(".gguf"):
-                                base_name = raw_name[:-5]
-                            else:
-                                base_name = raw_name
-                            filename = base_name + ".gguf"
-                            if os.path.exists(os.path.join(MODELS_DIR, filename)):
-                                local_ready_filenames.add(filename.lower())
-                                local_ready_filenames.add(base_name.lower())
-            except Exception as e:
-                print(f"[Benchmarks API] Failed to parse models INI: {e}")
+        # Gather model filenames from both INI files
+        primary_ready = _read_ini_models(MODES_INI_PATH)
+        secondary_ready = _read_ini_models(MINI_MODELS_INI)
+        all_ready = primary_ready | secondary_ready
+
+        # Map each filename to its server origin (prefer primary if in both)
+        ready_server_map = {}
+        for f in primary_ready:
+            ready_server_map[f] = "primary"
+        for f in secondary_ready:
+            if f not in ready_server_map:
+                ready_server_map[f] = "secondary"
 
         conn = get_db_conn()
         cursor = conn.cursor()
         query = """
             WITH latest_runs AS (
-                SELECT tr.model_id, tr.run_id, tr.timestamp,
+                SELECT tr.model_id, tr.run_id, tr.timestamp, tr.server,
                        ROW_NUMBER() OVER (PARTITION BY tr.model_id ORDER BY tr.timestamp DESC) as rn
                 FROM test_runs tr
             ),
             run_scores_agg AS (
-                SELECT lr.model_id, lr.run_id, lr.timestamp,
+                SELECT lr.model_id, lr.run_id, lr.timestamp, lr.server,
                        SUM(rs.score) as total_score,
                        MAX(CASE WHEN rs.round_name = 'speed_metric' THEN rs.speed_tps END) as avg_tps
                 FROM latest_runs lr
                 JOIN round_scores rs ON lr.run_id = rs.run_id
                 WHERE lr.rn = 1
-                GROUP BY lr.model_id, lr.run_id, lr.timestamp
+                GROUP BY lr.model_id, lr.run_id, lr.timestamp, lr.server
             )
             SELECT m.model_id, m.name, m.quantization, LOWER(m.status) as status, m.notes,
                    m.vram_gb,
-                   rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps,
+                   rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps, rsa.server,
                    (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
             FROM models m
             LEFT JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
@@ -90,7 +137,10 @@ def get_benchmarks(show_all: bool = False) -> dict:
             else:
                 tested_names_lower.add(name_low + ".gguf")
             tested_names_lower.add(r["model_id"].lower())
-            is_model_ready = (name_low in local_ready_filenames) or (r["model_id"].lower() in local_ready_filenames)
+            is_model_ready = (name_low in all_ready) or (r["model_id"].lower() in all_ready)
+
+            # Determine server from DB or from ready map
+            bench_server = r["server"] or "primary"
             if not show_all:
                 if avg_tps < 20.0 or hallucinated or total_score < 50:
                     if not is_model_ready:
@@ -98,7 +148,8 @@ def get_benchmarks(show_all: bool = False) -> dict:
             benchmarks.append({
                 "model_id": r["model_id"],
                 "model": model_name,
-                "platform": "Tesla P100 (16GB)",
+                "platform": _get_platform(bench_server),
+                "server": bench_server,
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
                 "score": total_score,
@@ -108,9 +159,12 @@ def get_benchmarks(show_all: bool = False) -> dict:
                 "is_tested": True,
             })
 
-        if os.path.exists(MODES_INI_PATH):
+        # Append untested models from both INI files
+        for ini_path, default_server in [(MODES_INI_PATH, "primary"), (MINI_MODELS_INI, "secondary")]:
+            if not os.path.exists(ini_path):
+                continue
             try:
-                with open(MODES_INI_PATH) as f:
+                with open(ini_path) as f:
                     for line in f:
                         line = line.strip()
                         if not line or line.startswith(";"):
@@ -125,34 +179,25 @@ def get_benchmarks(show_all: bool = False) -> dict:
                             else:
                                 base_name = raw_name
                             filename = base_name + ".gguf"
-                            if filename.lower() in local_ready_filenames and filename.lower() not in tested_names_lower:
-                                # Fetch vram_gb and status from DB for this model
-                                try:
-                                    conn = get_db_conn()
-                                    cursor = conn.cursor()
-                                    cursor.execute(
-                                        "SELECT LOWER(status) as status, vram_gb FROM models WHERE model_id = ?",
-                                        (filename.lower(),)
-                                    )
-                                    db_row = cursor.fetchone()
-                                    conn.close()
-                                except Exception:
-                                    db_row = None
-
+                            if filename.lower() in all_ready and filename.lower() not in tested_names_lower:
+                                db_status, db_vram = _db_lookup_model(filename)
                                 benchmarks.append({
                                     "model_id": filename,
                                     "model": filename,
-                                    "platform": "Ready",
+                                    "platform": _get_platform(default_server),
+                                    "server": default_server,
                                     "quant": get_quantization_from_name(filename),
                                     "tokens_sec": None,
                                     "score": None,
-                                    "vram_gb": db_row["vram_gb"] if db_row else None,
-                                    "status": db_row["status"] if (db_row and db_row["status"]) else "testing",
+                                    "vram_gb": db_vram,
+                                    "status": db_status or "testing",
                                     "is_ready": True,
                                     "is_tested": False,
                                 })
+                                tested_names_lower.add(filename.lower())
+                                tested_names_lower.add(base_name.lower())
             except Exception as e:
-                print(f"[Benchmarks API] Failed to append ready models: {e}")
+                print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
 
         return {"benchmarks": benchmarks}
     except Exception as e:
@@ -171,15 +216,17 @@ def get_benchmark_details(model_id: str) -> dict:
         if not model_row:
             conn.close()
             raise HTTPException(status_code=404, detail="Model benchmark record not found")
-        cursor.execute("SELECT run_id, timestamp FROM test_runs WHERE model_id = ? ORDER BY timestamp DESC LIMIT 1", (model_id,))
+        cursor.execute("SELECT run_id, timestamp, server FROM test_runs WHERE model_id = ? ORDER BY timestamp DESC LIMIT 1", (model_id,))
         run_row = cursor.fetchone()
         rounds = []
         hallucinations = []
         timestamp = None
         run_id = None
+        server = "primary"
         if run_row:
             run_id = run_row["run_id"]
             timestamp = run_row["timestamp"]
+            server = run_row["server"] or "primary"
             cursor.execute("SELECT round_name, score, reasoning, speed_tps FROM round_scores WHERE run_id = ? ORDER BY id ASC", (run_id,))
             rounds = [dict(row) for row in cursor.fetchall()]
             cursor.execute("SELECT round_name, description FROM model_hallucinations WHERE model_id = ?", (model_id,))
@@ -194,6 +241,7 @@ def get_benchmark_details(model_id: str) -> dict:
             "notes": model_row["notes"],
             "run_id": run_id,
             "timestamp": timestamp,
+            "server": server,
             "rounds": rounds,
             "hallucinations": hallucinations,
         }
@@ -239,5 +287,3 @@ def get_benchmark_outputs() -> dict:
     except Exception as e:
         print(f"[Outputs] Error listing benchmark outputs: {e}")
         return {"outputs": [], "error": str(e)}
-
-

@@ -309,8 +309,8 @@ def route_scan_and_register_models():
 # Benchmarks
 # ───────────────────────────────────────────────
 @app.get("/api/benchmarks")
-def route_get_benchmarks(show_all: bool = False):
-    return get_benchmarks(show_all=show_all)
+def route_get_benchmarks(show_all: bool = False, server: str | None = None):
+    return get_benchmarks(show_all=show_all, server=server)
 
 @app.get("/api/benchmarks/details")
 def route_get_benchmark_details(model_id: str):
