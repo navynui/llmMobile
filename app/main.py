@@ -313,8 +313,8 @@ def route_get_benchmarks(show_all: bool = False, server: str | None = None):
     return get_benchmarks(show_all=show_all, server=server)
 
 @app.get("/api/benchmarks/details")
-def route_get_benchmark_details(model_id: str):
-    return get_benchmark_details(model_id)
+def route_get_benchmark_details(model_id: str, server: str = "primary"):
+    return get_benchmark_details(model_id, server)
 
 @app.post("/api/benchmarks/queue/run")
 async def route_run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: BackgroundTasks):

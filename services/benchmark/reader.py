@@ -98,7 +98,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         query = """
             WITH latest_runs AS (
                 SELECT tr.model_id, tr.run_id, tr.timestamp, tr.server,
-                       ROW_NUMBER() OVER (PARTITION BY tr.model_id ORDER BY tr.timestamp DESC) as rn
+                       ROW_NUMBER() OVER (PARTITION BY tr.model_id, tr.server ORDER BY tr.timestamp DESC) as rn
                 FROM test_runs tr
             ),
             run_scores_agg AS (
@@ -160,6 +160,10 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
             })
 
         # Append untested models from both INI files
+        # Build base set of already-tested names from SQL results (must remain
+        # shared across both INI scans to avoid showing a tested model as untested)
+        ini_tested_base = set(tested_names_lower)
+
         for ini_path, default_server in [(MODES_INI_PATH, "primary"), (MINI_MODELS_INI, "secondary")]:
             if not os.path.exists(ini_path):
                 continue
@@ -179,7 +183,9 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                             else:
                                 base_name = raw_name
                             filename = base_name + ".gguf"
-                            if filename.lower() in all_ready and filename.lower() not in tested_names_lower:
+                            # Skip only if already benchmarked (SQL results), not if
+                            # the other INI already listed it — we want dual entries.
+                            if filename.lower() not in ini_tested_base:
                                 db_status, db_vram = _db_lookup_model(filename)
                                 benchmarks.append({
                                     "model_id": filename,
@@ -194,8 +200,6 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                                     "is_ready": True,
                                     "is_tested": False,
                                 })
-                                tested_names_lower.add(filename.lower())
-                                tested_names_lower.add(base_name.lower())
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
 
@@ -205,8 +209,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         return {"benchmarks": [], "error": str(e)}
 
 
-def get_benchmark_details(model_id: str) -> dict:
-    """Return detailed benchmark results for a specific model."""
+def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
+    """Return detailed benchmark results for a specific model and server."""
     try:
         model_id = _clean_model_id(model_id)
         conn = get_db_conn()
@@ -216,7 +220,7 @@ def get_benchmark_details(model_id: str) -> dict:
         if not model_row:
             conn.close()
             raise HTTPException(status_code=404, detail="Model benchmark record not found")
-        cursor.execute("SELECT run_id, timestamp, server FROM test_runs WHERE model_id = ? ORDER BY timestamp DESC LIMIT 1", (model_id,))
+        cursor.execute("SELECT run_id, timestamp, server FROM test_runs WHERE model_id = ? AND server = ? ORDER BY timestamp DESC LIMIT 1", (model_id, server))
         run_row = cursor.fetchone()
         rounds = []
         hallucinations = []

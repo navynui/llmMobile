@@ -172,8 +172,9 @@ export class BenchmarkBubbleChart extends LitElement {
 
     const seen = new Set();
     for (const [, b] of labels) {
-      if (!seen.has(b.model_id)) {
-        seen.add(b.model_id);
+      const dedupKey = `${b.model_id}__${b.server || 'primary'}`;
+      if (!seen.has(dedupKey)) {
+        seen.add(dedupKey);
         dataPoints.push({
           x: b.xVal,
           y: b.yVal,

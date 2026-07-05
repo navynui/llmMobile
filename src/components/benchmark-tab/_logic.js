@@ -274,14 +274,14 @@ export function handleBenchmarkLogLimitChange(ctx, e) {
 
 // --- Benchmark Details Modal ---
 
-export async function viewBenchmarkDetails(ctx, modelId) {
+export async function viewBenchmarkDetails(ctx, modelId, server) {
   ctx.showDetailsModal = true;
   ctx.detailsModalLoading = true;
   ctx.selectedBenchmarkDetails = null;
   try {
-    const response = await fetch(
-      `/api/benchmarks/details?model_id=${encodeURIComponent(modelId)}`
-    );
+    let url = `/api/benchmarks/details?model_id=${encodeURIComponent(modelId)}`;
+    if (server) url += `&server=${encodeURIComponent(server)}`;
+    const response = await fetch(url);
     if (response.ok) {
       ctx.selectedBenchmarkDetails = await response.json();
     }

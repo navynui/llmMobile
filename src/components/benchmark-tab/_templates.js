@@ -297,7 +297,7 @@ export function renderBenchmarksView(ctx) {
                     </td>
                     <td style="padding: 12px; vertical-align: middle;">
                       <!-- Model name row -->
-                      <div class="bench-model-row clickable-cell" @click="${() => b.is_tested && viewBenchmarkDetails(ctx, b.model_id)}" style="cursor: ${b.is_tested ? 'pointer' : 'default'}; display: flex; flex-direction: column; gap: 4px;">
+                      <div class="bench-model-row clickable-cell" @click="${() => b.is_tested && viewBenchmarkDetails(ctx, b.model_id, b.server)}" style="cursor: ${b.is_tested ? 'pointer' : 'default'}; display: flex; flex-direction: column; gap: 4px;">
                         <!-- Name + status badges -->
                         <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px;">
                           ${b.is_tested ? html`
