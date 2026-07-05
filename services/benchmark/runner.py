@@ -82,7 +82,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         if vram_gb is not None:
             log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
 
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(timeout=3600.0) as client:
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
                 log_benchmark(f"Executing {round_name}...")
@@ -367,7 +367,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
 
             rounds_list = []
 
-            async with httpx.AsyncClient(timeout=600.0) as client:
+            async with httpx.AsyncClient(timeout=3600.0) as client:
                 for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                     _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
                     _benchmark_progress["rounds_completed"] = r_idx - 1
