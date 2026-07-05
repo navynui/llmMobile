@@ -158,12 +158,17 @@ def stop_download(key: str):
 
 
 def resume_download(key: str):
-    """Resume a paused or failed download."""
+    """Resume a paused, failed, completed, or queued download."""
     with _downloads_lock:
         if key not in _active_downloads:
             raise HTTPException(status_code=404, detail="Download not found")
         
         download = _active_downloads[key]
+        
+        # Already queued — idempotent, just return success
+        if download["status"] == "queued":
+            return {"detail": f"Download {key} is already queued"}
+        
         if download["status"] not in ["paused", "failed", "completed"]:
             raise HTTPException(status_code=400, detail=f"Cannot resume download in status: {download['status']}")
         
@@ -182,8 +187,8 @@ def resume_download(key: str):
             conn = get_db_conn()
             cursor = conn.cursor()
             model_id = _clean_model_id(download["filename"])
-            status = 'queued' if download["status"] == "queued" else 'PAUSED'
-            notes = 'Download resumed by user' if download["status"] == "queued" else 'Download paused by user'
+            status = 'queued'
+            notes = 'Download resumed by user'
             cursor.execute("""
                 UPDATE models
                 SET status = ?, notes = ?
