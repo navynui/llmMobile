@@ -25,6 +25,7 @@ from models.requests import (
 # ── Service imports ─────────────────────────────────────────────────────────────
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
+    start_llm_server, stop_llm_server, restart_llm_server,
     _start_mqtt_listener, get_logs
 )
 from services.model_svc import (
@@ -106,6 +107,18 @@ def route_start_llm():
 @app.post("/stop")
 def route_stop_llm():
     return stop_llm()
+
+@app.post("/servers/{name}/start")
+def route_start_llm_server(name: str):
+    return start_llm_server(name)
+
+@app.post("/servers/{name}/stop")
+def route_stop_llm_server(name: str):
+    return stop_llm_server(name)
+
+@app.post("/servers/{name}/restart")
+def route_restart_llm_server(name: str):
+    return restart_llm_server(name)
 
 # ───────────────────────────────────────────────
 # REST endpoints – model management

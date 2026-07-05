@@ -6,11 +6,10 @@ export function renderServerTab(ctx) {
       <!-- Status Card (Server status + Metrics) -->
       <server-status-card
         .stats="${ctx.stats}"
+        .servers="${ctx.status?.servers}"
         .status="${ctx.status}"
         .actionPending="${ctx.actionPending}"
-        @start="${() => ctx.handleServerToggle()}"
-        @stop="${() => ctx.handleServerToggle()}"
-        @restart="${() => ctx.handleRestart()}"
+        @server-action="${(e) => ctx.handleServerAction(e.detail.server, e.detail.action)}"
         @free-comfy="${() => ctx.handleFreeComfyUI()}"
       >
       </server-status-card>

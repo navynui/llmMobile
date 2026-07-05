@@ -169,51 +169,39 @@ export async function fetchActiveModel(ctx) {
   }
 }
 
-export async function handleServerToggle(ctx) {
+export async function handleServerAction(ctx, serverName, action) {
+  if (!serverName) return;
+  if (action !== 'start' && action !== 'stop' && action !== 'restart') return;
+
   ctx.actionPending = true;
-  const isRunning = ctx.status?.server?.status === 'running';
-  const endpoint = isRunning ? '/stop' : '/start';
-  ctx.showStatus(isRunning ? 'Stopping LLM server...' : 'Starting LLM server...');
+
+  const labels = {
+    start:   `Starting ${serverName}...`,
+    stop:    `Stopping ${serverName}...`,
+    restart: `Restarting ${serverName}...`,
+  };
+  ctx.showStatus(labels[action]);
 
   try {
-    const res = await fetch(endpoint, { method: 'POST' });
-    const data = await res.json();
-    ctx.showStatus(data.detail || 'Success!');
-    
-    if (!isRunning) {
+    const res = await fetch(`/servers/${encodeURIComponent(serverName)}/${action}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      ctx.showStatus(data.detail || `Failed to ${action} ${serverName}`, true);
+      return;
+    }
+    ctx.showStatus(data.detail || `Success: ${action} ${serverName}`);
+
+    if (action === 'stop' && serverName === 'llama-server') {
+      ctx.activeModel = '';
+    }
+    if (action === 'start' && serverName === 'llama-server') {
       setTimeout(() => {
         ctx.fetchModelsList();
         ctx.fetchActiveModel();
       }, 3000);
-    } else {
-      ctx.activeModel = '';
     }
   } catch (e) {
-    ctx.showStatus('Error executing request: ' + e.message, true);
-  } finally {
-    ctx.actionPending = false;
-  }
-}
-
-export async function handleRestart(ctx) {
-  if (!ctx.status?.server?.status || ctx.status.server.status !== 'running') return;
-
-  ctx.actionPending = true;
-  ctx.showStatus('Stopping LLM server...');
-
-  try {
-    const res1 = await fetch('/stop', { method: 'POST' });
-    if (!res1.ok) throw new Error('Failed to stop server');
-    
-    ctx.showStatus('Starting LLM server...');
-    
-    await new Promise(r => setTimeout(r, 10000));
-    const res2 = await fetch('/start', { method: 'POST' });
-    if (!res2.ok) throw new Error('Failed to start server');
-    
-    ctx.showStatus('Server restarted successfully!');
-  } catch (e) {
-    ctx.showStatus('Error restarting server: ' + e.message, true);
+    ctx.showStatus(`Error ${action}ing ${serverName}: ${e.message}`, true);
   } finally {
     ctx.actionPending = false;
   }
