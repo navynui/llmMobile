@@ -36,6 +36,7 @@ export async function checkModelStatus(ctx) {
       m.status === 'loaded' || 
       (typeof m.status === 'object' && m.status?.value === 'loaded')
     );
+    ctx.loadedModelName = loadedModel ? loadedModel.id : '';
 
     const prevModel = sessionStorage.getItem('previous_model_name');
     if (!loadedModel && prevModel) {
