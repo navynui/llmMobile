@@ -76,9 +76,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     try:
         # Capture VRAM after model is confirmed loaded and idle.
         log_benchmark("Waiting for server to be idle before capturing VRAM...")
-        await wait_for_idle_trigger()
+        await wait_for_idle_trigger(server=server)
         await asyncio.sleep(2)
-        vram_gb = await capture_and_store_vram(model_id, status="good")
+        vram_gb = await capture_and_store_vram(model_id, status="good", server=server)
         if vram_gb is not None:
             log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
 
@@ -314,9 +314,9 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
 
             # Capture VRAM after confirming the model is loaded and idle.
             log_benchmark(f"Queue: Waiting for server to be idle before capturing VRAM...")
-            await wait_for_idle_trigger()
+            await wait_for_idle_trigger(server=server)
             await asyncio.sleep(2)
-            vram_gb = await capture_and_store_vram(model_id, status="good")
+            vram_gb = await capture_and_store_vram(model_id, status="good", server=server)
             if vram_gb is not None:
                 log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB")
 
