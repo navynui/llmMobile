@@ -238,6 +238,36 @@ async def get_vision_capabilities():
         }
     return {"models": models_metadata}
 
+async def get_vision_capabilities_mini():
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get("http://llm-server-mini:8080/models", timeout=3)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Failed to fetch mini model metadata")
+            data = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    models_metadata = {}
+    for m in data.get("data", []):
+        mid = m.get("id") or str(m.get("model_id", ""))
+        status_dict = m.get("status") if isinstance(m.get("status"), dict) else None
+        vision_capable = False; has_mmproj = False
+        if status_dict:
+            vis_enabled = status_dict.get("vision_enabled", False)
+            vis_loaded  = status_dict.get("vision_model_loaded", False)
+            vision_capable = bool(vis_enabled or vis_loaded)
+            args_raw = status_dict.get("args")
+            if isinstance(args_raw, list):
+                has_mmproj = "--mmproj" in args_raw
+            elif isinstance(args_raw, str):
+                has_mmproj = "--mmproj" in args_raw
+        if not vision_capable:
+            mid_lower = mid.lower()
+            vision_capable = any(x in mid_lower for x in ["mmproj", "clip_l", "llava", "moondream"])
+        models_metadata[mid] = {"model_id": mid, "vision_capable": vision_capable or has_mmproj, "has_mmproj": has_mmproj}
+    return {"models": models_metadata}
+
+
 
 # ── llama-server-mini / modelg.ini ─────────────────────────────────────────
 MINI_MODELS_INI = "/models/modelg.ini"

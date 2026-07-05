@@ -12,6 +12,12 @@ export function renderChat(ctx) {
       </div>
     ` : ''}
     <div class="chat-container">
+      <!-- Server selector -->
+      <div style="display: flex; gap: 6px; padding: 8px 16px; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.06);">
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">Chat Server:</span>
+        <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'primary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'primary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'primary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'primary'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); }}">Primary</button>
+        <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'mini' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'mini' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'mini' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'mini'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); }}">Secondary</button>
+      </div>
       ${ctx.messages.length === 0 ? html`
         <div style="margin: auto; text-align: center; color: var(--text-muted); max-width: 280px; padding-bottom: 40px;">
           <div style="font-size: 3rem; margin-bottom: 16px;">💬</div>

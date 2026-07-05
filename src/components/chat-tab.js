@@ -12,7 +12,8 @@ export class ChatTab extends LitElement {
     visionCapable: { type: Boolean },
     showReloadBanner: { type: Boolean },
     previousModelName: { type: String },
-    isReloading: { type: Boolean }
+    isReloading: { type: Boolean },
+    chatServer: { type: String }
   };
 
   static styles = chatStyles;
@@ -27,6 +28,7 @@ export class ChatTab extends LitElement {
     this.showReloadBanner = false;
     this.previousModelName = '';
     this.isReloading = false;
+    this.chatServer = 'primary';
 
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');

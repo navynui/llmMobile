@@ -1,5 +1,25 @@
 import { Confirm } from '../../components/_confirm.js';
 
+function _api(ctx, endpoint) {
+  const apis = {
+    primary: {
+      chat_completions: '/api/chat/completions',
+      models: '/api/llm/models',
+      vision: '/models/vision-capabilities',
+      load: '/api/llm/models/load',
+    },
+    mini: {
+      chat_completions: '/api/chat-mini/completions',
+      models: '/api/llm-mini/models',
+      vision: '/models-mini/vision-capabilities',
+      load: '/api/llm-mini/models/load',
+    },
+  };
+  const srv = ctx.chatServer || 'primary';
+  return (apis[srv] || apis.primary)[endpoint];
+}
+
+
 export async function checkModelStatus(ctx) {
   try {
     let queueRunning = false;
@@ -9,7 +29,7 @@ export async function checkModelStatus(ctx) {
       queueRunning = queueData.queue?.some(item => item.status === 'running' || item.status === 'queued') || false;
     }
 
-    const modelsResp = await fetch('/api/llm/models');
+    const modelsResp = await fetch(_api(ctx, 'models'));
     if (!modelsResp.ok) return;
     const modelsData = await modelsResp.json();
     const loadedModel = modelsData.data?.find(m => 
@@ -43,7 +63,7 @@ export async function reloadModel(ctx) {
   if (!ctx.previousModelName) return;
   ctx.isReloading = true;
   try {
-    const res = await fetch('/api/llm/models/load', {
+    const res = await fetch(_api(ctx, 'load'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: ctx.previousModelName })
@@ -113,7 +133,7 @@ export function scrollToBottom(ctx) {
 export async function checkVisionSupport(ctx) {
   try {
     // 1. Find out which model is currently loaded on the server
-    const modelsResp = await fetch('/api/llm/models');
+    const modelsResp = await fetch(_api(ctx, 'models'));
     if (!modelsResp.ok) return;
     const modelsData = await modelsResp.json();
     
@@ -130,7 +150,7 @@ export async function checkVisionSupport(ctx) {
     const modelId = loadedModel.id;
 
     // 2. Check vision capabilities for that specific model
-    const visionResp = await fetch('/models/vision-capabilities');
+    const visionResp = await fetch(_api(ctx, 'vision'));
     if (!visionResp.ok) return;
     const visionData = await visionResp.json();
     
@@ -218,7 +238,7 @@ export async function sendMessage(ctx) {
   const prevModel = sessionStorage.getItem('previous_model_name');
   if (prevModel) {
     try {
-      const modelsResp = await fetch('/api/llm/models');
+      const modelsResp = await fetch(_api(ctx, 'models'));
       if (modelsResp.ok) {
         const modelsData = await modelsResp.json();
         const loadedModel = modelsData.data?.find(m => 
@@ -228,7 +248,7 @@ export async function sendMessage(ctx) {
         if (!loadedModel) {
           console.log(`[Chat Tab] Auto-reloading previous model: ${prevModel}`);
           ctx.isGenerating = true;
-          const loadRes = await fetch('/api/llm/models/load', {
+          const loadRes = await fetch(_api(ctx, 'load'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: prevModel })
@@ -294,7 +314,7 @@ export async function sendMessage(ctx) {
   ctx.messages = [...ctx.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false }];
 
   try {
-    const response = await fetch('/api/chat/completions', {
+    const response = await fetch(_api(ctx, 'chat_completions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

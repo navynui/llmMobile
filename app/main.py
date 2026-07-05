@@ -31,12 +31,12 @@ from services.docker_svc import (
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
     proxy_llm_models, proxy_llm_load, proxy_llm_unload,
-    get_vision_capabilities,
+    get_vision_capabilities, get_vision_capabilities_mini,
     list_mini_models, delete_model_from_mini, get_models_mini_ini, save_models_mini_ini,
     proxy_llm_mini_models, proxy_llm_mini_load, proxy_llm_mini_unload,
     scan_mini_and_register,
 )
-from services.chat_svc import proxy_chat
+from services.chat_svc import proxy_chat, proxy_chat_mini
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
 from services.comfy.worker import queue_worker
 from services.comfy.queue_state import broadcast_queue, get_queue_snapshot, load_persisted_queue, is_queue_running, set_queue_running
@@ -158,6 +158,10 @@ async def route_proxy_llm_unload(req: ModelActionRequest):
 async def route_get_vision_capabilities():
     return await get_vision_capabilities()
 
+@app.get("/models-mini/vision-capabilities")
+async def route_get_vision_capabilities_mini():
+    return await get_vision_capabilities_mini()
+
 @app.get("/models-mini")
 def route_list_mini_models():
     return list_mini_models()
@@ -194,6 +198,10 @@ def route_scan_mini_and_register():
 @app.post("/api/chat/completions")
 async def route_proxy_chat(request: Request):
     return await proxy_chat(request)
+
+@app.post("/api/chat-mini/completions")
+async def route_proxy_chat_mini(request: Request):
+    return await proxy_chat_mini(request)
 
 # ───────────────────────────────────────────────
 # SSE – /events/status
