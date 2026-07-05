@@ -16,6 +16,8 @@ export class ModelsConfigEditor extends LitElement {
     modelsIniText: { type: String },
     modelsIniLoading: { type: Boolean },
     isServerRunning: { type: Boolean },
+    iniLabel: { type: String },
+    server: { type: String },
     
     // Local UI states
     switcherExpanded: { type: Boolean },
@@ -35,6 +37,8 @@ export class ModelsConfigEditor extends LitElement {
     this.modelsIniText = '';
     this.modelsIniLoading = false;
     this.isServerRunning = false;
+    this.iniLabel = 'models.ini';
+    this.server = 'primary';
     this.switcherExpanded = false;
     this.configExpanded = false;
     this.iniExpanded = false;

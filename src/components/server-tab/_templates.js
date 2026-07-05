@@ -34,6 +34,28 @@ export function renderServerTab(ctx) {
       >
       </models-config-editor>
 
+      <!-- Models Configuration Manager (Mini) -->
+      <models-config-editor
+        .models="${ctx.modelsMini}"
+        .activeModel="${ctx.activeModelMini}"
+        .loadingModel="${ctx.loadingModelMini}"
+        .actionPending="${ctx.actionPending}"
+        .modelsIniText="${ctx.modelsMiniIniText}"
+        .modelsIniLoading="${ctx.modelsMiniIniLoading}"
+        .isServerRunning="${ctx.status?.servers?.[1]?.status === 'running'}"
+        .iniLabel="${'modelg.ini'}"
+        .server="${'mini'}"
+        @select-model-change="${(e) => ctx.handleSelectModelChangeMini(e)}"
+        @load-model="${(e) => ctx.handleModelMiniLoad(e.detail.model)}"
+        @unload-model="${() => ctx.handleModelMiniUnload()}"
+        @delete-model="${(e) => ctx.executeDeleteModelMini(e.detail.filename)}"
+        @change="${(e) => ctx.modelsMiniIniText = e.detail.text}"
+        @scan="${() => ctx.handleScanMiniAndRegister()}"
+        @reload="${() => ctx.fetchModelsMiniIni()}"
+        @save="${() => ctx.saveModelsMiniIni()}"
+      >
+      </models-config-editor>
+
       <!-- HF Downloader -->
       <model-downloader
         .hfSearchQuery="${ctx.hfSearchQuery}"

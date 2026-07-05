@@ -382,3 +382,174 @@ export async function handleFreeComfyUI(ctx) {
     ctx.actionPending = false;
   }
 }
+
+// ── Mini (llama-server-mini / modelg.ini) API functions ─────────────────────
+
+export async function fetchModelsMiniList(ctx) {
+  try {
+    const res = await fetch('/models-mini');
+    if (res.ok) {
+      const data = await res.json();
+      ctx.modelsMini = data.models || [];
+    }
+  } catch (e) {
+    console.error("Failed to list mini models", e);
+  }
+}
+
+export async function fetchActiveMiniModel(ctx) {
+  try {
+    const res = await fetch('/api/llm-mini/models');
+    if (res.ok) {
+      const data = await res.json();
+      const loadedModel = data.data?.find(m => m.status === 'loaded' || m.status?.value === 'loaded');
+      ctx.activeModelMini = loadedModel ? loadedModel.id : '';
+    }
+  } catch (e) {
+    console.warn("Failed to check loaded mini model", e);
+  }
+}
+
+export async function handleModelMiniLoad(ctx, modelName = '') {
+  const targetModel = modelName;
+  if (!targetModel) return;
+  ctx.actionPending = true;
+  ctx.loadingModelMini = true;
+  ctx.showStatus(`Loading ${targetModel} on secondary GPU...`);
+  try {
+    const res = await fetch('/api/llm-mini/models/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: targetModel })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      ctx.activeModelMini = targetModel;
+      ctx.showStatus(`Loaded model on secondary GPU successfully!`);
+    } else {
+      ctx.showStatus(`Failed: ${data.detail || 'Unknown error'}`, true);
+    }
+  } catch (e) {
+    ctx.showStatus('Error: ' + e.message, true);
+  } finally {
+    ctx.actionPending = false;
+    ctx.loadingModelMini = false;
+  }
+}
+
+export async function handleModelMiniUnload(ctx) {
+  if (!ctx.activeModelMini) return;
+  ctx.actionPending = true;
+  ctx.showStatus(`Unloading model ${ctx.activeModelMini} from secondary GPU...`);
+  try {
+    const res = await fetch('/api/llm-mini/models/unload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: ctx.activeModelMini })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      ctx.activeModelMini = '';
+      ctx.showStatus('Unloaded model from secondary GPU successfully!');
+    } else {
+      ctx.showStatus(`Failed: ${data.detail || 'Unknown error'}`, true);
+    }
+  } catch (e) {
+    ctx.showStatus('Error: ' + e.message, true);
+  } finally {
+    ctx.actionPending = false;
+  }
+}
+
+export async function fetchModelsMiniIni(ctx) {
+  ctx.modelsMiniIniLoading = true;
+  try {
+    const res = await fetch('/api/models_mini_ini');
+    if (res.ok) {
+      const data = await res.json();
+      ctx.modelsMiniIniText = data.content || '';
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    ctx.modelsMiniIniLoading = false;
+  }
+}
+
+export async function saveModelsMiniIni(ctx) {
+  ctx.modelsMiniIniLoading = true;
+  try {
+    const res = await fetch('/api/models_mini_ini', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: ctx.modelsMiniIniText })
+    });
+    if (res.ok) {
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: 'modelg.ini saved successfully' },
+        bubbles: true, composed: true
+      }));
+      ctx.fetchModelsMiniList();
+    } else {
+      const err = await res.text();
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: `Save failed: ${err}` },
+        bubbles: true, composed: true
+      }));
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    ctx.modelsMiniIniLoading = false;
+  }
+}
+
+export async function handleScanMiniAndRegister(ctx) {
+  ctx.modelsMiniIniLoading = true;
+  try {
+    const res = await fetch('/api/models-mini/scan_and_register', { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: data.detail || 'Mini scan complete!' },
+        bubbles: true, composed: true
+      }));
+      ctx.fetchModelsMiniList();
+      ctx.fetchModelsMiniIni();
+    } else {
+      const err = await res.text();
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: `Mini scan failed: ${err}` },
+        bubbles: true, composed: true
+      }));
+    }
+  } catch (err) {
+    console.error(err);
+  } finally {
+    ctx.modelsMiniIniLoading = false;
+  }
+}
+
+export async function executeDeleteModelMini(ctx, filename) {
+  if (!filename) return;
+  try {
+    const res = await fetch(`/models-mini/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+    if (res.ok) {
+      const data = await res.json();
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: data.detail || `Deleted ${filename}` },
+        bubbles: true, composed: true
+      }));
+      ctx.fetchModelsMiniList();
+      ctx.fetchModelsMiniIni();
+    } else {
+      const err = await res.text();
+      ctx.dispatchEvent(new CustomEvent('op-queue-notification', {
+        detail: { message: `Delete failed: ${err}` },
+        bubbles: true, composed: true
+      }));
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}

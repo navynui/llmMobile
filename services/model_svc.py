@@ -237,3 +237,163 @@ async def get_vision_capabilities():
             "has_mmproj": has_mmproj
         }
     return {"models": models_metadata}
+
+
+# ── llama-server-mini / modelg.ini ─────────────────────────────────────────
+MINI_MODELS_INI = "/models/modelg.ini"
+
+def _list_models_from_ini(ini_path: str) -> list:
+    """Parse a models INI file and return a list of model dicts."""
+    if not os.path.exists(ini_path):
+        return []
+    models = []
+    try:
+        with open(ini_path) as f:
+            current_model = None
+            is_default = False
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(";"):
+                    continue
+                m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                if m:
+                    if current_model:
+                        models.append({"filename": current_model, "is_default": is_default})
+                    current_model = m.group(1) + ".gguf"
+                    is_default = False
+                elif "load-on-startup" in line and "true" in line.lower() and current_model:
+                    is_default = True
+            if current_model:
+                models.append({"filename": current_model, "is_default": is_default})
+    except Exception as e:
+        print(f"[Models INI] Failed to parse {ini_path}: {e}")
+    return models
+
+def _add_to_ini(filename: str, ini_path: str):
+    if not os.path.exists(ini_path):
+        try:
+            os.makedirs(os.path.dirname(ini_path), exist_ok=True)
+            with open(ini_path, "w") as f:
+                f.write("")
+        except Exception:
+            return
+    already_present = False
+    try:
+        with open(ini_path, "r") as f:
+            content = f.read()
+            if f"[{filename}]" in content or f"[{filename.lower()}]" in content.lower():
+                already_present = True
+    except Exception:
+        pass
+    if not already_present:
+        try:
+            block = f"""
+
+[{filename}]
+model = /models/{filename}
+n-gpu-layers = -1
+"""
+            with open(ini_path, "a") as f:
+                f.write(block)
+            print(f"[Models INI] Auto-registered {filename} in {ini_path}")
+        except Exception as e:
+            print(f"[Models INI] Failed to auto-add {filename} to {ini_path}: {e}")
+
+def _remove_from_ini(filename: str, ini_path: str):
+    if not os.path.exists(ini_path):
+        return
+    try:
+        with open(ini_path, "r") as f:
+            lines = f.readlines()
+        new_lines = []
+        skip_section = False
+        target_lower = filename.lower()
+        target_base = target_lower[:-5] if target_lower.endswith(".gguf") else target_lower
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith("[") and line_stripped.endswith("]"):
+                section_name = line_stripped[1:-1].lower()
+                section_base = section_name[:-5] if section_name.endswith(".gguf") else section_name
+                if section_base == target_base:
+                    skip_section = True
+                    continue
+                else:
+                    skip_section = False
+            if skip_section:
+                continue
+            new_lines.append(line)
+        with open(ini_path, "w") as f:
+            f.writelines(new_lines)
+        print(f"[Models INI] Cleaned up {filename} from {ini_path}")
+    except Exception as e:
+        print(f"[Models INI] Failed to clean up {filename} from {ini_path}: {e}")
+
+MINI_SERVER_URL = "http://llm-server-mini:8080"
+
+def list_mini_models():
+    return {"models": _list_models_from_ini(MINI_MODELS_INI)}
+
+def get_models_mini_ini():
+    if not os.path.exists(MINI_MODELS_INI):
+        return {"content": ""}
+    try:
+        with open(MINI_MODELS_INI, "r") as f:
+            return {"content": f.read()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def save_models_mini_ini(req: ModelsIniRequest):
+    try:
+        os.makedirs(os.path.dirname(MINI_MODELS_INI), exist_ok=True)
+        with open(MINI_MODELS_INI, "w") as f:
+            f.write(req.content)
+        return {"detail": "modelg.ini updated successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def delete_model_from_mini(filename: str):
+    if not filename.endswith(".gguf") or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = os.path.join(MODELS_DIR, filename)
+    if os.path.exists(path):
+        os.remove(path)
+    _remove_from_ini(filename, MINI_MODELS_INI)
+    return {"detail": f"Deleted {filename} and updated modelg.ini"}
+
+async def proxy_llm_mini_models():
+    async with httpx.AsyncClient() as c:
+        try:
+            return (await c.get(f"{MINI_SERVER_URL}/models", timeout=5)).json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+async def proxy_llm_mini_load(req: ModelActionRequest):
+    async with httpx.AsyncClient() as c:
+        try:
+            preset_id = await _get_preset_id_for_model(req.model)
+            resp = await c.post(f"{MINI_SERVER_URL}/models/load", json={"model": preset_id}, timeout=30)
+            return resp.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+async def proxy_llm_mini_unload(req: ModelActionRequest):
+    async with httpx.AsyncClient() as c:
+        try:
+            preset_id = await _get_preset_id_for_model(req.model)
+            return (await c.post(f"{MINI_SERVER_URL}/models/unload", json={"model": preset_id}, timeout=10)).json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+async def scan_mini_and_register():
+    if not os.path.exists(MODELS_DIR):
+        return {"detail": "Models directory not found"}
+    added_count = 0
+    for fname in os.listdir(MODELS_DIR):
+        if fname.endswith(".gguf"):
+            try:
+                _add_to_ini(fname, MINI_MODELS_INI)
+            except Exception as e:
+                print(f"Error adding {fname} to modelg.ini: {e}")
+                continue
+            added_count += 1
+    return {"detail": f"Scan complete. Added {added_count} models to modelg.ini."}

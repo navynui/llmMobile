@@ -15,6 +15,11 @@ if not os.path.exists(MODES_INI_PATH):
     MODES_INI_PATH = "/home/nui/llmaCPP/models/models.ini"
     os.makedirs(os.path.dirname(MODES_INI_PATH), exist_ok=True)
 
+MODELG_INI_PATH = "/models/modelg.ini"
+if not os.path.exists(MODELG_INI_PATH):
+    MODELG_INI_PATH = "/home/nui/llmaCPP/models/modelg.ini"
+    os.makedirs(os.path.dirname(MODELG_INI_PATH), exist_ok=True)
+
 IMAGE_GEN_OUTPUT = "/comfyui-output"
 if not os.path.exists(IMAGE_GEN_OUTPUT):
     IMAGE_GEN_OUTPUT = "/home/nui/llmaCPP/comfyui-output"

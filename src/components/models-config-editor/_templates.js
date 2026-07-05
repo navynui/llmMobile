@@ -9,7 +9,7 @@ export function renderModelSwitcher(ctx) {
   return html`
     <div class="card">
       <div class="switcher-header" @click="${() => ctx.toggleSwitcher()}">
-        <div class="card-title" style="margin-bottom: 0;">🤖 Active LLM Model</div>
+        <div class="card-title" style="margin-bottom: 0;">🤖 Active LLM Model — ${ctx.iniLabel}</div>
         <div class="arrow-icon ${ctx.switcherExpanded ? 'arrow-expanded' : ''}">▼</div>
       </div>
 
@@ -22,7 +22,7 @@ export function renderModelSwitcher(ctx) {
         </div>
 
         ${ctx.isServerRunning ? html`
-          <div class="select-label">Select GGUF model from models.ini:</div>
+          <div class="select-label">Select GGUF model from ${ctx.iniLabel}:</div>
           <select id="model-select" ?disabled="${ctx.actionPending}" @change="${(e) => handleSelectModelChange(ctx, e)}">
             <option value="">-- Choose a Model --</option>
             ${ctx.models.map(m => html`
@@ -110,7 +110,7 @@ export function renderEditIni(ctx) {
   return html`
     <div class="card">
       <div class="switcher-header" @click="${() => ctx.toggleIni()}">
-        <div class="card-title" style="margin-bottom: 0;">📝 Edit models.ini</div>
+        <div class="card-title" style="margin-bottom: 0;">📝 Edit ${ctx.iniLabel}</div>
         <div class="arrow-icon ${ctx.iniExpanded ? 'arrow-expanded' : ''}">▼</div>
       </div>
 
@@ -165,7 +165,7 @@ export function renderDeleteModal(ctx) {
         <h3 class="modal-title">Delete GGUF Model</h3>
         <p class="modal-body">
           Are you sure you want to delete <strong>${ctx.modelToDelete}</strong>?
-          This will permanently delete the GGUF file from disk and automatically remove its configuration block from <code>models.ini</code>.
+          This will permanently delete the GGUF file from disk and automatically remove its configuration block from <code>${ctx.iniLabel}</code>.
         </p>
         <div class="modal-actions">
           <button class="btn btn-secondary" style="padding: 8px 16px;" @click="${() => closeDeleteConfirm(ctx)}">Cancel</button>

@@ -31,7 +31,10 @@ from services.docker_svc import (
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
     proxy_llm_models, proxy_llm_load, proxy_llm_unload,
-    get_vision_capabilities
+    get_vision_capabilities,
+    list_mini_models, delete_model_from_mini, get_models_mini_ini, save_models_mini_ini,
+    proxy_llm_mini_models, proxy_llm_mini_load, proxy_llm_mini_unload,
+    scan_mini_and_register,
 )
 from services.chat_svc import proxy_chat
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
@@ -154,6 +157,39 @@ async def route_proxy_llm_unload(req: ModelActionRequest):
 @app.get("/models/vision-capabilities")
 async def route_get_vision_capabilities():
     return await get_vision_capabilities()
+
+@app.get("/models-mini")
+def route_list_mini_models():
+    return list_mini_models()
+
+@app.delete("/models-mini/{filename}")
+def route_delete_model_from_mini(filename: str):
+    return delete_model_from_mini(filename)
+
+@app.get("/api/models_mini_ini")
+def route_get_models_mini_ini():
+    return get_models_mini_ini()
+
+@app.post("/api/models_mini_ini")
+def route_save_models_mini_ini(req: ModelsIniRequest):
+    return save_models_mini_ini(req)
+
+@app.get("/api/llm-mini/models")
+async def route_proxy_llm_mini_models():
+    return await proxy_llm_mini_models()
+
+@app.post("/api/llm-mini/models/load")
+async def route_proxy_llm_mini_load(req: ModelActionRequest):
+    return await proxy_llm_mini_load(req)
+
+@app.post("/api/llm-mini/models/unload")
+async def route_proxy_llm_mini_unload(req: ModelActionRequest):
+    return await proxy_llm_mini_unload(req)
+
+@app.post("/api/models-mini/scan_and_register")
+def route_scan_mini_and_register():
+    return scan_mini_and_register()
+
 
 @app.post("/api/chat/completions")
 async def route_proxy_chat(request: Request):
