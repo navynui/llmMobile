@@ -55,7 +55,8 @@ export async function fetchBenchmarkStatus(ctx) {
 
 export async function fetchActiveModelId(ctx) {
   try {
-    const res = await fetch('/api/llm/models');
+    const endpoint = ctx.selectedBenchmarkServer === 'secondary' ? '/api/llm-mini/models' : '/api/llm/models';
+    const res = await fetch(endpoint);
     if (res.ok) {
       const data = await res.json();
       const loadedModel = data.data?.find(
@@ -85,7 +86,7 @@ export async function runBenchmark(ctx) {
     const res = await fetch('/api/benchmarks/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId })
+      body: JSON.stringify({ judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId, server: ctx.selectedBenchmarkServer || 'primary' })
     });
     const data = await res.json();
     if (res.ok) {
@@ -151,7 +152,8 @@ export async function runQueueBenchmark(ctx) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         models: ctx.benchmarkQueue,
-        judge_model_id: ctx.selectedJudgeModelId
+        judge_model_id: ctx.selectedJudgeModelId,
+        server: ctx.selectedBenchmarkServer || 'primary'
       })
     });
     const data = await res.json();

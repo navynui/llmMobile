@@ -1,17 +1,32 @@
 import { LitElement, html, css } from 'lit';
 import Chart from 'chart.js/auto';
 
-// Color interpolation: map tokens_sec (15 → 85) to a sequential gradient.
-function interpolateColor(tokensSec) {
+// Color interpolation for PRIMARY server (Tesla P100) — pale gray → deep teal
+function interpolateColorPrimary(tokensSec) {
   const min = 15, max = 85;
   const t = Math.max(0, Math.min(1, (tokensSec - min) / (max - min)));
-
-  // Pale gray → deep teal/sea-green
   const r = Math.round(229 + (20 - 229) * t);
   const g = Math.round(231 + (180 - 231) * t);
   const b = Math.round(235 + (164 - 235) * t);
-
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Color interpolation for SECONDARY server (GTX 1060) — pale gray → deep amber/orange
+function interpolateColorSecondary(tokensSec) {
+  const min = 15, max = 85;
+  const t = Math.max(0, Math.min(1, (tokensSec - min) / (max - min)));
+  const r = Math.round(229 + (217 - 229) * t);
+  const g = Math.round(231 + (119 - 231) * t);
+  const b = Math.round(235 + (6 - 235) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function getBubbleColor(item) {
+  if (!item || !item.tokens_sec) return 'rgba(156, 163, 175, 0.4)';
+  if (item.server === 'secondary') {
+    return interpolateColorSecondary(item.tokens_sec);
+  }
+  return interpolateColorPrimary(item.tokens_sec);
 }
 
 export class BenchmarkBubbleChart extends LitElement {
@@ -63,6 +78,27 @@ export class BenchmarkBubbleChart extends LitElement {
       align-items: center;
       gap: 6px;
     }
+
+    .legend {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
   `;
 
   constructor() {
@@ -99,13 +135,23 @@ export class BenchmarkBubbleChart extends LitElement {
       type: 'scatter',
       data: this._buildChartData(),
       options: this._chartOptions(),
+      plugins: [this._legendPlugin()],
     });
   }
 
   _updateChart() {
     if (!this.chart) return;
     this.chart.data = this._buildChartData();
-    this.chart.update('none'); // efficient update without animation
+    this.chart.update('none');
+  }
+
+  _legendPlugin() {
+    return {
+      id: 'customLegend',
+      afterDraw: () => {
+        // Rendered via Lit template instead
+      },
+    };
   }
 
   _buildChartData() {
@@ -117,29 +163,28 @@ export class BenchmarkBubbleChart extends LitElement {
       const xVal = b.vram_gb ?? null;
       const yVal = b.score ?? null;
 
-      if (xVal === null && yVal === null) return; // skip rows with no data at all
-      // Skip points without known VRAM — we can't meaningfully place them on the x-axis.
-      // A model with a score but unknown VRAM would incorrectly appear at x=0.
+      if (xVal === null && yVal === null) return;
       if (xVal === null && yVal !== null) return;
 
       const key = `${b.model_id}__${xVal ?? '0'}__${yVal ?? '0'}`;
       labels.set(key, { ...b, xVal: xVal ?? 0, yVal: yVal ?? 0 });
     });
 
-    // Group by model_id to avoid duplicates
     const seen = new Set();
-    for (const [key, b] of labels) {
+    for (const [, b] of labels) {
       if (!seen.has(b.model_id)) {
         seen.add(b.model_id);
         dataPoints.push({
           x: b.xVal,
           y: b.yVal,
           model: b.model,
+          model_id: b.model_id,
           quant: b.quant,
           tokens_sec: b.tokens_sec ?? 0,
           score: b.score ?? 0,
           status: b.status || 'testing',
           vram_gb: b.vram_gb,
+          server: b.server || 'primary',
         });
       }
     }
@@ -148,24 +193,23 @@ export class BenchmarkBubbleChart extends LitElement {
       datasets: [{
         label: '',
         data: dataPoints,
-        backgroundColor: (ctx) => {
-          const item = ctx.dataset.data[ctx.dataIndex];
-          if (!item || !item.tokens_sec) return 'rgba(156, 163, 175, 0.4)';
-          return interpolateColor(item.tokens_sec);
-        },
+        backgroundColor: (ctx) => getBubbleColor(ctx.dataset.data[ctx.dataIndex]),
         borderColor: (ctx) => {
           const item = ctx.dataset.data[ctx.dataIndex];
           if (!item) return 'rgba(255,255,255,0.3)';
+          if (item.server === 'secondary') return '#f59e0b';
           return item.status === 'good' ? '#14b8a6' : '#9ca3af';
         },
         borderWidth: (ctx) => {
           const item = ctx.dataset.data[ctx.dataIndex];
           if (!item) return 1;
+          if (item.server === 'secondary') return 2.5;
           return item.status === 'good' ? 2 : 1.5;
         },
         borderDash: (ctx) => {
           const item = ctx.dataset.data[ctx.dataIndex];
           if (!item) return [];
+          if (item.server === 'secondary') return [4, 3];
           return item.status !== 'good' ? [6, 4] : [];
         },
         pointRadius: 10,
@@ -174,8 +218,6 @@ export class BenchmarkBubbleChart extends LitElement {
   }
 
   _chartOptions() {
-    const isHighlighted = !!this.highlightedModelId;
-
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -233,6 +275,7 @@ export class BenchmarkBubbleChart extends LitElement {
               const d = item.raw;
               if (!d) return '';
               const lines = [];
+              lines.push(`Server: ${d.server === 'secondary' ? 'GTX 1060 (Secondary)' : 'Tesla P100 (Primary)'}`);
               if (d.quant) lines.push(`Quantization: ${d.quant}`);
               if (d.vram_gb !== null && d.vram_gb !== undefined) {
                 lines.push(`VRAM: ${d.vram_gb} GB`);
@@ -268,8 +311,6 @@ export class BenchmarkBubbleChart extends LitElement {
           if (item && item.model_id) {
             this.highlightedModelId = item.model_id;
           }
-        } else if (!this.highlightedModelId) {
-          // Only clear if no external highlight is set.
         }
       },
     };
@@ -279,7 +320,17 @@ export class BenchmarkBubbleChart extends LitElement {
     return html`
       <div class="card">
         <h3>📊 VRAM vs Score — Model Comparison</h3>
-        <h4>Bubble color: inference speed (15 → 85 token/s) · Border style: solid = good, dashed = testing</h4>
+        <h4>Bubble color: inference speed · Border: solid=primary, dashed=secondary</h4>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background: #14b8a6;"></div>
+            <span>Primary (Tesla P100)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: #f59e0b;"></div>
+            <span>Secondary (GTX 1060)</span>
+          </div>
+        </div>
         <div class="chart-container">
           <canvas id="bubble-chart-canvas"></canvas>
         </div>

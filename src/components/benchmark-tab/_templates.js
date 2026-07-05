@@ -132,6 +132,13 @@ export function renderBenchmarksView(ctx) {
             <span style="font-size: 0.72rem; color: var(--text-secondary); font-style: italic;">The Judge LLM is responsible for grading qualitative output from 0-25 per round using golden reference answers.</span>
           </div>
 
+          <!-- Server Selector -->
+          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+            <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 500;">Test Server:</span>
+            <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'primary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'primary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'primary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'primary'; fetchActiveModelId(ctx); }}">Primary (Tesla P100)</button>
+            <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'secondary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'secondary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'secondary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'secondary'; fetchActiveModelId(ctx); }}">Secondary (GTX 1060)</button>
+          </div>
+
           <!-- Action Triggers -->
           <div style="display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap;">
             <button
@@ -299,6 +306,7 @@ export function renderBenchmarksView(ctx) {
                             <span style="color: var(--text-muted); font-style: italic; font-size: 0.82rem;">${b.model}</span>
                           `}
                           ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.6rem; padding: 1px 5px;">⚖️ Judge</span>` : ''}
+                          ${b.server ? html`<span class="meta-badge" style="background: ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; color: ${b.server === 'secondary' ? '#fbbf24' : '#34d399'}; border: 1px solid ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.3)' : 'rgba(16, 185, 129, 0.3)'}; font-size: 0.6rem; padding: 1px 5px;">${b.server === 'secondary' ? '🟠 Secondary' : '🟢 Primary'}</span>` : ''}
                           ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>` : ''}
                           ${b.is_ready ?
                             html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">🟢 Ready</span>` :

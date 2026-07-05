@@ -48,6 +48,7 @@ export class BenchmarkTab extends LitElement {
     this.filterQuery = '';
     this.platformFilter = 'all';
     this.showAllBenchmarks = false;
+    this.selectedBenchmarkServer = 'primary';
     this.benchmarkProgress = {
       running: false,
       model_id: '',
