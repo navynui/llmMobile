@@ -114,6 +114,9 @@ ${buttonStyles}
       new CustomEvent('server-action', { detail: { server: serverName, action }, bubbles: true, composed: true })
     );
   }
+  _handleFreeComfy() {
+    this.dispatchEvent(new CustomEvent('free-comfy', { bubbles: true, composed: true }));
+  }
 
   render() {
     const stats = this.stats || {};
@@ -165,6 +168,9 @@ ${buttonStyles}
             <div>Image: ${managerStatus.image || 'N/A'}</div>
             ${managerStatus.status === 'running' ? html`<div>Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
           </div>
+          <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="width: 100%; justify-content: center; padding: 12px 8px; margin-top: 12px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);">
+            🧹 Free ComfyUI
+          </button>
         </div>
 
         <div class="card" style="margin-top: 16px;">
