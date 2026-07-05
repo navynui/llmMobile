@@ -37,10 +37,13 @@ class DownloadRequest(BaseModel):
 
 class BenchmarkRunRequest(BaseModel):
     judge_model_id: Optional[str] = None
+    server: str = "primary"
+
 
 class BenchmarkQueueRequest(BaseModel):
     models: list[str]
     judge_model_id: str
+    server: str = "primary"
 
 class JudgeRequest(BaseModel):
     run_id: Optional[str] = None

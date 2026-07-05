@@ -52,12 +52,12 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
             for old_run in old_runs:
                 cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
             cursor.execute("""
-                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
-                VALUES (?, ?, ?, ?)
-            """, (run_id, model_id, timestamp, raw_output_path))
+                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server)
+                VALUES (?, ?, ?, ?, ?)
+            """, (run_id, model_id, timestamp, raw_output_path, req.server))
             conn.commit()
             conn.close()
-            background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id)
+            background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id, req.server)
             return {
                 "status": "success",
                 "message": "Benchmark sequence initiated successfully in the background.",
@@ -77,7 +77,7 @@ async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: Back
             raise HTTPException(status_code=400, detail="A benchmark or queue is already actively running. Please wait for it to complete.")
         set_benchmark_running(True)
         try:
-            background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id)
+            background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id, req.server)
             return {
                 "status": "success",
                 "message": "Automated benchmark queue initiated successfully in the background.",

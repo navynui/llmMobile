@@ -14,8 +14,8 @@ from services.vram_svc import capture_and_store_vram, wait_for_idle_trigger
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
-from services.chat_svc import _get_loaded_model
-from services.model_svc import _get_preset_id_for_model
+from services.chat_svc import _get_loaded_model, _get_loaded_mini_model
+from services.model_svc import _get_preset_id_for_model, MINI_SERVER_URL
 from utils.common import get_quantization_from_name
 from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
@@ -29,13 +29,33 @@ RETRY_MAX_TOKENS_RAMP = (4096, 6144, 8192, 12288)
 RETRY_MAX_ATTEMPTS = len(RETRY_MAX_TOKENS_RAMP) - 1  # = 3
 RETRY_PAUSE_SECONDS = 5
 
+# ── Server-aware helpers ──────────────────────────────────────────────────
+
+def _get_server_config(server: str = "primary") -> dict:
+    """Return URL and loaded-model helper for the given server."""
+    if server == "secondary":
+        return {
+            "server_url": MINI_SERVER_URL,
+            "chat_url": f"{MINI_SERVER_URL}/v1/chat/completions",
+            "get_loaded": _get_loaded_mini_model,
+        }
+    return {
+        "server_url": "http://llm-server:8080",
+        "chat_url": "http://llm-server:8080/v1/chat/completions",
+        "get_loaded": _get_loaded_model,
+    }
+
+
 # ── Benchmark execution tasks ──────────────────────────────────────────────────
 
-async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str]):
+async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str], server: str = "primary"):
     from services.judge import judge_benchmark, get_gold_key, get_llm_server_url
     from services.model_svc import _get_preset_id_for_model
 
-    _benchmark_progress["running"] = True
+    cfg = _get_server_config(server)
+    server_url = cfg["server_url"]
+    api_url = cfg["chat_url"]
+    _benchmark_progress["server"] = server
     _benchmark_progress["model_id"] = model_id
     _benchmark_progress["current_round"] = "Initializing..."
     _benchmark_progress["rounds_completed"] = 0
@@ -52,8 +72,6 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     }
 
     rounds_list = []
-    server_url = get_llm_server_url()
-    api_url = f"{server_url}/v1/chat/completions"
 
     # Capture VRAM after model is confirmed loaded and idle.
     log_benchmark("Waiting for server to be idle before capturing VRAM...")
@@ -70,7 +88,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                 log_benchmark(f"Executing {round_name}...")
                 broadcast_notification(f"📊 Round {idx}/5: {round_name}")
 
-                preset_id = await _get_preset_id_for_model(model_id)
+                preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
                 payload = {
                     "model": preset_id,
                     "messages": [{"role": "user", "content": prompt_text}],
@@ -224,13 +242,21 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         _benchmark_progress["current_round"] = "Finished"
 
 
-async def run_benchmark_queue_task(models: list, judge_model_id: str):
+async def run_benchmark_queue_task(models: list, judge_model_id: str, server: str = "primary"):
     import json
     from services.judge import (
         judge_benchmark, get_gold_key, get_llm_server_url
     )
     from utils.common import get_quantization_from_name
     from services.chat_svc import _get_loaded_model
+
+    cfg = _get_server_config(server)
+    server_url = cfg["server_url"]
+    api_url = cfg["chat_url"]
+    get_loaded_model_fn = cfg["get_loaded"]
+    load_model_url = f"{server_url}/models/load"
+    mini_url = MINI_SERVER_URL
+    _benchmark_progress["server"] = server
     _benchmark_progress["running"] = True
     _benchmark_progress["queue_running"] = True
     _benchmark_progress["queue"] = models
@@ -248,11 +274,11 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
             broadcast_notification(f"📊 Benchmark queue progress: {idx+1}/{len(models)} - Testing {model_id}")
 
             # 1. Load the test model via the server API
-            preset_id = await _get_preset_id_for_model(model_id)
+            preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
             log_benchmark(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
+                    load_res = await client.post(load_model_url, json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
                         try:
                             res_json = load_res.json()
@@ -277,7 +303,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
             loaded = False
             for _ in range(60):  # wait up to 120 seconds
                 await asyncio.sleep(2)
-                curr_loaded = await _get_loaded_model()
+                curr_loaded = await get_loaded_model_fn()
                 if curr_loaded and _clean_model_id(curr_loaded) == _clean_model_id(model_id):
                     loaded = True
                     break
@@ -320,9 +346,9 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
                     cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
 
                 cursor.execute("""
-                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path)
-                VALUES (?, ?, ?, ?)
-                """, (run_id, norm_model_id, timestamp, raw_output_path))
+                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server)
+                VALUES (?, ?, ?, ?, ?)
+                """, (run_id, norm_model_id, timestamp, raw_output_path, server))
                 conn.commit()
                 conn.close()
                 model_id = norm_model_id
@@ -340,15 +366,13 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str):
             }
 
             rounds_list = []
-            server_url = get_llm_server_url()
-            api_url = f"{server_url}/v1/chat/completions"
 
             async with httpx.AsyncClient(timeout=600.0) as client:
                 for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                     _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
                     _benchmark_progress["rounds_completed"] = r_idx - 1
 
-                    preset_id = await _get_preset_id_for_model(model_id)
+                    preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
                     log_benchmark(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
                     payload = {
                         "model": preset_id,

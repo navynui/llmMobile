@@ -8,12 +8,14 @@ from typing import Optional
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import ModelActionRequest, ModelsIniRequest
 
-async def _get_preset_id_for_model(model_id: str) -> str:
+async def _get_preset_id_for_model(model_id: str, server_url: str = None) -> str:
     if not model_id:
         return model_id
+    if server_url is None:
+        server_url = "http://llm-server:8080"
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.get("http://llm-server:8080/models", timeout=3)
+            res = await client.get(f"{server_url}/models", timeout=3)
             if res.status_code == 200:
                 presets = [m["id"] for m in res.json().get("data", [])]
                 # Search for a case-insensitive match (with or without extension)
