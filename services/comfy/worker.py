@@ -31,7 +31,7 @@ from utils.common import (
 )
 from .workflow import _build_workflow
 from .comfyio import _queue_comfy, _wait_comfy, _write_sidecar, _free_comfy_cache
-from .queue_state import _queue_lock, _gen_queue, _queue_running, broadcast_queue
+from .queue_state import _queue_lock, get_gen_queue, set_queue_running, broadcast_queue
 # ───────────────────────────────────────────────
 # Queue worker
 # ───────────────────────────────────────────────
@@ -248,11 +248,11 @@ async def queue_worker(send_push_fn=None):
     Args:
         send_push_fn: Optional callable(title, body) for push notifications.
     """
-    global _queue_running, _cooldown_task
+    global _cooldown_task
 
     first_item = None
     with _queue_lock:
-        for qi in _gen_queue:
+        for qi in get_gen_queue():
             if qi["status"] == "queued":
                 first_item = qi
                 break
@@ -270,12 +270,12 @@ async def queue_worker(send_push_fn=None):
             while True:
                 item = None
                 with _queue_lock:
-                    for qi in _gen_queue:
+                    for qi in get_gen_queue():
                         if qi["status"] == "queued":
                             item = qi
                             break
                 if item is None:
-                    _queue_running = False
+                    set_queue_running(False)
                     break  # Exit loop, not the function — cleanup happens below
 
                 loop = asyncio.get_running_loop()
@@ -340,7 +340,7 @@ async def queue_worker(send_push_fn=None):
     except Exception as e:
         print(f"[Queue Worker] Swapping or generation failed: {e}")
         with _queue_lock:
-            for qi in _gen_queue:
+            for qi in get_gen_queue():
                 if qi["status"] == "queued":
                     qi["status"] = "error"
                     qi["error"] = f"VRAM Swap failed: {str(e)}"
@@ -349,15 +349,15 @@ async def queue_worker(send_push_fn=None):
         if loaded_model and not force_gen:
             print(f"[Queue Worker] Reloading model after failure: {loaded_model}")
             await _reload_llama_model(loaded_model)
-        _queue_running = False
+        set_queue_running(False)
         return
 
     # After the generation loop finishes: free ComfyUI and schedule cooldown reload
     if loaded_model and not force_gen:
         print(f"[Queue Worker] Generation done. Starting cooldown cleanup for {loaded_model}")
-        _queue_running = False
+        set_queue_running(False)
         _cooldown_task = asyncio.create_task(_post_queue_cleanup(loaded_model))
     else:
-        _queue_running = False
+        set_queue_running(False)
 
 

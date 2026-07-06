@@ -30,7 +30,7 @@ from utils.common import (
     _deep_copy,
 )
 from .client import _COMFY_HTTP
-from .queue_state import _queue_lock, _gen_queue, is_queue_running, set_queue_running, get_queue_snapshot, broadcast_queue, _queue_sse_subscribers
+from .queue_state import _queue_lock, get_gen_queue, is_queue_running, set_queue_running, get_queue_snapshot, broadcast_queue, _queue_sse_subscribers
 from .worker import queue_worker, _cancel_pending_cooldown
 # ───────────────────────────────────────────────
 # Queue route endpoints (from main.py)
@@ -107,12 +107,12 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
 
     should_start = not is_queue_running()
     with _queue_lock:
-        _gen_queue.append(item)
+        get_gen_queue().append(item)
     await broadcast_queue()
     if should_start:
         set_queue_running(True)
         asyncio.create_task(queue_worker(send_push_fn=send_push))
-    return {"queue_id": queue_id, "position": len(_gen_queue)}
+    return {"queue_id": queue_id, "position": len(get_gen_queue())}
 
 
 def get_queue() -> dict:
@@ -121,7 +121,7 @@ def get_queue() -> dict:
 
 async def cancel_queue_item(queue_id: str) -> dict:
     with _queue_lock:
-        for item in _gen_queue:
+        for item in get_gen_queue():
             if item["id"] == queue_id and item["status"] in (
                 "queued",
                 "running",
@@ -140,9 +140,9 @@ async def cancel_queue_item(queue_id: str) -> dict:
 async def clear_completed() -> dict:
     with _queue_lock:
         done = {"completed", "error", "cancelled"}
-        removable = [i for i in _gen_queue if i["status"] in done]
+        removable = [i for i in get_gen_queue() if i["status"] in done]
         for r in removable:
-            _gen_queue.remove(r)
+            get_gen_queue().remove(r)
     await broadcast_queue()
     return {"detail": f"Cleared {len(removable)} finished items"}
 
