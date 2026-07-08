@@ -120,6 +120,7 @@ async def _run_subtask(
     with _queue_lock:
         if item["status"] != "cancelled":
             item["image_ids"] = item.get("image_ids", []) + image_ids
+    await broadcast_queue()
     return image_ids
 
 

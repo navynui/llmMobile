@@ -57,6 +57,9 @@ export function startQueueStream(ctx) {
       const newQueue = payload.queue || [];
       ctx.checkQueueCompletions(ctx.queue, newQueue);
       ctx.queue = newQueue;
+      // Dispatch a custom event so child components like generator-tab
+      // can force re-render as a belt-and-suspenders alongside property binding.
+      window.dispatchEvent(new CustomEvent('queue-update', { detail: ctx.queue }));
     } catch (err) {
       console.error("Failed to parse queue SSE payload", err);
     }

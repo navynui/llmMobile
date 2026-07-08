@@ -43,11 +43,14 @@ export class GeneratorTab extends LitElement {
     super.connectedCallback();
     this._onOpQueueChanged = () => this.requestUpdate();
     window.addEventListener('op-queue-changed', this._onOpQueueChanged);
+    this._onQueueUpdate = () => this.requestUpdate();
+    window.addEventListener('queue-update', this._onQueueUpdate);
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('op-queue-changed', this._onOpQueueChanged);
+    window.removeEventListener('queue-update', this._onQueueUpdate);
   }
 
   _savePrefs() {
