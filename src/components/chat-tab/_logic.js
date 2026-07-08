@@ -661,7 +661,7 @@ export function formatMessage(ctx, text) {
 
   // 4.6. Headings
   htmlContent = htmlContent.replace(/^###\s+(.*)$/gm, '<h3>$1</h3>');
-  htmlContent = htmlContent.replace(/^##\s+(.*)$/gm, '<h2>$2</h2>');
+  htmlContent = htmlContent.replace(/^##\s+(.*)$/gm, '<h2>$1</h2>');
   htmlContent = htmlContent.replace(/^#\s+(.*)$/gm, '<h1>$1</h1>');
 
   // 5. Bold (**bold**)
