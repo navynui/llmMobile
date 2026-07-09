@@ -17,14 +17,22 @@ except Exception as e:
     _docker_client = None
     print(f"Error connecting to Docker socket: {e}")
 
+# Host root partition total size (from `df -h /`): 464GB
+_HOST_STORAGE_TOTAL_GB = 464.0
+
 _stats_cache: dict = {"data": {
   "cpu_temp": 0.0, "cpu_util": 0.0, "ram_percent": 0.0,
   "gpu_temp": 0.0, "gpu_util": 0.0, "vram_percent": 0.0,
-  "storage_percent": 0.0, "storage_used_gb": 0.0, "storage_total_gb": 0.0,
+  "storage_percent": 0.0, "storage_used_gb": 0.0, "storage_total_gb": _HOST_STORAGE_TOTAL_GB,
   "gpu_temp_gtx": 0.0, "gpu_util_gtx": 0.0, "vram_percent_gtx": 0.0,
 }}
 _stats_lock = threading.Lock()
 last_mqtt_update_time: float = 0.0
+
+def _compute_storage_used(percent: float) -> float:
+    if _HOST_STORAGE_TOTAL_GB <= 0 or percent <= 0:
+        return 0.0
+    return round(percent * _HOST_STORAGE_TOTAL_GB / 100.0, 1)
 
 from typing import Any
 
@@ -176,6 +184,9 @@ def _on_mqtt_message(client, userdata, msg):
         if key:
             with _stats_lock:
                 _stats_cache["data"][key] = val
+                # When storage_percent arrives, derive used GB from hardcoded host total.
+                if key == "storage_percent":
+                    _stats_cache["data"]["storage_used_gb"] = _compute_storage_used(val)
             last_mqtt_update_time = time.time()
     except Exception as e:
         print(f"MQTT Parse Error: {e}")
