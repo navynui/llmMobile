@@ -143,27 +143,80 @@ async def capture_and_store_vram(model_id: str, status: str = "good", timeout: f
     return vram_gb
 
 
-async def wait_for_idle_trigger(log_client=None, timeout: float = 120.0, server: str = "primary") -> bool:
-    """Poll server logs for the idle trigger after a model load or benchmark round.
+async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: str = "primary") -> bool:
+    """Wait for server slots to be idle after a model load or benchmark round.
 
-    Returns True when the trigger is found; False on timeout.
-    Uses get_logs() if no log_client is provided (the default route).
+    Uses llama-server's /slots API (is_processing field) which is much faster
+    and more reliable than log parsing. Falls back to log-based detection for
+    older llama.cpp versions.
+
+    Returns True when all slots are idle; False on timeout.
     """
-    from services.docker_svc import get_logs as _get_logs
+    import httpx
 
-    container_name = "llm-server-mini" if server == "secondary" else "llm-server"
+    base_url = "http://llm-server:8080" if server == "primary" else "http://llm-server-mini:8080"
     start = time.time()
+
     while time.time() - start < timeout:
+        # Primary method: check /slots API (newer llama.cpp router mode)
         try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                models_resp = await client.get(f"{base_url}/models")
+                models_data = models_resp.json()
+                loaded_model = None
+                for m in models_data.get("data", []):
+                    s = m.get("status")
+                    if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
+                        loaded_model = m.get("id")
+                        break
+
+                if loaded_model:
+                    slots_resp = await client.get(
+                        f"{base_url}/slots", params={"model": loaded_model}
+                    )
+                    slots = slots_resp.json()
+                    all_idle = all(
+                        not slot.get("is_processing", True) for slot in slots
+                    )
+                    if all_idle:
+                        return True
+        except Exception:
+            pass  # Fall through to log-based check below
+
+        # Fallback: log-based detection for older llama.cpp
+        try:
+            from services.docker_svc import get_logs as _get_logs
+
+            container_name = "llm-server-mini" if server == "secondary" else "llm-server"
             logs_resp = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _get_logs(container_name, lines=200)
+                None, lambda: _get_logs(container_name, lines=100)
             )
             log_text = (logs_resp or {}).get("logs", "")
+            # Older format: "all slots are idle"
             if "all slots are idle" in log_text.lower():
                 return True
-        except Exception as e:
-            print(f"[VRAM] Idle trigger poll error: {e}")
-        await asyncio.sleep(2)
+            # Newer router mode: check that the last slot line is a release
+            lines = log_text.strip().split("\n")
+            slot_lines = [
+                l
+                for l in lines[-50:]
+                if "slot" in l.lower()
+                and (
+                    "release" in l.lower()
+                    or "launch_slot_" in l.lower()
+                    or "get_availabl" in l.lower()
+                )
+            ]
+            if slot_lines:
+                last = slot_lines[-1].lower()
+                # Idle if last slot event is a release (stop processing) or
+                # a get_availabl with no subsequent launch
+                if "release" in last and "stop processing" in last:
+                    return True
+        except Exception:
+            pass
+
+        await asyncio.sleep(1)
 
     return False
 
