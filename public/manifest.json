@@ -1,0 +1,27 @@
+{
+  "name": "LLM Mobile Manager",
+  "short_name": "LLM Mobile",
+  "description": "Mobile-first controller for LLM inference, image generation, and benchmarking",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#6366f1",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icons.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "lang": "en-US",
+  "display_override": ["standalone", "window-controls-overlay"]
+}

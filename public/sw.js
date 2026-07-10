@@ -1,4 +1,4 @@
-const CACHE_NAME = 'llm-mobile-v1';
+const CACHE_NAME = 'llm-mobile-v2';
 const ASSETS = [
   '/',
   '/index.html',
@@ -43,19 +43,35 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Helper: check if a response is safe to cache (not a Cloudflare login redirect)
+  const isSafeToCache = (response) => {
+    if (response.status !== 200) return false;
+    if (response.type !== 'basic') return false;
+    const url = new URL(response.url);
+    if (url.hostname.includes('cloudflareaccess.com') || url.hostname.includes('navynui.cloudflareaccess')) return false;
+    return true;
+  };
+
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
         // Fetch new version in background to update cache (stale-while-revalidate)
         fetch(event.request).then((networkResponse) => {
-          if (networkResponse.status === 200) {
+          if (isSafeToCache(networkResponse)) {
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
           }
         }).catch(() => { /* ignore offline fetch failure */ });
         
         return cachedResponse;
       }
-      return fetch(event.request);
+      return fetch(event.request).then((networkResponse) => {
+        // Only cache if the response is safe and valid
+        if (isSafeToCache(networkResponse)) {
+          const clonedResponse = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clonedResponse));
+        }
+        return networkResponse;
+      });
     })
   );
 });

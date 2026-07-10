@@ -370,26 +370,29 @@ def route_subscribe_push(req: dict):
 @app.get("/manifest.json")
 def pwa_manifest():
     manifest = {
-        "name": "LLM Server Manager Mobile",
+        "name": "LLM Mobile Manager",
         "short_name": "LLM Mobile",
-        "description": "Mobile-first local LLM & image generation dashboard",
+        "description": "Mobile-first controller for LLM inference, image generation, and benchmarking",
         "start_url": "/",
         "display": "standalone",
-        "background_color": "#0b0f19",
+        "background_color": "#111827",
         "theme_color": "#6366f1",
-        "orientation": "portrait",
+        "orientation": "any",
+        "categories": ["productivity", "utilities"],
+        "lang": "en-US",
+        "display_override": ["standalone", "window-controls-overlay"],
         "icons": [
             {
-                "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='38' fill='%230f172a'/%3E%3Cpath d='M110 24L52 108h42v60l54-84h-44z' fill='%236366f1'/%3E%3C/svg%3E",
-                "sizes": "192x192",
+                "src": "/icons.svg",
+                "sizes": "any",
                 "type": "image/svg+xml",
                 "purpose": "any maskable",
             },
             {
-                "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='100' fill='%230f172a'/%3E%3Cpath d='M295 64L140 288h112v160l144-224h-116z' fill='%236366f1'/%3E%3C/svg%3E",
-                "sizes": "512x512",
+                "src": "/favicon.svg",
+                "sizes": "192x192",
                 "type": "image/svg+xml",
-                "purpose": "any maskable",
+                "purpose": "any",
             },
         ],
     }
