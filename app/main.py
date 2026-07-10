@@ -282,7 +282,7 @@ def route_download_model(req: DownloadRequest):
 
 @app.post("/api/models/downloads/clear-finished")
 def route_clear_finished_downloads():
-    from services.download_svc import clear_finished_downloads
+    from services.download.api import clear_finished_downloads
     return clear_finished_downloads()
 
 @app.post("/api/models/downloads/{key:path}/stop")
