@@ -6,6 +6,7 @@ import {
 } from './_logic.js';
 
 export function renderModelSwitcher(ctx) {
+  const activeModelObj = ctx.activeModel ? ctx.models.find(m => m.filename === ctx.activeModel) : null;
   return html`
     <div class="card">
       <div class="switcher-header" @click="${() => ctx.toggleSwitcher()}">
@@ -16,8 +17,12 @@ export function renderModelSwitcher(ctx) {
       <div class="switcher-body ${ctx.switcherExpanded ? 'expanded' : ''}">
         <div class="active-model-info">
           <strong>Currently Loaded:</strong> 
-          <span style="color: var(--primary); font-weight: 600;">
+          <span style="color: var(--primary); font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             ${ctx.activeModel || 'None (No model loaded in VRAM)'}
+            ${activeModelObj ? html`
+              ${activeModelObj.has_mmproj ? html`<span class="meta-badge" style="background: rgba(34,197,94,0.12); color: #4ade80; border-color: rgba(34,197,94,0.25);">📷 MMPROJ</span>` : ''}
+              ${activeModelObj.has_mtp ? html`<span class="meta-badge" style="background: rgba(168,85,247,0.12); color: #c084fc; border-color: rgba(168,85,247,0.25);">⚡ MTP</span>` : ''}
+            ` : ''}
           </span>
         </div>
 
@@ -27,7 +32,7 @@ export function renderModelSwitcher(ctx) {
             <option value="">-- Choose a Model --</option>
             ${ctx.models.map(m => html`
               <option value="${m.filename}" ?selected="${ctx.activeModel === m.filename}">
-                ${m.filename} ${m.is_default ? '⭐ (Default)' : ''}
+                ${m.filename}${m.is_default ? ' ⭐' : ''}${m.has_mmproj ? ' [MMPROJ]' : ''}${m.has_mtp ? ' [MTP]' : ''}
               </option>
             `)}
           </select>
@@ -91,9 +96,11 @@ export function renderModelsConfig(ctx) {
                   </button>
                   <div style="display: flex; flex-direction: column; gap: 4px; text-align: left;">
                     <span class="model-file-name">${m.filename}</span>
-                    <div style="display: flex; gap: 6px; align-items: center;">
+                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
                       ${m.size ? html`<span class="meta-badge">${m.size}</span>` : ''}
                       ${m.is_default ? html`<span class="meta-badge" style="background: rgba(99,102,241,0.15); color: #a5b4fc; border-color: rgba(99,102,241,0.25);">⭐ Default</span>` : ''}
+                      ${m.has_mmproj ? html`<span class="meta-badge" style="background: rgba(34,197,94,0.12); color: #4ade80; border-color: rgba(34,197,94,0.25);">📷 MMPROJ</span>` : ''}
+                      ${m.has_mtp ? html`<span class="meta-badge" style="background: rgba(168,85,247,0.12); color: #c084fc; border-color: rgba(168,85,247,0.25);">⚡ MTP</span>` : ''}
                     </div>
                   </div>
                 </div>

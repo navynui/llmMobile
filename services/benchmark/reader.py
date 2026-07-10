@@ -15,7 +15,7 @@ from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
 from services.chat_svc import _get_loaded_model
-from services.model_svc import _get_preset_id_for_model, MINI_MODELS_INI
+from services.model_svc import _get_preset_id_for_model, _list_models_from_ini, MINI_MODELS_INI
 from utils.common import get_quantization_from_name
 
 # ── Server platform labels ─────────────────────────────────────────────────────
@@ -75,6 +75,24 @@ def _db_lookup_model(filename: str) -> tuple:
         return (None, None)
 
 
+def _build_capabilities_lookup():
+    """Build a dict mapping lowercase model filename -> {has_mmproj, has_mtp}
+    by scanning both primary and secondary INI files."""
+    lookup = {}
+    for ini_path in [MODES_INI_PATH, MINI_MODELS_INI]:
+        for m in _list_models_from_ini(ini_path):
+            key = m["filename"].lower()
+            if key not in lookup:
+                lookup[key] = {"has_mmproj": m.get("has_mmproj", False), "has_mtp": m.get("has_mtp", False)}
+            else:
+                # Merge — prefer True if either is True
+                if m.get("has_mmproj"):
+                    lookup[key]["has_mmproj"] = True
+                if m.get("has_mtp"):
+                    lookup[key]["has_mtp"] = True
+    return lookup
+
+
 # ── Query endpoints ─────────────────────────────────────────────────────────────
 
 def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict:
@@ -84,6 +102,9 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         primary_ready = _read_ini_models(MODES_INI_PATH)
         secondary_ready = _read_ini_models(MINI_MODELS_INI)
         all_ready = primary_ready | secondary_ready
+
+        # Build capabilities lookup (mmproj / mtp) from both INI files
+        cap_lookup = _build_capabilities_lookup()
 
         conn = get_db_conn()
         cursor = conn.cursor()
@@ -145,6 +166,9 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
             effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
             vram_total = 16.0 if bench_server == "primary" else 6.0
 
+            # Look up capabilities from INI
+            caps = cap_lookup.get(name_low, {}) or cap_lookup.get(r["model_id"].lower(), {})
+
             benchmarks.append({
                 "model_id": r["model_id"],
                 "model": model_name,
@@ -158,6 +182,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 "status": r["status"] if (r and r["status"]) else "testing",
                 "is_ready": is_model_ready,
                 "is_tested": True,
+                "has_mmproj": caps.get("has_mmproj", False),
+                "has_mtp": caps.get("has_mtp", False),
             })
 
         # Append untested models from both INI files
@@ -189,6 +215,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                             if filename.lower() not in ini_tested_base:
                                 db_status, db_vram = _db_lookup_model(filename)
                                 vram_total = 16.0 if default_server == "primary" else 6.0
+                                caps = cap_lookup.get(filename.lower(), {})
                                 benchmarks.append({
                                     "model_id": filename,
                                     "model": filename,
@@ -202,6 +229,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                                     "status": db_status or "testing",
                                     "is_ready": True,
                                     "is_tested": False,
+                                    "has_mmproj": caps.get("has_mmproj", False),
+                                    "has_mtp": caps.get("has_mtp", False),
                                 })
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")

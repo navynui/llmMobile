@@ -108,20 +108,31 @@ def list_models():
         with open(MODES_INI_PATH) as f:
             current_model = None
             is_default = False
+            has_mmproj = False
+            has_mtp = False
             for line in f:
-                line = line.strip()
-                if not line or line.startswith(";"):
+                line_stripped = line.strip()
+                if not line_stripped or line_stripped.startswith(";"):
                     continue
-                m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                m = re.match(r'^\[(.+?)\.gguf\]$', line_stripped, re.IGNORECASE)
                 if m:
                     if current_model:
-                        models.append({"filename": current_model, "is_default": is_default})
+                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp})
                     current_model = m.group(1) + ".gguf"
                     is_default = False
-                elif "load-on-startup" in line and "true" in line.lower() and current_model:
+                    has_mmproj = False
+                    has_mtp = False
+                elif "load-on-startup" in line_stripped and "true" in line_stripped.lower() and current_model:
                     is_default = True
+                elif "mmproj" in line_stripped and "=" in line_stripped and current_model:
+                    has_mmproj = True
+                elif line_stripped.startswith("md") and "=" in line_stripped and current_model:
+                    # md = /models/...mtp.gguf — speculative decoding / MTP
+                    pass  # flag will be set below if spec-type follows
+                elif "spec-type" in line_stripped and "draft-mtp" in line_stripped.lower() and current_model:
+                    has_mtp = True
             if current_model:
-                models.append({"filename": current_model, "is_default": is_default})
+                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp})
     except Exception as e:
         print(f"[Models INI] Failed to parse: {e}")
     return {"models": models}
@@ -283,20 +294,28 @@ def _list_models_from_ini(ini_path: str) -> list:
         with open(ini_path) as f:
             current_model = None
             is_default = False
+            has_mmproj = False
+            has_mtp = False
             for line in f:
-                line = line.strip()
-                if not line or line.startswith(";"):
+                line_stripped = line.strip()
+                if not line_stripped or line_stripped.startswith(";"):
                     continue
-                m = re.match(r'^\[(.+?)\.gguf\]$', line, re.IGNORECASE)
+                m = re.match(r'^\[(.+?)\.gguf\]$', line_stripped, re.IGNORECASE)
                 if m:
                     if current_model:
-                        models.append({"filename": current_model, "is_default": is_default})
+                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp})
                     current_model = m.group(1) + ".gguf"
                     is_default = False
-                elif "load-on-startup" in line and "true" in line.lower() and current_model:
+                    has_mmproj = False
+                    has_mtp = False
+                elif "load-on-startup" in line_stripped and "true" in line_stripped.lower() and current_model:
                     is_default = True
+                elif "mmproj" in line_stripped and "=" in line_stripped and current_model:
+                    has_mmproj = True
+                elif "spec-type" in line_stripped and "draft-mtp" in line_stripped.lower() and current_model:
+                    has_mtp = True
             if current_model:
-                models.append({"filename": current_model, "is_default": is_default})
+                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp})
     except Exception as e:
         print(f"[Models INI] Failed to parse {ini_path}: {e}")
     return models

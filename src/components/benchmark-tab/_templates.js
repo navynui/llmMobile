@@ -343,6 +343,8 @@ export function renderBenchmarksView(ctx) {
                             <span class="bench-chip" style="background: rgba(16,185,129,0.08); color: ${speedColor}; border: 1px solid rgba(16,185,129,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ ${b.tokens_sec} t/s</span>
                             <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">★ ${b.score}</span>
                             ${renderVramChip(b)}
+                            ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
+                            ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
                           </div>
                         ` : html`
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
@@ -350,6 +352,8 @@ export function renderBenchmarksView(ctx) {
                             <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
                             <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
                             ${renderVramChip(b)}
+                            ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
+                            ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
                           </div>
                         `}
                       </div>
