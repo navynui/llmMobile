@@ -16,6 +16,7 @@ export class BenchmarkTab extends LitElement {
     filterQuery: { type: String },
     platformFilter: { type: String },
     showAllBenchmarks: { type: Boolean },
+    showOfflineModels: { type: Boolean },
     benchmarkProgress: { type: Object },
     activeModelId: { type: String },
     selectedJudgeModelId: { type: String },
@@ -48,6 +49,7 @@ export class BenchmarkTab extends LitElement {
     this.filterQuery = '';
     this.platformFilter = 'all';
     this.showAllBenchmarks = false;
+    this.showOfflineModels = false;
     this.selectedBenchmarkServer = 'primary';
     this.benchmarkProgress = {
       running: false,

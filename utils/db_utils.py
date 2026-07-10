@@ -31,6 +31,10 @@ def run_migrations():
             cursor.execute("ALTER TABLE test_runs ADD COLUMN server TEXT DEFAULT 'primary'")
             print("[Migration] Added 'server' column to test_runs (default 'primary')")
 
+        if "vram_gb" not in columns:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN vram_gb REAL")
+            print("[Migration] Added 'vram_gb' column to test_runs")
+
         conn.commit()
         conn.close()
     except Exception as e:

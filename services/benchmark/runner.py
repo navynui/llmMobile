@@ -78,9 +78,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         log_benchmark("Waiting for server to be idle before capturing VRAM...")
         await wait_for_idle_trigger(server=server)
         await asyncio.sleep(2)
-        vram_gb = await capture_and_store_vram(model_id, status="good", server=server)
+        vram_gb = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
         if vram_gb is not None:
-            log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB")
+            log_benchmark(f"Captured VRAM for {model_id}: {vram_gb} GB (run_id={run_id})")
 
         async with httpx.AsyncClient(timeout=3600.0) as client:
             too_slow = False
@@ -337,20 +337,12 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                 log_benchmark_error(f"Model: {model_id}, Timeout loading model")
                 continue
 
-            # Capture VRAM after confirming the model is loaded and idle.
-            log_benchmark(f"Queue: Waiting for server to be idle before capturing VRAM...")
-            await wait_for_idle_trigger(server=server)
-            await asyncio.sleep(2)
-            vram_gb = await capture_and_store_vram(model_id, status="good", server=server)
-            if vram_gb is not None:
-                log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB")
-
-            # 3. Create run_id and run benchmark rounds
+            # 3. Create run_id and prep DB row (insert test_runs BEFORE VRAM
+            #    capture so per-run VRAM storage works)
             run_id = str(uuid.uuid4())
             timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
             out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
             raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
-
             norm_model_id = _clean_model_id(model_id)
             display_name = os.path.basename(model_id)
 
@@ -381,6 +373,15 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                 traceback.format_exc()
                 log_benchmark_error(f"Model: {model_id}, Queue DB Error: {db_err}")
                 continue
+
+            # Capture VRAM after confirming the model is loaded and idle.
+            # The test_runs row now exists, so per-run VRAM is stored correctly.
+            log_benchmark(f"Queue: Waiting for server to be idle before capturing VRAM...")
+            await wait_for_idle_trigger(server=server)
+            await asyncio.sleep(2)
+            vram_gb = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
+            if vram_gb is not None:
+                log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB (run_id={run_id})")
 
             prompts = {
                 "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",

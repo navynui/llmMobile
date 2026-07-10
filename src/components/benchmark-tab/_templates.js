@@ -23,6 +23,28 @@ import {
   handleBenchmarkLogLimitChange,
 } from './_logic.js';
 
+/**
+ * Render a VRAM utilization chip with mini progress bar.
+ * Shows "X.X / Y GB (ZZ%)" with a colored bar indicating how full the GPU is.
+ */
+function renderVramChip(b) {
+  if (b.vram_gb === null || b.vram_gb === undefined) {
+    return html`<span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>`;
+  }
+  const total = b.vram_total_gb || 16.0;
+  const pct = Math.min(100, Math.round((b.vram_gb / total) * 100));
+  // Color shifts from green (low util) → amber → red (high util)
+  const barColor = pct > 80 ? '#ef4444' : pct > 55 ? '#f59e0b' : '#34d399';
+  return html`
+    <div style="display: inline-flex; align-items: center; gap: 4px; background: rgba(139,92,246,0.06); border: 1px solid rgba(139,92,246,0.15); border-radius: var(--radius-sm); padding: 2px 6px; font-size: 0.65rem; line-height: 1.2;">
+      <span style="color: #a78bfa; white-space: nowrap;">⚙️${b.vram_gb.toFixed(1)}</span>
+      <div style="width: 24px; height: 4px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; flex-shrink: 0;">
+        <div style="width: ${pct}%; height: 100%; background: ${barColor}; border-radius: 2px;"></div>
+      </div>
+    </div>
+  `;
+}
+
 export function renderBenchmarksView(ctx) {
   const list = getFilteredAndSortedBenchmarks(ctx);
   const totalRounds = ctx.benchmarkProgress.total_rounds || 5;
@@ -233,6 +255,7 @@ export function renderBenchmarksView(ctx) {
           <button class="pill ${ctx.platformFilter === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All Server</button>
           <button class="pill ${ctx.platformFilter === 'primary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'primary'}">Primary</button>
           <button class="pill ${ctx.platformFilter === 'secondary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'secondary'}">Secondary</button>
+          <button class="pill ${ctx.showOfflineModels ? '' : 'active'}" style="margin-left: auto; font-size: 0.65rem;" @click="${() => ctx.showOfflineModels = !ctx.showOfflineModels}">${ctx.showOfflineModels ? '📂 Show Offline' : '📂 Hide Offline'}</button>
         </div>
 
         <div class="table-wrapper">
@@ -319,20 +342,14 @@ export function renderBenchmarksView(ctx) {
                             <span class="bench-chip" style="background: rgba(99,102,241,0.08); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
                             <span class="bench-chip" style="background: rgba(16,185,129,0.08); color: ${speedColor}; border: 1px solid rgba(16,185,129,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ ${b.tokens_sec} t/s</span>
                             <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">★ ${b.score}</span>
-                            ${b.vram_gb !== null && b.vram_gb !== undefined ? html`
-                              <span class="bench-chip" style="background: rgba(139,92,246,0.08); color: #a78bfa; border: 1px solid rgba(139,92,246,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚙️ ${b.vram_gb} GB</span>
-                            ` : ''}
+                            ${renderVramChip(b)}
                           </div>
                         ` : html`
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
                             <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
                             <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
                             <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
-                            ${b.vram_gb !== null && b.vram_gb !== undefined ? html`
-                              <span class="bench-chip" style="background: rgba(139,92,246,0.08); color: #a78bfa; border: 1px solid rgba(139,92,246,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚙️ ${b.vram_gb} GB</span>
-                            ` : html`
-                              <span class="bench-chip" style="background: rgba(156,163,175,0.08); color: #9ca3af; border: 1px solid rgba(156,163,175,0.12); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">—</span>
-                            `}
+                            ${renderVramChip(b)}
                           </div>
                         `}
                       </div>

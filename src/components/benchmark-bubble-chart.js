@@ -185,6 +185,7 @@ export class BenchmarkBubbleChart extends LitElement {
           score: b.score ?? 0,
           status: b.status || 'testing',
           vram_gb: b.vram_gb,
+          vram_total_gb: b.vram_total_gb || (b.server === 'secondary' ? 6 : 16),
           server: b.server || 'primary',
         });
       }
@@ -213,7 +214,16 @@ export class BenchmarkBubbleChart extends LitElement {
           if (item.server === 'secondary') return [4, 3];
           return item.status !== 'good' ? [6, 4] : [];
         },
-        pointRadius: 10,
+        // Bubble area encodes VRAM utilization % (larger = fuller GPU).
+        // Subtle range: 5px for empty GPU → 13px for near-full GPU.
+        pointRadius: (ctx) => {
+          const item = ctx.dataset.data[ctx.dataIndex];
+          if (!item) return 7;
+          const total = item.vram_total_gb || 16.0;
+          const vram = item.vram_gb || 0;
+          const pct = Math.min(1, vram / total);
+          return 5 + pct * 8;
+        },
       }],
     };
   }
@@ -275,11 +285,14 @@ export class BenchmarkBubbleChart extends LitElement {
             label: (item) => {
               const d = item.raw;
               if (!d) return '';
+              const total = d.vram_total_gb || (d.server === 'secondary' ? 6 : 16);
+              const vram = d.vram_gb || 0;
+              const pct = total > 0 ? Math.round((vram / total) * 100) : 0;
               const lines = [];
               lines.push(`Server: ${d.server === 'secondary' ? 'GTX 1060 (Secondary)' : 'Tesla P100 (Primary)'}`);
               if (d.quant) lines.push(`Quantization: ${d.quant}`);
               if (d.vram_gb !== null && d.vram_gb !== undefined) {
-                lines.push(`VRAM: ${d.vram_gb} GB`);
+                lines.push(`VRAM: ${d.vram_gb} GB / ${total} GB (${pct}%)`);
               } else {
                 lines.push('VRAM: —');
               }
@@ -321,7 +334,7 @@ export class BenchmarkBubbleChart extends LitElement {
     return html`
       <div class="card">
         <h3>📊 VRAM vs Score — Model Comparison</h3>
-        <h4>Bubble color: inference speed · Border: solid=primary, dashed=secondary</h4>
+        <h4>Bubble size: VRAM utilization · Color: inference speed · Border: solid=primary, dashed=secondary</h4>
         <div class="legend">
           <div class="legend-item">
             <div class="legend-dot" style="background: #14b8a6;"></div>

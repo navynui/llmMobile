@@ -219,6 +219,11 @@ export function getFilteredAndSortedBenchmarks(ctx) {
     list = list.filter(b => b.server === ctx.platformFilter);
   }
 
+  // Hide offline models unless user toggles them on
+  if (!ctx.showOfflineModels) {
+    list = list.filter(b => b.is_ready === true);
+  }
+
   if (ctx.filterQuery.trim()) {
     const q = ctx.filterQuery.toLowerCase();
     list = list.filter(

@@ -84,18 +84,23 @@ def _update_model_vram_row(model_id: str, vram_gb: Optional[float], status: str)
         print(f"[VRAM] Failed to update DB row for {model_id}: {e}")
 
 
-async def capture_and_store_vram(model_id: str, status: str = "good", timeout: float = 15.0, server: str = "primary") -> Optional[float]:
+async def capture_and_store_vram(model_id: str, status: str = "good", timeout: float = 15.0, server: str = "primary", run_id: Optional[str] = None) -> Optional[float]:
     """Capture current VRAM and persist it.
 
     Waits for a non-zero reading from the MQTT telemetry pipeline before
     capturing — the external sensor needs time to poll GPU memory after
     the model loads, so an immediate read may return stale/zero data.
 
+    When *run_id* is provided, VRAM is stored in test_runs.vram_gb (per-run)
+    in addition to models.vram_gb. This ensures models tested on multiple
+    GPUs retain correct per-server VRAM values.
+
     Args:
         model_id: Model identifier.
         status: Status label to persist in the DB.
         timeout: Seconds to wait for a non-zero reading before giving up.
         server: Which GPU to read from ("primary" or "secondary").
+        run_id: If provided, also persist VRAM in the test_runs row.
     """
     global _captured_vram
 
@@ -118,6 +123,21 @@ async def capture_and_store_vram(model_id: str, status: str = "good", timeout: f
 
     norm_status = status.lower()
     _update_model_vram_row(norm_model_id, vram_gb, norm_status)
+
+    # Also persist per-run VRAM when a run_id is available
+    if run_id and vram_gb is not None:
+        try:
+            conn = get_db_conn()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE test_runs SET vram_gb = ? WHERE run_id = ?",
+                (vram_gb, run_id)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[VRAM] Failed to update test_runs.vram_gb for run {run_id}: {e}")
+
     if vram_gb is not None:
         _captured_vram[norm_model_id] = vram_gb
     return vram_gb
