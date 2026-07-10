@@ -166,8 +166,16 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
             effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
             vram_total = 16.0 if bench_server == "primary" else 6.0
 
-            # Look up capabilities from INI
-            caps = cap_lookup.get(name_low, {}) or cap_lookup.get(r["model_id"].lower(), {})
+            # Look up capabilities from INI (try multiple key variants since
+            # DB names may or may not have .gguf extension)
+            def _lookup_caps(key_low):
+                caps = cap_lookup.get(key_low) or {}
+                if not caps and not key_low.endswith('.gguf'):
+                    caps = cap_lookup.get(key_low + '.gguf') or {}
+                if not caps and key_low.endswith('.gguf'):
+                    caps = cap_lookup.get(key_low[:-5]) or {}
+                return caps
+            caps = _lookup_caps(name_low) or _lookup_caps(r["model_id"].lower())
 
             benchmarks.append({
                 "model_id": r["model_id"],
