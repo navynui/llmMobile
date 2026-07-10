@@ -193,7 +193,21 @@ export class ServerTab extends LitElement {
     if (msgEl) { msgEl.style.color = isError ? 'var(--danger)' : 'var(--success)'; }
     setTimeout(() => { if (this.statusMessage === msg) this.statusMessage = ''; }, 5000);
   }
-  async _handleClearFinishedDownloads() { this.dispatchEvent(new CustomEvent('clear-finished')); this.pollDownloads(); }
+  async _handleClearFinishedDownloads() {
+    try {
+      const res = await fetch('/api/models/downloads/clear-finished', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        this.dispatchEvent(new CustomEvent('op-queue-notification', {
+          detail: { message: data.detail || 'Cleared finished downloads' },
+          bubbles: true, composed: true
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to clear finished downloads', err);
+    }
+    this.pollDownloads();
+  }
   render() { return renderServerTab(this); }
 }
 
