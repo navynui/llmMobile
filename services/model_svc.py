@@ -160,8 +160,8 @@ async def proxy_llm_models():
     async with httpx.AsyncClient() as c:
         try:
             return (await c.get("http://llm-server:8080/models", timeout=5)).json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
+        except Exception:
+            return {"data": []}
 
 async def proxy_llm_load(req: ModelActionRequest):
     async with httpx.AsyncClient() as c:
@@ -396,8 +396,8 @@ async def proxy_llm_mini_models():
     async with httpx.AsyncClient() as c:
         try:
             return (await c.get(f"{MINI_SERVER_URL}/models", timeout=5)).json()
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=str(e))
+        except Exception:
+            return {"data": []}
 
 async def proxy_llm_mini_load(req: ModelActionRequest):
     async with httpx.AsyncClient() as c:
