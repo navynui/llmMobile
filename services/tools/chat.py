@@ -123,7 +123,23 @@ async def chat_with_tools(request: Request, server_url: str) -> StreamingRespons
             if finish_reason != "tool_calls" or not msg.get("tool_calls"):
                 content = msg.get("content", "")
                 if stream:
-                    # Stream the final assistant message
+                    # 1. Emit tool history so frontend can persist it
+                    tool_msgs = [
+                        m for m in messages
+                        if m.get("role") in ("tool",) or m.get("tool_calls")
+                    ]
+                    # Only include history beyond the original user messages
+                    orig_len = len(data.get("messages", []))
+                    tool_history_msgs = messages[orig_len:]
+                    if tool_history_msgs:
+                        yield _sse_tool_history(tool_history_msgs)
+
+                    # 2. Emit timings metadata (token/s)
+                    timings = result.get("timings") or result.get("usage") or {}
+                    if timings:
+                        yield _sse_timings(timings)
+
+                    # 3. Stream the final assistant message
                     if content:
                         yield _sse_delta(content, finish_reason=None)
                     yield _sse_delta("", finish_reason="stop")
@@ -218,6 +234,16 @@ def _sse_tool_result() -> bytes:
 def _sse_error(msg: str) -> bytes:
     return f"data: {json.dumps({'error': {'message': msg}})}\n\n".encode()
 
+
+
+def _sse_tool_history(tool_msgs: list) -> bytes:
+    """Emit tool_call/tool_result messages so frontend can persist context."""
+    return f"data: {json.dumps({'type': 'tool_history', 'messages': tool_msgs})}\n\n".encode()
+
+
+def _sse_timings(timings: dict) -> bytes:
+    """Emit timing metadata (tokens/s) for the assistant message."""
+    return f"data: {json.dumps({'type': 'timings', 'timings': timings})}\n\n".encode()
 
 # ── Passthrough streamer (no tools) ────────────────────────────────────────
 

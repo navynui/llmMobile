@@ -63,6 +63,26 @@ export const chatStyles = css`
       box-shadow: var(--shadow-md);
     }
 
+    /* Clickable link styling */
+    .bubble a {
+      color: #818cf8;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      text-decoration-thickness: 1px;
+      text-decoration-color: rgba(129, 140, 248, 0.35);
+      transition: var(--transition);
+      word-break: break-all;
+    }
+
+    .bubble a:hover {
+      color: #a5b4fc;
+      text-decoration-color: #818cf8;
+    }
+
+    .bubble a:visited {
+      color: #c4b5fd;
+    }
+
     /* Thinking block styling */
     .thinking-box {
       background: rgba(17, 24, 39, 0.4);

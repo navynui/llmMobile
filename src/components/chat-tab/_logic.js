@@ -363,9 +363,26 @@ export async function sendMessage(ctx) {
     const m = ctx.messages[i];
     if (m.role === 'user') {
       apiMessages.push(buildUserContent(ctx, m));
+    } else if (m.role === 'tool') {
+      // Tool result message — include as-is
+      apiMessages.push({
+        role: 'tool',
+        tool_call_id: m.tool_call_id || '',
+        content: m.content || ''
+      });
     } else if (m.role === 'assistant' && !ctx.isGenerating) {
-      // Only include completed assistant messages
-      if (m.content || m.thinking) {
+      // Check if this assistant message had tool calls
+      if (m.tool_calls && m.tool_calls.length) {
+        apiMessages.push({
+          role: 'assistant',
+          content: m.content || '',
+          tool_calls: m.tool_calls.map(tc => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.name || tc.function?.name, arguments: tc.arguments || tc.function?.arguments || '{}' }
+          }))
+        });
+      } else if (m.content || m.thinking) {
         const contentParts = [];
         if (m.thinking) contentParts.push({ type: 'text', text: `<think>${m.thinking}</think>\n${m.content}` });
         else contentParts.push({ type: 'text', text: m.content || '' });
@@ -462,6 +479,26 @@ export async function sendMessage(ctx) {
                 }));
                 updated[assistantMessageIndex] = { ...updated[assistantMessageIndex], toolCalls };
                 ctx.messages = updated;
+              }
+              continue;
+            }
+
+            // ── Tool history: persist tool_call/tool messages in context ──
+            if (parsed.type === 'tool_history') {
+              if (parsed.messages && parsed.messages.length) {
+                const updated = [...ctx.messages];
+                // Insert tool messages right after the current assistant message
+                const insertAt = assistantMessageIndex + 1;
+                updated.splice(insertAt, 0, ...parsed.messages);
+                ctx.messages = updated;
+              }
+              continue;
+            }
+
+            // ── Timings metadata (tokens/s) ──
+            if (parsed.type === 'timings') {
+              if (parsed.timings) {
+                updateAssistantMeta(ctx, assistantMessageIndex, parsed.timings);
               }
               continue;
             }
@@ -725,6 +762,30 @@ export function formatMessage(ctx, text) {
   htmlContent = htmlContent.replace(/`([^`]+)`/g, (match, code) => {
     return savePlaceholder(`<code>${code}</code>`, 'CODE_INLINE');
   });
+
+  // 2.25. Markdown links [text](url) — save before URL regex fires
+  htmlContent = htmlContent.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    (match, text, url) => {
+      const cleanUrl = url.replace(/[.,!?;:)\]}"'\u201D]+$/, '');
+      return savePlaceholder(
+        `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${text}</a>`,
+        'MD_LINK'
+      );
+    }
+  );
+
+  // 2.5. Make bare URLs clickable (after code & markdown links are protected)
+  htmlContent = htmlContent.replace(
+    /(https?:\/\/[^\s<>"'*]+)/g,
+    (match, url) => {
+      // Strip trailing punctuation and HTML artifacts
+      let clean = url.replace(/[.,!?;:)\]}"'\u201D]+$/, '');
+      clean = clean.replace(/<!\/?[-a-z]+>?$/, '');
+      const display = clean.length > 80 ? clean.slice(0, 77) + '...' : clean;
+      return `<a href="${clean}" target="_blank" rel="noopener noreferrer">${display}</a>`;
+    }
+  );
 
   // 3. Block Math: $$ ... $$ or \[ ... \]
   htmlContent = htmlContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, math) => {
