@@ -29,7 +29,7 @@ Stream final assistant response to frontend
 - Already **rw** mounted on host at `/mnt/dashboard`, symlinked at `/home/nui/dashboard`
 - **Git-tracked** with `.gitignore` that ignores `*.md`, `*.html`, `*.csv` (future files of these types remain untracked)
 - **Browser-accessible** — files the model generates (reports, visualizations, data exports) are immediately viewable
-- **Needs Docker mount** — currently not mounted inside the `llm-mobile` container
+- **✅ Docker mount** — `- /home/nui/dashboard:/mnt/dashboard:rw` added to `llm-mobile`
 
 ---
 
@@ -80,8 +80,8 @@ docker compose up -d --no-deps llama-server llama-server-mini
 ```
 
 **Files to touch:**
-- [ ] `docker-compose.yml` — sandbox mount + `--tools all`
-- [ ] `requirements.txt` — add `duckduckgo_search`
+- [x] `docker-compose.yml` — sandbox mount + `--tools all`
+- [x] `requirements.txt` — add `curl_cffi`
 
 ---
 
@@ -105,9 +105,9 @@ Export `TOOL_DEFINITIONS` list for injection into chat requests.
 ### 2.2 Tool executor — `services/tools/executor.py`
 
 **`web_search(query, num_results)`**
-- Uses `duckduckgo_search.DDGS.text()` — no API key
-- Returns JSON with `title`, `href`, `body` for each result
-- Timeout: 10s
+- Uses `curl_cffi` with `impersonate="chrome120"` — no API key
+- Returns JSON with `title`, `url`, `snippet` for each result
+- Timeout: 15s
 
 **`write_file(path, content, mode)`**
 - Resolves path against sandbox root: `/mnt/dashboard/`
@@ -124,12 +124,11 @@ Export `TOOL_DEFINITIONS` list for injection into chat requests.
 - Read → `str.replace(old, new, 1)` → write back
 - Returns `{success, path, replaced: bool}`
 
-**Path safety rules (critical):**
+**Path safety rules (critical) — ✅ implemented:**
 ```python
 ALLOWED_BASE = "/mnt/dashboard"
 # Reject if realpath doesn't start with ALLOWED_BASE
-# Reject if path contains ".." after normalization
-# Reject file types that should remain untracked? (No — user's .gitignore handles that)
+# Strip leading separators to prevent absolute-path shenanigans
 ```
 
 ### 2.3 Chat orchestrator — `services/tools/chat.py`
@@ -162,11 +161,12 @@ async def chat_with_tools(request, server_url):
     yield error("Max tool call iterations reached")
 ```
 
-**Key design choices:**
+**Key design choices — ✅ all implemented:**
 - Tool rounds use **non-streaming** requests (we need synchronous execution)
 - Only the **final** assistant response is streamed (preserves existing frontend SSE parsing)
-- Tool calls are emitted as custom SSE events (`type: tool_call`) for frontend UI updates
-- Token tracking to prevent context overflow from large tool results
+- Tool calls emitted as SSE events: `tool_call`, `tool_result_done`, `tool_history`, `timings`
+- Tool results truncated at **4096 characters** to prevent context overflow
+- Tool history persisted in `ctx.messages` for follow-up context
 
 ### 2.4 Re-export shim — `services/tools/__init__.py`
 
@@ -203,14 +203,14 @@ async def route_chat_mini(request: Request):
 ```
 
 **Files to create:**
-- [ ] `services/tools/__init__.py`
-- [ ] `services/tools/registry.py`
-- [ ] `services/tools/executor.py`
-- [ ] `services/tools/chat.py`
+- [x] `services/tools/__init__.py`
+- [x] `services/tools/registry.py`
+- [x] `services/tools/executor.py`
+- [x] `services/tools/chat.py`
 
 **Files to modify:**
-- [ ] `app/main.py` — route dispatch for tool requests
-- [ ] `requirements.txt` — add duckduckgo_search (if not done in Phase 1)
+- [x] `app/main.py` — route dispatch for tool requests
+- [x] `requirements.txt` — add curl_cffi
 
 ---
 
@@ -265,53 +265,40 @@ if (parsed.type === "tool_call") {
 ```
 
 **Files to modify:**
-- [ ] `chat-tab/_logic.js` — send tools param, parse tool_call events, tool toggle state
-- [ ] `chat-tab/_templates.js` — tool usage rendering, toggle pills UI
-- [ ] `chat-tab/_styles.js` — tool bubble styling
+- [x] `chat-tab/_logic.js` — send tools param, parse tool_call/tool_history/timings events, tool context persistence, markdown links, URL clickability
+- [x] `chat-tab/_templates.js` — tool usage rendering, Tools ON/OFF toggle pill
+- [x] `chat-tab/_styles.js` — tool bubble styling, link styling
 
 ---
 
 ## 🔒 Phase 4 — Safety & Guard Rails
 
-### 4.1 Path traversal prevention
+### 4.1 Path traversal prevention — ✅ implemented
 
 ```python
-ALLOWED_BASE = "/mnt/dashboard"  # absolute, no trailing slash
-
-def resolve_sandbox_path(user_path: str) -> str:
-    # Strip leading slashes, prevent abs paths
+ALLOWED_BASE = "/mnt/dashboard"
+def _resolve_sandbox_path(user_path):
     safe = user_path.lstrip("/")
-    # Resolve against allowed base
     full = os.path.realpath(os.path.join(ALLOWED_BASE, safe))
     if not full.startswith(os.path.realpath(ALLOWED_BASE)):
         raise PermissionError("Path traversal blocked")
     return full
 ```
 
-### 4.2 Tool iteration limit
+### 4.2 Tool iteration limit — ✅ implemented
 
-`MAX_TOOL_ITERATIONS = 10` — prevents infinite loops if model keeps calling tools.
+`MAX_TOOL_ITERATIONS = 10` in `chat.py`.
 
-### 4.3 Token / context size management
+### 4.3 Token / context size management — ✅ implemented
 
-- Tool results are truncated to **4096 characters** per tool call
-- If total context approaches model's limit, older tool results are pruned
-- Store token counts from llama-server response metadata
+- Tool results truncated at `TRUNCATE_TOOL_RESULT_CHARS = 4096`
+- Timings metadata streamed to frontend via `type: "timings"` SSE event
 
-### 4.4 Web search rate limiting
+### 4.4 Web search rate limiting — ❌ not yet
 
-- Maximum 1 search per 2 seconds per conversation
-- Cache identical queries within same conversation (avoid repeat searches)
+### 4.5 Model compatibility — ❌ not yet
 
-### 4.5 Model compatibility
-
-- Only send tools if the model is capable (detect via model metadata or test call)
-- Fall back to normal chat silently if tools aren't supported
-- Simple heuristic: skip tools for small (<3B param) or older models
-
-### 4.6 Gitignore awareness
-
-The sandbox's `.gitignore` already ignores `*.md`, `*.html`, `*.csv`. No action needed — files the model creates won't pollute git history.
+### 4.6 Gitignore awareness — ✅ no action needed
 
 ---
 
@@ -380,16 +367,17 @@ So different conversations don't step on each other's files.
 
 | File | Action | Phase |
 |---|---|---|
-| `docker-compose.yml` | Add `- /home/nui/dashboard:/mnt/dashboard:rw` | 1 |
-| `docker-compose.yml` | Add `--tools all` to llama-server & llama-server-mini | 1 |
-| `requirements.txt` | Add `duckduckgo_search>=7.5.0` | 1 |
-| `services/tools/__init__.py` | **Create** — re-export shim | 2 |
-| `services/tools/registry.py` | **Create** — tool definitions | 2 |
-| `services/tools/executor.py` | **Create** — tool implementations + path safety | 2 |
-| `services/tools/chat.py` | **Create** — tool orchestration loop | 2 |
-| `app/main.py` | Route dispatch: tools → chat_with_tools, else → proxy_chat | 2 |
-| `chat-tab/_logic.js` | Add `tools` to request body, parse tool_call SSE events | 3 |
-| `chat-tab/_templates.js` | Tool usage indicators, toggle pills | 3 |
-| `chat-tab/_styles.js` | Tool UI styling | 3 |
-| `tests/test_tools_executor.py` | **Create** — unit tests | 5 |
-| `tests/test_tools_chat.py` | **Create** — integration tests | 5 |
+| `docker-compose.yml` | Add `- /home/nui/dashboard:/mnt/dashboard:rw` | 1 | ✅
+| `docker-compose.yml` | Add `--tools all` to llama-server & llama-server-mini | 1 | ✅
+| `requirements.txt` | Add `curl_cffi>=0.15.0` | 1 | ✅
+| `services/tools/__init__.py` | **Create** — re-export shim | 2 | ✅
+| `services/tools/registry.py` | **Create** — tool definitions | 2 | ✅
+| `services/tools/executor.py` | **Create** — tool implementations + path safety | 2 | ✅
+| `services/tools/chat.py` | **Create** — tool orchestration loop + tool_history + timings | 2 | ✅
+| `app/main.py` | Route dispatch: tools → chat_with_tools, else → proxy_chat | 2 | ✅
+| `TODO.md` | Implementation plan | — | ✅
+| `chat-tab/_logic.js` | Add `tools` to request body, parse tool_call/tool_history/timings, markdown links, URL clickability | 3 | ✅
+| `chat-tab/_templates.js` | Tool usage indicators, Tools ON/OFF toggle pill | 3 | ✅
+| `chat-tab/_styles.js` | Tool bubble styling, link styling | 3 | ✅
+| `tests/test_tools_executor.py` | **Create** — unit tests | 5 | ❌
+| `tests/test_tools_chat.py` | **Create** — integration tests | 5 | ❌
