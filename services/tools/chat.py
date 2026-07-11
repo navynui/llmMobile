@@ -31,8 +31,12 @@ async def _llama_chat_completion(
     model: str | None = None,
     stream: bool = False,
     **extra_params,
-) -> dict:
-    """Make a single request to llama-server's /v1/chat/completions."""
+):
+    """Make a single request to llama-server's /v1/chat/completions.
+
+    If stream=True, returns the raw httpx response for streaming.
+    If stream=False, returns the decoded JSON dict.
+    """
     body = {
         "messages": messages,
         "stream": stream,
@@ -53,6 +57,39 @@ async def _llama_chat_completion(
         if stream:
             return resp  # return raw response for streaming
         return resp.json()
+
+
+async def _stream_final_response(
+    messages: list,
+    server_url: str,
+    *,
+    model: str | None = None,
+):
+    """Stream the final assistant response from llama-server (no tools).
+
+    Yields raw SSE bytes exactly as received from llama-server, so the
+    frontend receives real-time token-by-token output including
+    reasoning_content if the model supports it.
+    """
+    body = {
+        "messages": messages,
+        "stream": True,
+    }
+    if model:
+        body["model"] = model
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as c:
+        try:
+            async with c.stream(
+                "POST",
+                f"{server_url}/v1/chat/completions",
+                json=body,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+        except Exception as e:
+            yield json.dumps({"error": {"message": str(e)}}).encode()
 
 
 async def chat_with_tools(request: Request, server_url: str) -> StreamingResponse:
@@ -121,29 +158,26 @@ async def chat_with_tools(request: Request, server_url: str) -> StreamingRespons
 
             # ── Normal completion (no more tool calls) ────────────────
             if finish_reason != "tool_calls" or not msg.get("tool_calls"):
-                content = msg.get("content", "")
                 if stream:
                     # 1. Emit tool history so frontend can persist it
                     tool_msgs = [
                         m for m in messages
                         if m.get("role") in ("tool",) or m.get("tool_calls")
                     ]
-                    # Only include history beyond the original user messages
                     orig_len = len(data.get("messages", []))
                     tool_history_msgs = messages[orig_len:]
                     if tool_history_msgs:
                         yield _sse_tool_history(tool_history_msgs)
 
-                    # 2. Emit timings metadata (token/s)
-                    timings = result.get("timings") or result.get("usage") or {}
-                    if timings:
-                        yield _sse_timings(timings)
-
-                    # 3. Stream the final assistant message
-                    if content:
-                        yield _sse_delta(content, finish_reason=None)
-                    yield _sse_delta("", finish_reason="stop")
-                    yield b"data: [DONE]\n\n"
+                    # 2. Stream the final response in real-time (token by token)
+                    #    This preserves reasoning_content and gives the user
+                    #    immediate feedback instead of a single delayed blob.
+                    async for chunk in _stream_final_response(
+                        messages,
+                        server_url,
+                        model=data.get("model", "default"),
+                    ):
+                        yield chunk
                 else:
                     yield json.dumps(result).encode()
                 return
@@ -209,6 +243,20 @@ def _sse_delta(content: str, finish_reason: str | None) -> bytes:
         "choices": [{
             "delta": {"content": content} if content else {},
             "finish_reason": finish_reason,
+        }]
+    }
+    return f"data: {json.dumps(payload)}\n\n".encode()
+
+
+def _sse_reasoning_delta(reasoning: str) -> bytes:
+    """SSE delta chunk with reasoning_content for models that emit it."""
+    payload = {
+        "choices": [{
+            "delta": {
+                "content": "",
+                "reasoning_content": reasoning,
+            },
+            "finish_reason": None,
         }]
     }
     return f"data: {json.dumps(payload)}\n\n".encode()

@@ -32,10 +32,13 @@ graph TD
 
 ### 2. 💬 Interactive Streaming Chat
 * **Server Selector:** Choose which `llama-server` instance to chat with via pill buttons at the top of the Chat tab. Currently loaded model name is displayed inline.
-* **SSE Streaming:** Real-time token delivery via Server-Sent Events (SSE).
-* **Rich Text Rendering:** Full Markdown, inline code blocks, and lists parsed on-the-fly.
+* **SSE Streaming:** Real-time token-by-token delivery via Server-Sent Events (SSE), with support for `reasoning_content` from reasoning models.
+* **Tool-Enabled Chat:** Toggle 🛠️ Tools ON/OFF to give the model access to **web search** (via DuckDuckGo using `curl_cffi` browser impersonation), **read/write/edit files** in a sandboxed workspace (`/mnt/dashboard/`). Orchestrated server-side with up to 10 tool iterations.
+* **Thinking Box:** A 🧠 **Thinking Process...** box displays immediately when a message is sent, showing either the model's real-time `reasoning_content` (for DeepSeek-R1 style models) or a "Formulating thoughts..." placeholder until the response arrives.
+* **Rich Text Rendering:** Full Markdown, inline code blocks, numbered lists, and clickable URLs parsed on-the-fly with styled `<a>` tags.
+* **Per-Prompt Image Generation:** When the model outputs image prompts (lines starting with `>`), each prompt gets a 🎨 button that saves it to `localStorage` and switches to the Generator tab.
 * **Vision Support:** Automatic detection of mmproj/vision models on the selected server, enabling image upload and multimodal chat.
-* **Context Preservation:** Interactive chat history management.
+* **Context Preservation:** Interactive chat history management saved to `localStorage`.
 
 ### 3. 🎨 ComfyUI Image Pipeline
 * **Dynamic Parameter Tuning:** Slider controls for steps, cfg scale, denoise strength, sampler selection, and resolutions.
@@ -103,7 +106,11 @@ llmMobile/
 │   │   ├── __init__.py, gold.py, judge.py
 │   ├── gallery_svc.py            # Image gallery CRUD & metadata
 │   ├── push_svc.py               # Push notification service
-│   └── vram_svc.py               # VRAM capture & idle-trigger detection
+│   ├── vram_svc.py               # VRAM capture & idle-trigger detection
+│   └── tools/                    # Tool-enabled chat orchestration (sub-package)
+│       ├── __init__.py, registry.py
+│       ├── executor.py           # execute_tool_call() — web search, file ops
+│       └── chat.py               # chat_with_tools() — tool loop + streaming final response
 ├── utils/                        # Shared utilities
 │   ├── common.py                 # Constants, paths, helpers
 │   ├── db_utils.py               # SQLite connection & transaction helpers
@@ -232,8 +239,10 @@ Mobile portal at `http://localhost:8000`.
 ### Chat
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/chat/completions` | `POST` | Stream chat from primary server |
-| `/api/chat-mini/completions` | `POST` | Stream chat from secondary server |
+| `/api/chat/completions` | `POST` | Stream chat from primary server (supports `tools` param for tool calling) |
+| `/api/chat-mini/completions` | `POST` | Stream chat from secondary server (supports `tools` param for tool calling) |
+
+> **Tool calling:** When the request body includes a `tools` array, the backend switches to server-side orchestration mode. Tool rounds use non-streaming requests for proper tool-call detection; the *final* assistant response is always streamed token-by-token with full `reasoning_content` preservation.
 
 ### Vision
 | Endpoint | Method | Description |
@@ -289,3 +298,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### Multi-Server Support (Phase K)
 - **Phase K – Dual llama-server Management**: Added per-server status/control (Start/Stop/Restart) for both `llama-server` and `llama-server-mini`. Full model management for both servers including separate INI files (`models.ini` / `modelg.ini`), model load/unload, scan/delete. Chat server selector with dual streaming endpoints. GTX secondary GPU telemetry via MQTT. Vision capability detection on both servers.
+
+### Tool-Enabled Chat (Phase L)
+- **Phase L – Tool-Calling & Streaming Improvements**: Implemented server-side tool/function-calling orchestration in `services/tools/`. 4 tools (web search via DuckDuckGo/`curl_cffi`, read/write/edit file in `/mnt/dashboard/` sandbox). Tool rounds non-streaming; final response streamed token-by-token with `reasoning_content` preservation. Frontend: thinking box (`!response && !m.done`), URL clickability, per-prompt 🎨 image generation buttons, service worker cache management.

@@ -29,6 +29,9 @@ export const chatStyles = css`
 
     @keyframes messageSlideIn {
       from { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
       to { opacity: 1; transform: translateY(0); }
     }
 
@@ -49,19 +52,73 @@ export const chatStyles = css`
     }
 
     .user .bubble {
-      background: var(--primary);
-      color: #fff;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      color: var(--text-primary);
       border-bottom-right-radius: 4px;
-      box-shadow: 0 4px 12px var(--primary-glow);
+      border-bottom-left-radius: var(--radius-md);
     }
 
     .assistant .bubble {
+      position: relative;
       background: var(--bg-card);
       border: 1px solid var(--border-color);
       color: var(--text-primary);
       border-bottom-left-radius: 4px;
       box-shadow: var(--shadow-md);
     }
+
+
+    /* Prompt action rows */
+    .prompt-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: rgba(129, 140, 248, 0.06);
+      border: 1px solid rgba(129, 140, 248, 0.12);
+      border-radius: var(--radius-sm);
+    }
+
+    .prompt-text-preview {
+      flex: 1;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .prompt-gen-btn {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid rgba(129, 140, 248, 0.2);
+      border-radius: var(--radius-full);
+      background: rgba(17, 24, 39, 0.6);
+      color: #a5b4fc;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .prompt-gen-btn:hover {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: var(--primary);
+      transform: scale(1.1);
+    }
+
+    .prompt-gen-btn:active {
+      transform: scale(0.95);
+    }
+
+
 
     /* Clickable link styling */
     .bubble a {
@@ -255,6 +312,49 @@ export const chatStyles = css`
       align-self: flex-start;
       margin-left: 4px;
     }
+    /* Generate pill button on assistant bubbles */
+    .gen-pill {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid rgba(129, 140, 248, 0.2);
+      border-radius: var(--radius-full);
+      background: rgba(17, 24, 39, 0.8);
+      color: #a5b4fc;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: var(--transition);
+      opacity: 0;
+      -webkit-tap-highlight-color: transparent;
+      z-index: 2;
+    }
+
+    .assistant .bubble {
+      position: relative;
+    }
+
+    .assistant .bubble:hover .gen-pill,
+    .assistant .bubble:focus-within .gen-pill {
+      opacity: 1;
+    }
+
+    .gen-pill:hover {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: var(--primary);
+      box-shadow: 0 0 12px rgba(99, 102, 241, 0.2);
+      transform: scale(1.1);
+    }
+
+    .gen-pill:active {
+      transform: scale(0.95);
+    }
+
 
     /* Input Bar */
     .input-bar {

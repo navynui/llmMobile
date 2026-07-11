@@ -402,7 +402,7 @@ export async function sendMessage(ctx) {
     ...(base64Image ? { images: [base64Image] } : {})
   }];
   const assistantMessageIndex = ctx.messages.length;
-  ctx.messages = [...ctx.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false, toolCalls: [] }];
+  ctx.messages = [...ctx.messages, { role: 'assistant', content: '', thinking: '', isThinking: true, done: false, toolCalls: [] }];
 
   // Build request body — include tool definitions if enabled
   const requestBody = {
@@ -413,6 +413,7 @@ export async function sendMessage(ctx) {
     requestBody.tools = TOOL_DEFINITIONS;
   }
 
+  ctx.isGenerating = true;
   try {
     const response = await fetch(_api(ctx, 'chat_completions'), {
       method: 'POST',
@@ -491,6 +492,7 @@ export async function sendMessage(ctx) {
                 const insertAt = assistantMessageIndex + 1;
                 updated.splice(insertAt, 0, ...parsed.messages);
                 ctx.messages = updated;
+
               }
               continue;
             }
@@ -870,4 +872,52 @@ export function formatMessage(ctx, text) {
   }
 
   return htmlContent;
+}
+
+
+// ── Prompt extraction & generate ────────────────────────────────────────────
+
+export function extractPrompts(text) {
+  if (!text) return [];
+  const prompts = [];
+  const seen = new Set();
+  // Match lines starting with "> " which contain prompt text
+  const regex = /^>\s+(.+)$/gm;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const promptText = match[1].trim();
+    if (promptText.length > 15 && !seen.has(promptText)) {
+      seen.add(promptText);
+      prompts.push(promptText);
+    }
+  }
+  // If no > blocks found, try lines right after "Prompt:"
+  if (prompts.length === 0) {
+    const pRegex = /Prompt:\s*\n(?:>?\s*)(.+)$/gm;
+    while ((match = pRegex.exec(text)) !== null) {
+      const promptText = match[1].trim();
+      if (promptText.length > 15 && !seen.has(promptText)) {
+        seen.add(promptText);
+        prompts.push(promptText);
+      }
+    }
+  }
+  return prompts;
+}
+
+
+export function promptGenerateImage(ctx, promptText) {
+  if (!promptText) return;
+  ctx._showMenu = false;
+  try {
+    localStorage.setItem('gen_prompt', promptText);
+    localStorage.setItem('gen_resolution', '720x1280');
+    localStorage.setItem('gen_num_images', '1');
+    localStorage.setItem('gen_mode', 'zimage');
+    window.location.hash = '#/generate';
+  } catch (e) {
+    import('../../utils/toast.js').then(m => {
+      m.Toast.show(`❌ ${e.message}`, 'error');
+    });
+  }
 }

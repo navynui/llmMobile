@@ -40,10 +40,10 @@ export function renderChat(ctx) {
                 </div>
               </div>
             ` : ''}
-            <div class="message ${m.role}" style="${hasImages ? 'margin-top: -4px;' : ''}">
-              <div class="bubble">
+            <div class="message ${m.role}" style="${m.role === 'user' ? 'align-self: flex-end; display: block; max-width: 85%;' : ''}${hasImages ? ' margin-top: -4px;' : ''}">
+              <div class="bubble" style="${m.role === 'user' ? 'display: inline-block; width: auto;' : ''}">
                 ${m.role === 'assistant'
-                  ? html`${m.content || m.thinking ? html`
+                  ? html`${m.content || m.thinking || !m.done ? html`
                       ${(() => {
                         const { thinking, response, isThinking } = logic.parseThinkingAndContent(ctx, m);
                         return html`
@@ -58,7 +58,7 @@ export function renderChat(ctx) {
                               `)}
                             </div>
                           ` : ''}
-                          ${isThinking ? html`
+                          ${!response && !m.done ? html`
                             <div class="thinking-box">
                               <div class="thinking-header">
                                 <span>🧠 Thinking Process...</span>
@@ -67,7 +67,13 @@ export function renderChat(ctx) {
                             </div>
                           ` : ''}
                           ${response ? html`<div .innerHTML="${logic.formatMessage(ctx, response)}"></div>` : ''}
-                          ${!response && !isThinking && (!m.toolCalls || !m.toolCalls.length) ? html`
+                          ${response && m.done ? logic.extractPrompts(response).map((p, i) => html`
+                            <div class="prompt-row">
+                              <span class="prompt-text-preview">${p.length > 80 ? p.slice(0, 77) + '...' : p}</span>
+                              <button class="prompt-gen-btn" @click="${() => logic.promptGenerateImage(ctx, p)}" title="Generate image from this prompt">🎨</button>
+                            </div>
+                          `) : ''}
+                          ${!response && m.done && !m.toolCalls?.length ? html`
                             <div class="typing-indicator">
                               <div class="dot"></div>
                               <div class="dot"></div>
@@ -92,7 +98,7 @@ export function renderChat(ctx) {
         })}
     </div>
 
-    <div class="input-bar">
+<div class="input-bar">
       <!-- Image upload button (hidden when not vision-capable) -->
       ${ctx.visionCapable ? html`
         <button
@@ -147,3 +153,5 @@ export function renderChat(ctx) {
     </div>
   `;
 }
+
+

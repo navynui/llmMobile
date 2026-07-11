@@ -16,6 +16,18 @@
 
 It is deployed as a Docker container (`llm-mobile`) defined in the `/home/nui/llmaCPP/docker-compose.yml` file.
 
+### Tool-Calling Architecture
+The app supports **server-side tool/function-calling** when the Chat tab's 🛠️ Tools toggle is enabled:
+
+| Tool | Description | Backend Function |
+|---|---|---|
+| `web_search` | DuckDuckGo search via `curl_cffi` Chrome 120 impersonation | `executor.py` → `_web_search()` |
+| `write_file` | Write text to `/mnt/dashboard/` sandbox | `executor.py` → `_write_file()` |
+| `read_file` | Read text from `/mnt/dashboard/` sandbox | `executor.py` → `_read_file()` |
+| `edit_file` | Edit text in `/mnt/dashboard/` sandbox (old→new string) | `executor.py` → `_edit_file()` |
+
+All tool orchestration happens in `services/tools/chat.py` → `chat_with_tools()`. Tool rounds use non-streaming requests; the **final** assistant response is always streamed token-by-token with full `reasoning_content` preservation.
+
 ### Multi-Server Architecture
 The app manages **two independent `llama-server` instances**:
 
@@ -75,6 +87,14 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 * **`push_svc.py`**: Push notification dispatching.
 * **`vram_svc.py`**: VRAM capture, idle-trigger detection — shared leaf dependency; never split.
 
+**Tools package (server-side tool calling):**
+
+* **`services/tools/`** — Server-side tool/function-calling orchestration:
+  - `__init__.py` — re-export shim
+  - `registry.py` — `TOOL_DEFINITIONS` list (4 tools: `web_search`, `write_file`, `read_file`, `edit_file`)
+  - `executor.py` — `execute_tool_call()` dispatches to DuckDuckGo web search (via `curl_cffi` Chrome impersonation) or sandboxed file operations under `/mnt/dashboard/`
+  - `chat.py` — `chat_with_tools()` orchestrates up to 10 tool iterations; tool rounds use non-streaming requests for proper detection; the final response is streamed token-by-token via `_stream_final_response()` which forwards raw SSE bytes from llama-server
+
 Shared utilities live in `utils/` (`common.py` — path resolution + `get_quantization_from_name`, `db_utils.py`, `bench_log.py`), and Pydantic schemas in `models/requests.py`.
 
 ### 2. Frontend (`src/`)
@@ -107,7 +127,7 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
   - Composes `<benchmark-bubble-chart>` (kept whole at 291 lines)
 
 * **`src/components/chat-tab.js`** + **`chat-tab/`**:
-  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering, server-aware API routing via `_api()` helper), `_templates.js` (messages, input, composer, server selector pills with loaded model name)
+  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering, server-aware API routing via `_api()` helper, tool-call stream events, URL clickability, extractPrompts/promptGenerateImage), `_templates.js` (messages, input, composer, thinking box, tool call indicators, per-prompt 🎨 buttons, server selector pills with loaded model name, 🛠️ Tools toggle)
 
 * **`src/components/gallery-tab.js`** + **`gallery-tab/`**:
   - `_styles.js`, `_logic.js` (folder browsing, metadata fetch, delete/move), `_templates.js` (grid, viewer, inspector)
@@ -201,6 +221,51 @@ The `traceback` module **must** be imported at the top of `app/main.py` (and any
 * Always verify `import traceback` exists at the top of backend entry points. If it's missing, error traces inside `except` blocks are swallowed.
 
 ### 8. System Stats Must Come From MQTT Only
+
+The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/VRAM, storage) sourced **exclusively from Home Assistant via MQTT**. Local hardware queries (e.g., `nvidia-smi`, `psutil`) must **never** be used to populate system stats.
+
+* The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
+* Home Assistant publishes the correct per-GPU values (e.g., Tesla P100 VRAM, GPU utilization) via its own MQTT topics. Rely on those rather than trying to parse `nvidia-smi` output locally, which is unreliable with multi-GPU setups.
+
+### 9. Tool Orchestrator Final Response Must Stream
+
+When `chat_with_tools()` detects a normal completion (no more tool calls), the final assistant response **must** be streamed token-by-token from llama-server, not emitted as a single blob.
+
+* Use `_stream_final_response()` which makes a streaming request to llama-server **without** the `tools` parameter and forwards raw SSE bytes.
+* This preserves `reasoning_content` in the delta chunks so the frontend can show real-time reasoning text in the thinking box.
+* Do NOT reconstruct individual `_sse_delta()` calls with the full content — that defeats the purpose of streaming.
+* The frontend parser already handles `reasoning_content` from the delta; no frontend changes are needed for the backend to emit it.
+
+### 10. Thinking Box Relies on `m.done`, Not `isThinking`
+
+The thinking box (`🧠 Thinking Process...`) visibility in the assistant message template must be governed by `!response && !m.done`, not by `parseThinkingAndContent()`'s `isThinking` return value.
+
+* The outer guard in `_templates.js` must be `m.content || m.thinking || !m.done` so the IIFE renders even when both `content` and `thinking` are empty (initial placeholder state).
+* The thinking box condition inside the IIFE: `${!response && !m.done ? html`<thinking-box>` : ''}`
+* The typing dots condition: `${!response && m.done && !m.toolCalls?.length ? html`<dots>` : ''}`
+* These conditions ensure the thinking box shows immediately when a message is sent, without relying on `isThinking` flag values that can be cleared before Lit renders.
+
+### 11. `ctx.isGenerating` Must Be Set Before Fetch
+
+In `sendMessage()` (`_logic.js`), `ctx.isGenerating` must be set to `true` right before the `await fetch()` call to prevent double-sends and enable UI indicators.
+
+* Set it after placeholder creation and request body construction, before the `try` block.
+* The `finally` block already sets `ctx.isGenerating = false`.
+* Do not rely on `parseThinkingAndContent()`'s `isThinking` for UI state — use `ctx.isGenerating` for send prevention and `m.done` for rendering.
+
+### 12. URL Clickability & Per-Prompt Image Buttons
+
+`formatMessage()` in `_logic.js` wraps bare URLs with `<a href="..." target="_blank">` tags after protecting code block placeholders and existing markdown links. The CSS for `.bubble a` uses `#818cf8` color with hover underline and visited state.
+
+Per-prompt 🎨 buttons are rendered for lines starting with `>` (or after `Prompt:`). `extractPrompts()` parses the response for these patterns, and clicking a button calls `promptGenerateImage()` which saves the prompt to `localStorage` and switches to `#/generate`.
+
+### 13. Service Worker Cache Bumping
+
+When the frontend is updated and changes aren't reflected in production, the service worker cache in `public/sw.js` is likely stale.
+
+* Bump `CACHE_NAME` (e.g., `'llm-mobile-v2'` → `'llm-mobile-v3'`) to force a fresh cache on the next service worker update.
+* Users may need to unregister the old service worker in DevTools → Application → Service Workers to clear the stale cache immediately.
+* Always verify the new JS bundle hash in Docker (`/app/dist/assets/`) matches what the browser loads.
 
 The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/VRAM, storage) sourced **exclusively from Home Assistant via MQTT**. Local hardware queries (e.g., `nvidia-smi`, `psutil`) must **never** be used to populate system stats.
 
@@ -301,3 +366,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 - **Phase K – Dual llama-server Management**: Added per-server status/control (Start/Stop/Restart) for both `llama-server` and `llama-server-mini` via the Server tab. Full `modelg.ini` model management (load/unload/scan/delete) alongside the existing `models.ini` support. Chat tab server selector (Primary/Secondary) with corresponding streaming chat endpoints and vision capability detection on both servers. GTX secondary GPU telemetry (temperature, utilization, VRAM) via MQTT.
 
 All phases have been completed, resulting in a fully modular, test-covered codebase with strict separation of concerns on both the backend and frontend, now supporting dual independent inference servers on separate GPUs.
+
+### Tool-Enabled Chat (Phase L)
+- **Phase L – Tool-Calling & Streaming Improvements**: Implemented server-side tool/function-calling orchestration in `services/tools/`. Added 4 tools (web search via DuckDuckGo/`curl_cffi`, read/write/edit file in sandboxed `/mnt/dashboard/` workspace). Tool rounds use non-streaming requests; final response switches to streaming for real-time token delivery including `reasoning_content`. Frontend: thinking box (`!response && !m.done`), URL clickability with styled `<a>` tags, per-prompt 🎨 image generation buttons, and service worker cache management.

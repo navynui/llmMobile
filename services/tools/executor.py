@@ -177,6 +177,8 @@ def _edit_file(path: str, old_string: str, new_string: str) -> str:
         return json.dumps({"status": "error", "error": str(exc), "path": path})
 
 
+# ── Generate image (review mode — does NOT queue) ─────────────────────────
+
 # ── Public dispatch ────────────────────────────────────────────────────────
 
 TOOL_DISPATCH = {
