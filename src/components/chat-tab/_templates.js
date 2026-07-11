@@ -17,6 +17,9 @@ export function renderChat(ctx) {
         <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">Chat Server:</span>
         <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'primary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'primary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'primary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'primary'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); }}">Primary</button>
         <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'mini' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'mini' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'mini' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'mini'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); }}">Secondary</button>
+        <button style="padding: 4px 10px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.toolsEnabled ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.toolsEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.toolsEnabled ? '#a5b4fc' : 'var(--text-secondary)'}; margin-left: 8px;" @click="${() => { ctx.toolsEnabled = !ctx.toolsEnabled; }}" title="Enable AI tools (web search, file operations)">
+          🛠️ Tools ${ctx.toolsEnabled ? 'ON' : 'OFF'}
+        </button>
         ${ctx.loadedModelName ? html`<span style="font-size: 0.75rem; color: #22c55e; font-weight: 500; margin-left: auto;">● ${ctx.loadedModelName}</span>` : ''}
       </div>
       ${ctx.messages.length === 0 ? html`
@@ -44,6 +47,17 @@ export function renderChat(ctx) {
                       ${(() => {
                         const { thinking, response, isThinking } = logic.parseThinkingAndContent(ctx, m);
                         return html`
+                          ${m.toolCalls && m.toolCalls.length ? html`
+                            <div class="tool-calls-bar">
+                              ${m.toolCalls.map(tc => html`
+                                <div class="tool-call-item ${tc.status}">
+                                  <span class="tool-call-icon">${({web_search:'🔍',write_file:'📝',read_file:'📖',edit_file:'✏️'})[tc.name] || '🛠️'}</span>
+                                  <span class="tool-call-name">${tc.name.replace(/_/g, ' ')}</span>
+                                  ${tc.status === 'running' ? html`<span class="tool-call-spinner"></span>` : html`<span class="tool-call-check">✓</span>`}
+                                </div>
+                              `)}
+                            </div>
+                          ` : ''}
                           ${isThinking ? html`
                             <div class="thinking-box">
                               <div class="thinking-header">
@@ -53,7 +67,7 @@ export function renderChat(ctx) {
                             </div>
                           ` : ''}
                           ${response ? html`<div .innerHTML="${logic.formatMessage(ctx, response)}"></div>` : ''}
-                          ${!response && !isThinking ? html`
+                          ${!response && !isThinking && (!m.toolCalls || !m.toolCalls.length) ? html`
                             <div class="typing-indicator">
                               <div class="dot"></div>
                               <div class="dot"></div>
@@ -113,7 +127,9 @@ export function renderChat(ctx) {
         🗑️
       </button>
       <textarea
-        placeholder="${!ctx.visionCapable ? 'Type a message...' : ctx.imageAttachment ? 'Describe the image...'
+        placeholder="${ctx.toolsEnabled ? 'Ask me to search, write files, or edit...'
+          : !ctx.visionCapable ? 'Type a message...'
+          : ctx.imageAttachment ? 'Describe the image...'
           : 'Type a message or upload an image...'}"
         rows="1"
         @input="${(e) => logic.handleTextareaInput(ctx, e)}"

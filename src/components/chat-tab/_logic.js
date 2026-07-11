@@ -1,5 +1,78 @@
 import { Confirm } from '../../components/_confirm.js';
 
+/** Tool definitions mirroring services/tools/registry.py */
+const TOOL_DEFINITIONS = [
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: 'Search the internet for current information. Use this when you need up-to-date data, news, or facts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'The search query string' },
+          num_results: { type: 'integer', description: 'Number of results (max 10)', default: 5 }
+        },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'write_file',
+      description: 'Write content to a file in the sandbox workspace (/mnt/dashboard/). Creates the file if needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from sandbox root, e.g. "output/notes.md"' },
+          content: { type: 'string', description: 'The content to write' },
+          mode: { type: 'string', enum: ['overwrite', 'append'], description: 'Write mode', default: 'overwrite' }
+        },
+        required: ['path', 'content']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read the contents of an existing file in the sandbox workspace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from sandbox root' }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Edit a file by replacing the first occurrence of old_string with new_string.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path from sandbox root' },
+          old_string: { type: 'string', description: 'The exact text to find and replace' },
+          new_string: { type: 'string', description: 'The replacement text' }
+        },
+        required: ['path', 'old_string', 'new_string']
+      }
+    }
+  }
+];
+
+/** Icon labels for each tool */
+const TOOL_ICONS = {
+  web_search: '🔍',
+  write_file: '📝',
+  read_file: '📖',
+  edit_file: '✏️',
+};
+
 function _api(ctx, endpoint) {
   const apis = {
     primary: {
@@ -312,16 +385,22 @@ export async function sendMessage(ctx) {
     ...(base64Image ? { images: [base64Image] } : {})
   }];
   const assistantMessageIndex = ctx.messages.length;
-  ctx.messages = [...ctx.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false }];
+  ctx.messages = [...ctx.messages, { role: 'assistant', content: '', thinking: '', isThinking: false, done: false, toolCalls: [] }];
+
+  // Build request body — include tool definitions if enabled
+  const requestBody = {
+    messages: apiMessages,
+    stream: true
+  };
+  if (ctx.toolsEnabled) {
+    requestBody.tools = TOOL_DEFINITIONS;
+  }
 
   try {
     const response = await fetch(_api(ctx, 'chat_completions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: apiMessages,
-        stream: true
-      })
+      body: JSON.stringify(requestBody)
     });
 
     if (!response.ok) {
@@ -357,6 +436,37 @@ export async function sendMessage(ctx) {
           try {
             const parsed = JSON.parse(dataStr);
 
+            // ── Handle tool_call events from backend orchestration ──
+            if (parsed.type === 'tool_call') {
+              const tc = parsed.tool_call;
+              const updated = [...ctx.messages];
+              if (updated[assistantMessageIndex]) {
+                const toolCalls = updated[assistantMessageIndex].toolCalls || [];
+                toolCalls.push({
+                  id: tc.id,
+                  name: tc.function?.name || 'unknown',
+                  arguments: tc.function?.arguments || '{}',
+                  status: 'running'
+                });
+                updated[assistantMessageIndex] = { ...updated[assistantMessageIndex], toolCalls };
+                ctx.messages = updated;
+              }
+              continue;
+            }
+
+            if (parsed.type === 'tool_result_done') {
+              const updated = [...ctx.messages];
+              if (updated[assistantMessageIndex]) {
+                const toolCalls = (updated[assistantMessageIndex].toolCalls || []).map(tc => ({
+                  ...tc, status: 'done'
+                }));
+                updated[assistantMessageIndex] = { ...updated[assistantMessageIndex], toolCalls };
+                ctx.messages = updated;
+              }
+              continue;
+            }
+
+            // ── Standard OpenAI / llama.cpp chat stream ──
             // 1. OpenAI Chat Completion format: choice delta
             const deltaContent = parsed.choices?.[0]?.delta?.content || '';
             const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content || '';

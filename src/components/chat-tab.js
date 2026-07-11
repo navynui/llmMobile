@@ -14,7 +14,8 @@ export class ChatTab extends LitElement {
     previousModelName: { type: String },
     isReloading: { type: Boolean },
     chatServer: { type: String },
-    loadedModelName: { type: String }
+    loadedModelName: { type: String },
+    toolsEnabled: { type: Boolean }
   };
 
   static styles = chatStyles;
@@ -31,6 +32,7 @@ export class ChatTab extends LitElement {
     this.isReloading = false;
     this.chatServer = 'primary';
     this.loadedModelName = '';
+    this.toolsEnabled = true;
 
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');

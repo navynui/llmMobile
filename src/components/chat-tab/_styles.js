@@ -347,4 +347,63 @@ export const chatStyles = css`
       0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
       40% { transform: scale(1.1); opacity: 1; }
     }
+
+    /* Tool call indicators */
+    .tool-calls-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 8px;
+      padding: 6px;
+      background: rgba(99, 102, 241, 0.06);
+      border: 1px solid rgba(99, 102, 241, 0.12);
+      border-radius: var(--radius-md);
+    }
+
+    .tool-call-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.8rem;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    .tool-call-item.done {
+      opacity: 0.7;
+    }
+
+    .tool-call-icon {
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    .tool-call-name {
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-transform: capitalize;
+      flex: 1;
+    }
+
+    .tool-call-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--primary);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: toolSpin 0.6s linear infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes toolSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    .tool-call-check {
+      color: #22c55e;
+      font-weight: bold;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
   `;

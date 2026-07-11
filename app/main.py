@@ -37,6 +37,7 @@ from services.model_svc import (
     scan_mini_and_register,
 )
 from services.chat_svc import proxy_chat, proxy_chat_mini
+from services.tools import chat_with_tools
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
 from services.comfy.worker import queue_worker
 from services.comfy.queue_state import broadcast_queue, get_queue_snapshot, load_persisted_queue, is_queue_running, set_queue_running
@@ -198,10 +199,24 @@ def route_scan_mini_and_register():
 
 @app.post("/api/chat/completions")
 async def route_proxy_chat(request: Request):
+    body = await request.body()
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        data = {}
+    if "tools" in data:
+        return await chat_with_tools(request, "http://llm-server:8080")
     return await proxy_chat(request)
 
 @app.post("/api/chat-mini/completions")
 async def route_proxy_chat_mini(request: Request):
+    body = await request.body()
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        data = {}
+    if "tools" in data:
+        return await chat_with_tools(request, "http://llm-server-mini:8080")
     return await proxy_chat_mini(request)
 
 # ───────────────────────────────────────────────
