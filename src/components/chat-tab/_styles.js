@@ -526,4 +526,20 @@ export const chatStyles = css`
       font-size: 0.85rem;
       flex-shrink: 0;
     }
+
+    /* Server bar: allow wrapping for narrow screens */
+    .server-bar {
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 499px) {
+      .server-label {
+        display: none !important;
+      }
+      .model-name {
+        flex-basis: 100%;
+        margin-left: 0 !important;
+        margin-top: 2px;
+      }
+    }
   `;
