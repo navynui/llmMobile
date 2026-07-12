@@ -99,7 +99,7 @@ Shared utilities live in `utils/` (`common.py` — path resolution + `get_quanti
 
 ### 2. Frontend (`src/`)
 
-A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components)** and compiled with **Vite**. After Phase J modularization, each large component is split into a `_styles.js` / `_logic.js` / `_templates.js` sibling folder. The main class file imports those modules and owns the `customElements.define` call.
+A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components)** and compiled with **Vite**. After Phase J modularization, each large component is split into a `_styles.js` / `_logic.js` / `_templates.js` sibling folder. When `_logic.js` grows large, it may be further split into focused sub-modules (e.g. `_api.js`, `_formatting.js`, `_tools.js`) with a thin barrel re-export from `_logic.js`. The main class file imports those modules and owns the `customElements.define` call.
 
 **SPA shell:**
 * **`src/llm-app.js`**: SPA shell class, `<toast-host>` mount point. Imports from `src/llm-app/`:
@@ -127,7 +127,7 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
   - Composes `<benchmark-bubble-chart>` (kept whole at 291 lines)
 
 * **`src/components/chat-tab.js`** + **`chat-tab/`**:
-  - `_styles.js`, `_logic.js` (stream parsing, context/messages state, send logic, markdown rendering, server-aware API routing via `_api()` helper, tool-call stream events, URL clickability, extractPrompts/promptGenerateImage), `_templates.js` (messages, input, composer, thinking box, tool call indicators, per-prompt 🎨 buttons, server selector pills with loaded model name, 🛠️ Tools toggle)
+  - `_styles.js`, `_logic.js` (barrel re-export), `_tools.js` (TOOL_DEFINITIONS, TOOL_ICONS constants), `_formatting.js` (markdown/math rendering, thinking parsing, prompt extraction), `_api.js` (server-aware API routing, sendMessage streaming, model status polling, vision check, image handling, message state), `_templates.js` (messages, input, composer, thinking box, tool call indicators, per-prompt 🎨 buttons, server selector pills with loaded model name, 🛠️ Tools toggle)
 
 * **`src/components/gallery-tab.js`** + **`gallery-tab/`**:
   - `_styles.js`, `_logic.js` (folder browsing, metadata fetch, delete/move), `_templates.js` (grid, viewer, inspector)
@@ -247,7 +247,7 @@ The thinking box (`🧠 Thinking Process...`) visibility in the assistant messag
 
 ### 11. `ctx.isGenerating` Must Be Set Before Fetch
 
-In `sendMessage()` (`_logic.js`), `ctx.isGenerating` must be set to `true` right before the `await fetch()` call to prevent double-sends and enable UI indicators.
+In `sendMessage()` (`chat-tab/_api.js`), `ctx.isGenerating` must be set to `true` right before the `await fetch()` call to prevent double-sends and enable UI indicators.
 
 * Set it after placeholder creation and request body construction, before the `try` block.
 * The `finally` block already sets `ctx.isGenerating = false`.
@@ -255,7 +255,7 @@ In `sendMessage()` (`_logic.js`), `ctx.isGenerating` must be set to `true` right
 
 ### 12. URL Clickability & Per-Prompt Image Buttons
 
-`formatMessage()` in `_logic.js` wraps bare URLs with `<a href="..." target="_blank">` tags after protecting code block placeholders and existing markdown links. The CSS for `.bubble a` uses `#818cf8` color with hover underline and visited state.
+`formatMessage()` in `chat-tab/_formatting.js` wraps bare URLs with `<a href="..." target="_blank">` tags after protecting code block placeholders and existing markdown links. The CSS for `.bubble a` uses `#818cf8` color with hover underline and visited state.
 
 Per-prompt 🎨 buttons are rendered for lines starting with `>` (or after `Prompt:`). `extractPrompts()` parses the response for these patterns, and clicking a button calls `promptGenerateImage()` which saves the prompt to `localStorage` and switches to `#/generate`.
 
@@ -328,6 +328,7 @@ The entire codebase has been refactored from monolithic files into focused, sing
 
 **7. Phase J — Sub-folder Modularization Pattern (JS)**
 * Each large Lit component is split into a sibling folder `<component-name>/` containing `_styles.js`, `_logic.js`, and `_templates.js`.
+* When `_logic.js` exceeds ~500 lines, it should be further split into focused sub-modules (e.g. `_api.js`, `_formatting.js`, `_tools.js`) with `_logic.js` becoming a thin barrel re-export. No import-site changes needed — callers continue to `import * as logic from './component/_logic.js'`.
 * The main class file (`<component-name>.js`) owns the `customElements.define` call and imports from the sub-folder — no new `customElements.define` calls in sub-folder files.
 * `_templates.js` functions take explicit args (no closures over `this`). Pass state/handlers as parameters to keep them pure and testable.
 * `llm-app.js` is split via `src/llm-app/` containing `_styles.js`, `_router.js`, `_templates.js`, and `_sse.js`.
@@ -369,3 +370,6 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 
 ### Tool-Enabled Chat (Phase L)
 - **Phase L – Tool-Calling & Streaming Improvements**: Implemented server-side tool/function-calling orchestration in `services/tools/`. Added 4 tools (web search via DuckDuckGo/`curl_cffi`, read/write/edit file in sandboxed `/mnt/dashboard/` workspace). Tool rounds use non-streaming requests; final response switches to streaming for real-time token delivery including `reasoning_content`. Frontend: thinking box (`!response && !m.done`), URL clickability with styled `<a>` tags, per-prompt 🎨 image generation buttons, and service worker cache management.
+
+### Live Server Activity & Further Code Splitting (Phase M)
+- **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with a barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge on the Server tab by proxying llama-server's `/slots` endpoint, polled every 2.5s. All files in the repository are now under 550 lines.

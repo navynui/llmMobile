@@ -301,3 +301,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### Tool-Enabled Chat (Phase L)
 - **Phase L – Tool-Calling & Streaming Improvements**: Implemented server-side tool/function-calling orchestration in `services/tools/`. 4 tools (web search via DuckDuckGo/`curl_cffi`, read/write/edit file in `/mnt/dashboard/` sandbox). Tool rounds non-streaming; final response streamed token-by-token with `reasoning_content` preservation. Frontend: thinking box (`!response && !m.done`), URL clickability, per-prompt 🎨 image generation buttons, service worker cache management.
+
+### Live Server Activity & Further Code Splitting (Phase M)
+- **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge via llama-server `/slots` endpoint, polled every 2.5s. All repository source files are now under 550 lines.
