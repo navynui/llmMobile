@@ -26,7 +26,7 @@ from models.requests import (
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
     start_llm_server, stop_llm_server, restart_llm_server,
-    _start_mqtt_listener, get_logs
+    _start_mqtt_listener, get_logs, get_server_slots_status
 )
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
@@ -112,6 +112,10 @@ def route_start_llm():
 @app.post("/stop")
 def route_stop_llm():
     return stop_llm()
+
+@app.get("/api/servers/slots")
+async def route_get_server_slots():
+    return await get_server_slots_status()
 
 @app.post("/servers/{name}/start")
 def route_start_llm_server(name: str):

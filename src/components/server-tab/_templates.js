@@ -9,6 +9,7 @@ export function renderServerTab(ctx) {
         .servers="${ctx.status?.servers}"
         .status="${ctx.status}"
         .actionPending="${ctx.actionPending}"
+        .slotInfo="${ctx.slotInfo}"
         @server-action="${(e) => ctx.handleServerAction(e.detail.server, e.detail.action)}"
         @free-comfy="${() => ctx.handleFreeComfyUI()}"
       >

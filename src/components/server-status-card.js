@@ -20,6 +20,7 @@ export class ServerStatusCard extends LitElement {
     stats: { type: Object },
     status: { type: Object },
     actionPending: { type: Boolean },
+    slotInfo: { type: Array },
   };
 
   constructor() {
@@ -28,6 +29,7 @@ export class ServerStatusCard extends LitElement {
     this.stats = {};
     this.status = {};
     this.actionPending = false;
+    this.slotInfo = [];
   }
 
   static styles = css`
@@ -48,6 +50,43 @@ ${buttonStyles}
 .status-stopped { background: var(--danger-glow); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.2); }
 .status-unknown,
 .status-not_found { background: rgba(255, 255, 255, 0.05); color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.1); }
+
+.processing-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: 8px;
+}
+.processing-active {
+  background: rgba(255, 159, 64, 0.15);
+  color: var(--warning);
+  border: 1px solid rgba(255, 159, 64, 0.3);
+  animation: pulse-busy 1.5s ease-in-out infinite;
+}
+.processing-idle {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--success);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+}
+.processing-off {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.processing-error {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+@keyframes pulse-busy {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 
 .stats-grid {
   display: grid;
@@ -137,6 +176,29 @@ ${buttonStyles}
   getUtilColorClass(percent) { if (percent < 50) return 'bar-normal'; if (percent < 85) return 'bar-warning'; return 'bar-danger'; }
   getTempColorClass(temp) { if (temp < 60) return 'bar-normal'; if (temp < 80) return 'bar-warning'; return 'bar-danger'; }
 
+  /** Return the CSS class for the processing badge based on slot info. */
+  _processingClass(srvName) {
+    // If not running, show off
+    const srv = (this.servers || []).find(s => s.name === srvName);
+    if (!srv || srv.status !== 'running') return 'processing-off';
+
+    const slot = (this.slotInfo || []).find(s => s.name === srvName);
+    if (!slot) return 'processing-off';
+    if (slot.error) return 'processing-error';
+    return slot.processing ? 'processing-active' : 'processing-idle';
+  }
+
+  /** Return the label text for the processing badge. */
+  _processingLabel(srvName) {
+    const srv = (this.servers || []).find(s => s.name === srvName);
+    if (!srv || srv.status !== 'running') return '○ Offline';
+
+    const slot = (this.slotInfo || []).find(s => s.name === srvName);
+    if (!slot) return '○ —';
+    if (slot.error) return '⚠ Error';
+    return slot.processing ? '● Inferring…' : '○ Idle';
+  }
+
   _dispatchAction(serverName, action) {
     this.dispatchEvent(
       new CustomEvent('server-action', { detail: { server: serverName, action }, bubbles: true, composed: true })
@@ -167,7 +229,9 @@ ${buttonStyles}
                 return html`
                   <div class="server-row" data-name="${srv.name}">
                     <div class="server-meta">
-                      <div><strong>${srv.label || srv.name}</strong></div>
+                      <div><strong>${srv.label || srv.name}</strong>
+                        <span class="processing-badge ${this._processingClass(srv.name)}">${this._processingLabel(srv.name)}</span>
+                      </div>
                       <div class="status-badge ${statusClass(st)}">● ${st}</div>
                       <div>Image: ${srv.image || 'N/A'}</div>
                       ${st === 'running' ? html`<div>Uptime: ${srv.uptime || 'N/A'}</div>` : ''}

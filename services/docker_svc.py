@@ -219,3 +219,68 @@ def get_logs(container_name: str = "llm-server", lines: int = 100):
     except Exception as e:
         return {"container": container_name, "logs": f"Error fetching logs: {str(e)}"}
 
+
+async def get_server_slots_status() -> list[dict]:
+    """Check /slots on both llama-server instances to see if they're busy.
+
+    Returns a list with one dict per server:
+      {
+        "name": "llama-server",
+        "container": "llm-server",
+        "label": "Primary (llama-server)",
+        "slots": [...],       # raw slot data from /slots endpoint
+        "processing": bool,   # True if any slot is actively processing
+        "error": str | None,  # error message if call failed
+      }
+    """
+    import httpx
+
+    results = []
+    for entry in _MANAGED_LLM_SERVERS:
+        base_url = "http://llm-server:8080" if entry["name"] == "llama-server" else "http://llm-server-mini:8080"
+        container_name = entry["container"]
+        info = {"name": entry["name"], "container": container_name, "label": entry["label"], "slots": [], "processing": False, "error": None}
+
+        # Check container is running first
+        cinfo = _container_info(container_name)
+        if cinfo.get("status") != "running":
+            info["error"] = f"Container '{container_name}' is not running"
+            results.append(info)
+            continue
+
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                # First find the loaded model (needed for /slots query param)
+                models_resp = await client.get(f"{base_url}/models")
+                loaded_model = None
+                if models_resp.status_code == 200:
+                    models_data = models_resp.json()
+                    for m in models_data.get("data", []):
+                        s = m.get("status")
+                        if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
+                            loaded_model = m.get("id")
+                            break
+
+                if loaded_model:
+                    # /slots requires ?model= query param with the loaded model name
+                    slots_resp = await client.get(f"{base_url}/slots", params={"model": loaded_model})
+                    if slots_resp.status_code == 200:
+                        slots = slots_resp.json()
+                        info["slots"] = slots
+                        # A slot is processing if its state != 0 or is_processing is True
+                        info["processing"] = any(
+                            slot.get("state", 0) != 0 or slot.get("is_processing", False)
+                            for slot in slots
+                        )
+                    else:
+                        info["error"] = f"Slots endpoint returned {slots_resp.status_code}"
+                else:
+                    # No model loaded — no slots to check, server is idle
+                    info["slots"] = []
+                    info["processing"] = False
+        except Exception as e:
+            info["error"] = str(e)
+
+        results.append(info)
+    return results
+

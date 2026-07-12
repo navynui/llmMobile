@@ -33,6 +33,8 @@ export class ServerTab extends LitElement {
     hfRepoDetails: { type: Object },
     hfDetailsLoading: { type: Boolean },
     hfActiveDownloads: { type: Array },
+    // Slots (inference activity)
+    slotInfo: { type: Array },
     // System Logs States
     logContainer: { type: String },
     logsText: { type: String },
@@ -76,6 +78,8 @@ export class ServerTab extends LitElement {
     this.hfRepoDetails = null;
     this.hfDetailsLoading = false;
     this.hfActiveDownloads = [];
+    // Slots (inference activity)
+    this.slotInfo = [];
     // System Logs States
     this.logContainer = 'llm-server';
     this.logsText = '';
@@ -94,12 +98,14 @@ export class ServerTab extends LitElement {
     this.fetchModelsIni();
     this.fetchModelsMiniIni();
     this.startDownloadPolling();
+    this.startSlotPolling();
   }
   disconnectedCallback() {
     super.disconnectedCallback();
     if (this.activeModelPoll) { clearInterval(this.activeModelPoll); }
     if (this.activeModelMiniPoll) { clearInterval(this.activeModelMiniPoll); }
     this.stopDownloadPolling();
+    this.stopSlotPolling();
   }
   async pollDownloads() { return logic.pollDownloads(this); }
   async handleHfSearch() { return logic.handleHfSearch(this); }
@@ -128,6 +134,24 @@ export class ServerTab extends LitElement {
   async saveModelsMiniIni() { return logic.saveModelsMiniIni(this); }
   async handleScanMiniAndRegister() { return logic.handleScanMiniAndRegister(this); }
   async executeDeleteModelMini(filename) { return logic.executeDeleteModelMini(this, filename); }
+  async fetchSlotStatus() {
+    try {
+      const res = await fetch('/api/servers/slots');
+      if (res.ok) {
+        this.slotInfo = await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to poll slot status', e);
+    }
+  }
+  startSlotPolling() {
+    this.fetchSlotStatus();
+    if (this.slotPollInterval) clearInterval(this.slotPollInterval);
+    this.slotPollInterval = setInterval(() => this.fetchSlotStatus(), 2500);
+  }
+  stopSlotPolling() {
+    if (this.slotPollInterval) { clearInterval(this.slotPollInterval); this.slotPollInterval = null; }
+  }
   startDownloadPolling() {
     if (this.downloadPollInterval) clearInterval(this.downloadPollInterval);
     this.downloadPollInterval = setInterval(() => this.pollDownloads(), 1500);
