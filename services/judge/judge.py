@@ -47,12 +47,13 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
+        "max_tokens": 2048,
         "stream": False
     }
 
     # Retry up to 2 times on timeout with exponential backoff.
-    # Single-request timeout raised to 600s to accommodate very long
-    # judge prompts (e.g. evaluating 6000-token model responses).
+    # max_tokens=2048 prevents runaway generation (observed 49K+ tokens
+    # on a single grading prompt). 600s timeout is a safety net.
     max_retries = 2
     retry_delays = [5.0, 15.0]
     for attempt in range(max_retries + 1):
