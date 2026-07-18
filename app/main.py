@@ -20,7 +20,7 @@ from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_
 from models.requests import (
     ModelsIniRequest, ModelActionRequest, GenerateRequest, MkdirRequest,
     MoveRequest, DeleteRequest, DownloadRequest, BenchmarkRunRequest,
-    BenchmarkQueueRequest, JudgeRequest
+    BenchmarkQueueRequest, TemperatureSweepRequest, JudgeRequest
 )
 # ── Service imports ─────────────────────────────────────────────────────────────
 from services.docker_svc import (
@@ -72,6 +72,7 @@ from services.download.api import (
 from services.benchmark.state import get_benchmark_progress
 from services.benchmark.reader import get_benchmarks, get_benchmark_details, get_benchmark_logs, get_benchmark_outputs
 from services.benchmark.api import run_benchmark as run_single_benchmark, run_benchmark_queue as run_queue_benchmark
+from services.benchmark.sweep import run_temperature_sweep as run_sweep_handler
 from services.judge.judge import judge_benchmark as svc_judge_benchmark
 
 app = FastAPI(title="LLM Mobile Manager")
@@ -342,6 +343,11 @@ async def route_run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks
 @app.post("/api/benchmarks/run")
 async def route_run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTasks):
     return await run_single_benchmark(req, background_tasks)
+
+@app.post("/api/benchmarks/temperature-sweep")
+async def route_temperature_sweep(req: TemperatureSweepRequest, background_tasks: BackgroundTasks):
+    return await run_sweep_handler(req, background_tasks)
+
 
 @app.get("/api/benchmarks/status")
 def route_get_benchmark_status():

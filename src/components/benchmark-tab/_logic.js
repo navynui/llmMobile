@@ -41,11 +41,20 @@ export async function fetchBenchmarkStatus(ctx) {
     if (res.ok) {
       const data = await res.json();
       const wasRunning = ctx.benchmarkProgress && ctx.benchmarkProgress.running;
+      const hadSweepResults = ctx._sweepResultsFetched;
       ctx.benchmarkProgress = data;
 
       if (wasRunning && !data.running) {
         fetchBenchmarks(ctx);
         fetchLocalModels(ctx);
+      }
+
+      // When sweep finishes, show results modal automatically
+      if (data.sweep_results && !hadSweepResults) {
+        ctx._sweepResultsFetched = true;
+        ctx.showSweepModal = true;
+      } else if (!data.sweep_results) {
+        ctx._sweepResultsFetched = false;
       }
     }
   } catch (err) {
@@ -177,6 +186,48 @@ export async function runQueueBenchmark(ctx) {
   } catch (err) {
     console.error('Error triggering queue benchmark:', err);
     alert('An error occurred while attempting to start the queue benchmark.');
+  }
+}
+
+export async function runTemperatureSweep(ctx) {
+  if (ctx.benchmarkProgress && ctx.benchmarkProgress.running) {
+    alert('A benchmark is already in progress!');
+    return;
+  }
+  if (!ctx.activeModelId) {
+    alert('No active model loaded. Please load a model in the Server tab first.');
+    return;
+  }
+  try {
+    const res = await fetch('/api/benchmarks/temperature-sweep', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId,
+        server: ctx.selectedBenchmarkServer || 'primary'
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      startBenchmarkPolling(ctx);
+      ctx.benchmarkProgress = {
+        ...ctx.benchmarkProgress,
+        running: true,
+        sweep_running: true,
+        sweep_progress: 0,
+        sweep_total: 5,
+        sweep_current_temp: null,
+        sweep_results: null,
+        current_round: '🌡️ Temperature Sweep...',
+        rounds_completed: 0,
+        logs: ['[UI] Temperature sweep requested...']
+      };
+    } else {
+      alert(data.detail || 'Failed to start temperature sweep.');
+    }
+  } catch (err) {
+    console.error('Error triggering temperature sweep:', err);
+    alert('An error occurred while starting the temperature sweep.');
   }
 }
 

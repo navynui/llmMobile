@@ -4,7 +4,7 @@ import './benchmark-bubble-chart.js';
 
 import { benchmarkStyles } from './benchmark-tab/_styles.js';
 import * as logic from './benchmark-tab/_logic.js';
-import { renderBenchmarksView, renderDetailsModal, renderBenchmarkLogs } from './benchmark-tab/_templates.js';
+import { renderBenchmarksView, renderDetailsModal, renderSweepModal, renderBenchmarkLogs } from './benchmark-tab/_templates.js';
 
 export class BenchmarkTab extends LitElement {
   static properties = {
@@ -31,6 +31,10 @@ export class BenchmarkTab extends LitElement {
     selectedBenchmarkDetails: { type: Object },
     detailsModalLoading: { type: Boolean },
     showDetailsModal: { type: Boolean },
+
+    // Sweep modal
+    showSweepModal: { type: Boolean },
+    sweepData: { type: Object },
 
     // Chart linkage
     highlightedModelId: { type: String },
@@ -62,6 +66,9 @@ export class BenchmarkTab extends LitElement {
     this.activeModelId = '';
     this.selectedJudgeModelId = '';
     this.benchmarkQueue = [];
+    this.showSweepModal = false;
+    this.sweepData = null;
+    this._sweepResultsFetched = false;
     this.benchmarkPollInterval = null;
 
     // Benchmark execution logs state
@@ -99,6 +106,7 @@ export class BenchmarkTab extends LitElement {
       renderBenchmarksView(this),
       renderBenchmarkLogs(this),
       renderDetailsModal(this),
+      renderSweepModal(this),
     ];
   }
 }

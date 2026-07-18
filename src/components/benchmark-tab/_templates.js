@@ -19,6 +19,7 @@ import {
   runBenchmark,
   runJudge,
   runQueueBenchmark,
+  runTemperatureSweep,
   fetchBenchmarkLogs,
   handleBenchmarkLogLimitChange,
 } from './_logic.js';
@@ -58,7 +59,7 @@ export function renderBenchmarksView(ctx) {
         <div class="card" style="border-color: var(--primary); box-shadow: 0 0 15px rgba(99, 102, 241, 0.25); background: rgba(99, 102, 241, 0.03);">
           <h3 style="margin-bottom: 6px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
             <span class="loader" style="border-top-color: var(--primary); width: 16px; height: 16px; border-width: 2px;"></span>
-            ⚡ ${ctx.benchmarkProgress.queue_running ? 'Automated Benchmark Queue in Progress...' : 'Benchmarking in Progress...'}
+            ⚡ ${ctx.benchmarkProgress.queue_running ? 'Automated Benchmark Queue in Progress...' : ctx.benchmarkProgress.sweep_running ? '🌡️ Temperature Sweep in Progress...' : 'Benchmarking in Progress...'}
           </h3>
           <span class="card-subtitle" style="margin-bottom: 12px;">
             ${ctx.benchmarkProgress.queue_running ? html`
@@ -94,7 +95,7 @@ export function renderBenchmarksView(ctx) {
           <div style="margin: 12px 0;">
             <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 6px;">
               <span style="color: var(--text-secondary);">Current Status: <strong style="color: var(--text-primary);">${ctx.benchmarkProgress.current_round || 'Initializing...'}</strong></span>
-              <span style="color: var(--primary); font-weight: bold;">${progressPercent}% (${completedRounds}/${totalRounds})</span>
+              <span style="color: var(--primary); font-weight: bold;">${ctx.benchmarkProgress.sweep_running ? `${Math.min(100, Math.round(((ctx.benchmarkProgress.sweep_progress || 0) / (ctx.benchmarkProgress.sweep_total || 5)) * 100))}% (${ctx.benchmarkProgress.sweep_progress || 0}/${ctx.benchmarkProgress.sweep_total || 5} temps)` : `${progressPercent}% (${completedRounds}/${totalRounds})`}</span>
             </div>
             <div class="progress-track">
               <div class="progress-fill" style="width: ${progressPercent}%; height: 100%; background: linear-gradient(90deg, var(--primary), #a5b4fc); transition: width 0.4s ease; box-shadow: 0 0 8px var(--primary);"></div>
@@ -178,6 +179,14 @@ export function renderBenchmarksView(ctx) {
               @click="${() => runJudge(ctx)}"
             >
               ⚖️ Re-Grade Latest Run
+            </button>
+            <button
+              class="btn btn-secondary"
+              style="flex: 1; min-width: 150px; font-size: 0.85rem; padding: 10px 16px; border: 1px solid var(--border-color);"
+              ?disabled="${!ctx.activeModelId || (ctx.benchmarkProgress && ctx.benchmarkProgress.running)}"
+              @click="${() => runTemperatureSweep(ctx)}"
+            >
+              🌡️ Temperature Sweep
             </button>
           </div>
 
@@ -455,6 +464,87 @@ export function renderBenchmarkLogs(ctx) {
       </div>
 
       <div class="logs-terminal benchmark-logs-terminal" style="background: rgba(99, 102, 241, 0.03); border-color: var(--primary-glow); color: #a5b4fc; font-family: 'Courier New', Courier, monospace; font-size: 0.75rem; line-height: 1.4; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">${ctx.benchmarkLogsText || 'Click refresh to pull benchmark execution logs...'}</div>
+    </div>
+  `;
+}
+
+export function renderSweepModal(ctx) {
+  if (!ctx.showSweepModal || !ctx.benchmarkProgress?.sweep_results) return '';
+  const sr = ctx.benchmarkProgress.sweep_results;
+  const sweeps = sr.sweeps || [];
+  const bestTemp = sr.best_temperature;
+
+  return html`
+    <div class="modal-backdrop" @click="${() => ctx.showSweepModal = false}">
+      <div class="modal modal-large" @click="${e => e.stopPropagation()}">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px;">
+          <h3 class="modal-title" style="color: #a5b4fc; font-size: 1.1rem; margin: 0;">🌡️ Temperature Sweep Results</h3>
+          <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 0.8rem; background: transparent; border-color: rgba(255,255,255,0.15); border-radius: var(--radius-sm);" @click="${() => ctx.showSweepModal = false}">✕</button>
+        </div>
+        <div class="modal-body modal-body-scrollable">
+          <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;">
+            <span style="font-weight: bold; font-size: 1rem; color: white; word-break: break-all;">${sr.model_id}</span>
+            <div style="display: flex; gap: 8px; font-size: 0.78rem; color: var(--text-secondary); flex-wrap: wrap;">
+              <span>⚖️ Judge: ${sr.judge_model}</span>
+              <span>🌡️ Best temp: <strong style="color: #34d399;">${bestTemp}</strong></span>
+              <span>🏆 Best combined score: <strong style="color: #a5b4fc;">${sr.best_combined}</strong></span>
+            </div>
+            <div style="background: rgba(16,185,129,0.08); border-left: 3px solid #34d399; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.82rem; color: #d1d5db; margin-top: 4px;">
+              💡 ${sr.recommendation}
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table style="width: 100%; border-collapse: separate; border-spacing: 0 4px;">
+              <thead>
+                <tr>
+                  <th style="text-align: left; padding: 8px; font-size: 0.8rem;">Temperature</th>
+                  <th style="text-align: center; padding: 8px; font-size: 0.8rem;">Score</th>
+                  <th style="text-align: right; padding: 8px; font-size: 0.8rem;">Tokens</th>
+                  <th style="text-align: right; padding: 8px; font-size: 0.8rem;">t/s</th>
+                  <th style="text-align: center; padding: 8px; font-size: 0.8rem;">Combined</th>
+                  <th style="text-align: center; padding: 8px; font-size: 0.8rem;"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${sweeps.map(s => {
+                  const isBest = s.temperature === bestTemp;
+                  const isCurrent = s.temperature === 0.7;
+                  const rowBg = isBest ? 'rgba(16,185,129,0.06)' : 'transparent';
+                  return html`
+                    <tr style="background: ${rowBg};">
+                      <td style="padding: 8px; font-weight: ${isBest ? 'bold' : 'normal'}; color: ${isBest ? '#34d399' : 'var(--text-primary)'};">
+                        ${s.temperature}
+                      </td>
+                      <td style="text-align: center; padding: 8px;">
+                        <span style="color: ${s.score >= 20 ? '#34d399' : s.score >= 10 ? '#fbbf24' : '#f87171'};">${s.score}</span>
+                      </td>
+                      <td style="text-align: right; padding: 8px; color: var(--text-secondary);">${(s.tokens_generated || 0).toLocaleString()}</td>
+                      <td style="text-align: right; padding: 8px; color: var(--text-secondary);">${(s.tokens_per_second || 0).toFixed(1)}</td>
+                      <td style="text-align: center; padding: 8px; font-weight: bold; color: ${isBest ? '#34d399' : 'var(--text-secondary)'};">${s.combined}</td>
+                      <td style="text-align: center; padding: 8px;">
+                        ${isBest ? html`<span style="color: #34d399; font-weight: bold; font-size: 0.8rem;">⭐ Best</span>` : ''}
+                        ${isCurrent && !isBest ? html`<span style="color: #9ca3af; font-size: 0.75rem;">(current)</span>` : ''}
+                      </td>
+                    </tr>
+                  `;
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style="margin-top: 12px; padding: 10px; background: rgba(99,102,241,0.04); border-radius: var(--radius-sm); border: 1px solid rgba(99,102,241,0.12); font-size: 0.78rem; color: var(--text-secondary);">
+            <strong style="color: #a5b4fc;">How Combined Score Works:</strong>
+            
+            Combined = Score + min(25, (t/s ÷ 60) × 25). This rewards both answer quality and speed.
+            All responses graded by <strong>${sr.judge_model}</strong> at temperature=0.1 for consistency.
+            Based on a single Technical Reasoning prompt — results may vary per round type.
+          </div>
+        </div>
+        <div class="modal-actions" style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 12px;">
+          <button class="btn btn-secondary" style="padding: 8px 16px;" @click="${() => ctx.showSweepModal = false}">Close</button>
+        </div>
+      </div>
     </div>
   `;
 }

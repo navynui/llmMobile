@@ -45,6 +45,12 @@ class BenchmarkQueueRequest(BaseModel):
     judge_model_id: str
     server: str = "primary"
 
+class TemperatureSweepRequest(BaseModel):
+    judge_model_id: Optional[str] = None
+    server: str = "primary"
+    temperatures: Optional[list[float]] = None
+
+
 class JudgeRequest(BaseModel):
     run_id: Optional[str] = None
     judge_model_id: Optional[str] = None
