@@ -178,7 +178,9 @@ You must return a JSON object exactly matching this structure (do not output any
     "reasoning": "<concise_explanation_of_the_assigned_score>",
     "hallucination_detected": <true_or_false>,
     "hallucination_description": "<description_if_detected_else_empty>"
-}}"""
+}}
+
+{{"score": """
 
             print(f"Grading round: {gold_key} using judge {judge_model}...")
             log_benchmark(f"Grading round: {gold_key} using judge {judge_model}")
