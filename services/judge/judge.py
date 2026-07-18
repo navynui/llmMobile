@@ -1,3 +1,4 @@
+import asyncio
 import re
 import time
 import traceback
@@ -34,7 +35,7 @@ def parse_judge_json(raw_text: str) -> dict:
 
 async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: str) -> str:
     from services.model_svc import _get_preset_id_for_model
-    from services.benchmark.logging import log_benchmark
+    from services.benchmark.logging import log_benchmark, log_benchmark_error
 
     url = f"{get_llm_server_url()}/v1/chat/completions"
     preset_id = await _get_preset_id_for_model(judge_model)
@@ -48,12 +49,28 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         "temperature": 0.1,
         "stream": False
     }
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        res_data = response.json()
-        log_benchmark(f"Grading round completed for Judge model: {preset_id}")
-        return res_data["choices"][0]["message"]["content"]
+
+    # Retry up to 2 times on timeout with exponential backoff.
+    # Single-request timeout raised to 600s to accommodate very long
+    # judge prompts (e.g. evaluating 6000-token model responses).
+    max_retries = 2
+    retry_delays = [5.0, 15.0]
+    for attempt in range(max_retries + 1):
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                res_data = response.json()
+                log_benchmark(f"Grading round completed for Judge model: {preset_id}")
+                return res_data["choices"][0]["message"]["content"]
+        except (httpx.ReadTimeout, httpx.TimeoutException) as e:
+            if attempt < max_retries:
+                delay = retry_delays[attempt]
+                log_benchmark_error(f"Judge request timed out, retry {attempt+1}/{max_retries} in {delay}s...")
+                await asyncio.sleep(delay)
+            else:
+                log_benchmark_error(f"Judge request timed out after {max_retries+1} attempts, raising")
+                raise
 
 
 async def judge_benchmark(req: JudgeRequest):

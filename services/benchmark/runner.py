@@ -288,6 +288,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
     _benchmark_progress["queue_completed"] = []
     _benchmark_progress["queue_current_index"] = 0
     _benchmark_progress["logs"] = []
+    benchmark_results = []
 
     log_benchmark(f"Initializing automated benchmark queue for {len(models)} models using Judge: {judge_model_id}")
     broadcast_notification(f"📊 Benchmark queue started with {len(models)} models")
@@ -530,12 +531,35 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                 broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
                 continue
 
-            # 4. Switch to Judge Model for evaluation
+            # Collect benchmark result for batch grading after all models finish
+            benchmark_results.append({
+                "model_id": model_id,
+                "run_id": run_id,
+                "raw_output_path": raw_output_path,
+                "display_name": display_name
+            })
+            _benchmark_progress["queue_completed"].append(model_id)
+            broadcast_notification(f"✅ Benchmark complete for {model_id} (awaiting grading)")
+
+            # 10s cooldown between models
+            if idx < len(models) - 1:
+                log_benchmark("Cooling down 10 seconds before next model in queue...")
+                await asyncio.sleep(10)
+
+        # ── Batch Judge Grading Phase ────────────────────────────────────────
+        # Load the Judge model once and grade all collected benchmark results.
+        # This avoids repeated model swaps which cause VRAM fragmentation and
+        # llama-server timeouts.
+        if benchmark_results:
+            log_benchmark(f"Batch grading {len(benchmark_results)} models with Judge: {judge_model_id}")
+            broadcast_notification(f"📊 Batch grading {len(benchmark_results)} models...")
+
+            # Load Judge model once
             preset_id = await _get_preset_id_for_model(judge_model_id)
-            log_benchmark(f"Queue: Requesting server to load Judge model: {judge_model_id} (preset: {preset_id})")
-            async with httpx.AsyncClient() as client:
+            log_benchmark(f"Queue: Loading Judge model: {judge_model_id} (preset: {preset_id})")
+            async with httpx.AsyncClient() as load_client:
                 try:
-                    load_res = await client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
+                    load_res = await load_client.post("http://llm-server:8080/models/load", json={"model": preset_id}, timeout=30)
                     if load_res.status_code != 200:
                         try:
                             res_json = load_res.json()
@@ -543,17 +567,14 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                             if "already running" in error_msg or "already loaded" in error_msg:
                                 log_benchmark(f"Queue: Judge model {judge_model_id} is already loaded and running.")
                             else:
-                                traceback.format_exc()
                                 log_benchmark_error(f"Judge: Server returned {load_res.status_code}: {error_msg}")
-                                continue
+                                raise RuntimeError(f"Failed to load judge model: {error_msg}")
                         except Exception as e:
-                            traceback.format_exc()
                             log_benchmark_error(f"Judge: HTTP error {load_res.status_code}")
-                            continue
+                            raise
                 except Exception as e:
-                    traceback.format_exc()
                     log_benchmark_error(f"Judge: Exception loading: {e}")
-                    continue
+                    raise
 
             # Wait for Judge model to load
             log_benchmark("Queue: Waiting for Judge model to load...")
@@ -567,25 +588,24 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
 
             if not judge_loaded:
                 log_benchmark_error(f"Judge: Timeout loading model {judge_model_id}")
-                continue
-
-            # 5. Execute AI Judge evaluation
-            log_benchmark("Queue: Starting AI Judge grading sequence...")
-            _benchmark_progress["current_round"] = "AI Judge Grading..."
-            try:
-                req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
-                await judge_benchmark(req)
-                log_benchmark(f"Queue: AI Judge grading completed successfully for {model_id}!")
-                _benchmark_progress["queue_completed"].append(model_id)
-                broadcast_notification(f"✅ Benchmark complete for {model_id}")
-            except Exception as judge_err:
-                traceback.format_exc()
-                log_benchmark_error(f"Judge: Grading failed for model {model_id}: {judge_err}")
-
-            # 10s cooldown between models
-            if idx < len(models) - 1:
-                log_benchmark("Cooling down 10 seconds before next model in queue...")
-                await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(2)  # brief settling time after load
+                # Grade each collected result sequentially
+                for bm in benchmark_results:
+                    bm_mid = bm["model_id"]
+                    bm_rid = bm["run_id"]
+                    bm_disp = bm["display_name"]
+                    log_benchmark(f"Queue: Batch grading {bm_disp}...")
+                    _benchmark_progress["current_round"] = f"AI Judge Grading: {bm_disp}"
+                    try:
+                        req = JudgeRequest(run_id=bm_rid, judge_model_id=judge_model_id)
+                        await judge_benchmark(req)
+                        log_benchmark(f"Queue: Grading completed for {bm_disp}")
+                        broadcast_notification(f"✅ Graded: {bm_disp}")
+                    except Exception as judge_err:
+                        traceback.format_exc()
+                        log_benchmark_error(f"Judge: Grading failed for {bm_disp}: {judge_err}")
+                        broadcast_notification(f"⚠️ Grading failed for {bm_disp}")
 
         log_benchmark("--- Automated Benchmark Queue Completed Successfully! ---")
         broadcast_notification(f"🏁 Benchmark queue completed successfully for {len(models)} models")
