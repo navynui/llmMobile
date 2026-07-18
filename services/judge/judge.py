@@ -47,13 +47,13 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
             {"role": "user", "content": user_prompt}
         ],
         "temperature": 0.1,
-        "max_tokens": 2048,
+        "max_tokens": 4096,
         "stream": False
     }
 
     # Retry up to 2 times on timeout with exponential backoff.
-    # max_tokens=2048 prevents runaway generation (observed 49K+ tokens
-    # on a single grading prompt). 600s timeout is a safety net.
+    # max_tokens=4096 prevents runaway generation while giving enough
+    # room for verbose preamble + JSON object. 600s timeout is safety net.
     max_retries = 2
     retry_delays = [5.0, 15.0]
     for attempt in range(max_retries + 1):
@@ -204,6 +204,55 @@ You must return a JSON object exactly matching this structure (do not output any
                     hallucinations.append({
                         "round_name": round_name,
                         "description": hallucination_desc
+                    })
+            except ValueError as parse_err:
+                # JSON parsing failed — retry once with a minimal JSON-only prompt
+                # to sidestep verbose preamble that may exceed max_tokens.
+                log_benchmark_error(f"Judge: JSON parse failed for {gold_key}, retrying with minimal prompt...")
+                try:
+                    retry_system = "You are a strict JSON-only judge. Return ONLY the JSON object, no other text."
+                    retry_prompt = f"""Return ONLY a valid JSON object with these exact keys:
+- score (integer 0-{max_points})
+- reasoning (string)
+- hallucination_detected (true/false)
+- hallucination_description (string, empty if none)
+
+Model response to grade:
+\"\"\"
+{model_response}
+\"\"\"
+
+JSON:"""
+                    judge_response = await query_judge_model(judge_model, retry_system, retry_prompt)
+                    grades = parse_judge_json(judge_response)
+
+                    score = grades.get("score") or 0
+                    reasoning = grades.get("reasoning") or ""
+                    hallucinated = grades.get("hallucination_detected") or False
+                    hallucination_desc = grades.get("hallucination_description") or ""
+                    round_tps = r.get("metrics", {}).get("tokens_per_second") or avg_tps
+
+                    graded_rounds.append({
+                        "round_name": gold_key,
+                        "score": min(max_points, int(score)),
+                        "reasoning": reasoning,
+                        "speed_tps": round_tps
+                    })
+                    if hallucinated and hallucination_desc:
+                        hallucinations.append({
+                            "round_name": round_name,
+                            "description": hallucination_desc
+                        })
+                    log_benchmark(f"Judge: JSON retry succeeded for {gold_key}")
+                except Exception as retry_err:
+                    traceback.format_exc()
+                    print(f"Failed to grade round {gold_key}: {retry_err}")
+                    log_benchmark_error(f"Judge: Grading failed for round {gold_key} after retry: {str(retry_err)}")
+                    graded_rounds.append({
+                        "round_name": gold_key,
+                        "score": 0,
+                        "reasoning": f"Grading failed after retry: {str(retry_err)}",
+                        "speed_tps": 0.0
                     })
             except Exception as grading_err:
                 traceback.format_exc()
