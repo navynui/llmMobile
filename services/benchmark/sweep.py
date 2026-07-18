@@ -69,6 +69,9 @@ async def run_temperature_sweep_task(
         log_benchmark(f"Temperature sweep starting for {model_id} with {len(temperatures)} temps: {temperatures}")
         broadcast_notification(f"🌡️ Temperature sweep started for {model_id}")
 
+        progress["model_id"] = model_id
+        progress["current_round"] = "🌡️ Temperature Sweep — running prompt at each temp..."
+        progress["rounds_completed"] = 0
         progress["sweep_running"] = True
         progress["sweep_progress"] = 0
         progress["sweep_total"] = len(temperatures)
@@ -208,10 +211,34 @@ async def run_temperature_sweep_task(
                 r["reasoning"] = grades.get("reasoning", "")
                 r["hallucination_detected"] = grades.get("hallucination_detected", False)
             except Exception as parse_err:
-                log_benchmark_error(f"Sweep grade failed for temp {r['temperature']}: {parse_err}")
-                r["score"] = 0
-                r["reasoning"] = f"Grading error: {parse_err}"
-                r["hallucination_detected"] = False
+                # Retry once with minimal prompt (sidestep verbose preamble)
+                log_benchmark_error(f"Sweep grade failed for temp {r['temperature']}, retrying with minimal prompt...")
+                try:
+                    retry_system = "You are a strict JSON-only judge. Return ONLY the JSON object, no other text."
+                    _resp_text = r['response']
+                    retry_prompt = f"""Return ONLY a valid JSON object with these exact keys:
+- score (integer 0-{max_points})
+- reasoning (string)
+- hallucination_detected (true/false)
+- hallucination_description (string, empty if none)
+
+Model response to grade:
+\"\"\"
+{_resp_text}
+\"\"\"
+
+JSON:"""
+                    judge_response = await query_judge_model(effective_judge, retry_system, retry_prompt)
+                    grades = parse_judge_json(judge_response)
+                    r["score"] = grades.get("score", 0)
+                    r["reasoning"] = grades.get("reasoning", "")
+                    r["hallucination_detected"] = grades.get("hallucination_detected", False)
+                    log_benchmark(f"Sweep: JSON retry succeeded for temp {r['temperature']}")
+                except Exception as retry_err:
+                    log_benchmark_error(f"Sweep grade failed for temp {r['temperature']} after retry: {retry_err}")
+                    r["score"] = 0
+                    r["reasoning"] = f"Grading error: {retry_err}"
+                    r["hallucination_detected"] = False
 
             # Brief cooldown between judge calls
             await asyncio.sleep(3)
@@ -251,6 +278,9 @@ async def run_temperature_sweep_task(
     finally:
         progress["sweep_running"] = False
         progress["sweep_progress"] = 0
+        progress["rounds_completed"] = 0
+        progress["current_round"] = ""
+        set_benchmark_running(False)
 
 
 async def run_temperature_sweep(req, background_tasks: BackgroundTasks) -> dict:

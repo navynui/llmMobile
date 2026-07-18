@@ -98,7 +98,7 @@ export function renderBenchmarksView(ctx) {
               <span style="color: var(--primary); font-weight: bold;">${ctx.benchmarkProgress.sweep_running ? `${Math.min(100, Math.round(((ctx.benchmarkProgress.sweep_progress || 0) / (ctx.benchmarkProgress.sweep_total || 5)) * 100))}% (${ctx.benchmarkProgress.sweep_progress || 0}/${ctx.benchmarkProgress.sweep_total || 5} temps)` : `${progressPercent}% (${completedRounds}/${totalRounds})`}</span>
             </div>
             <div class="progress-track">
-              <div class="progress-fill" style="width: ${progressPercent}%; height: 100%; background: linear-gradient(90deg, var(--primary), #a5b4fc); transition: width 0.4s ease; box-shadow: 0 0 8px var(--primary);"></div>
+              <div class="progress-fill" style="width: ${ctx.benchmarkProgress.sweep_running ? Math.min(100, Math.round(((ctx.benchmarkProgress.sweep_progress || 0) / (ctx.benchmarkProgress.sweep_total || 5)) * 100)) : progressPercent}%; height: 100%; background: linear-gradient(90deg, var(--primary), #a5b4fc); transition: width 0.4s ease; box-shadow: 0 0 8px var(--primary);"></div>
             </div>
           </div>
 
