@@ -48,6 +48,7 @@ async def query_judge_model(judge_model: str, system_prompt: str, user_prompt: s
         ],
         "temperature": 0.1,
         "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
         "stream": False
     }
 
@@ -178,9 +179,7 @@ You must return a JSON object exactly matching this structure (do not output any
     "reasoning": "<concise_explanation_of_the_assigned_score>",
     "hallucination_detected": <true_or_false>,
     "hallucination_description": "<description_if_detected_else_empty>"
-}}
-
-{{"score": """
+}}"""
 
             print(f"Grading round: {gold_key} using judge {judge_model}...")
             log_benchmark(f"Grading round: {gold_key} using judge {judge_model}")
