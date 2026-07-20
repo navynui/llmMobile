@@ -339,7 +339,7 @@ export function renderBenchmarksView(ctx) {
                           `}
                           ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.6rem; padding: 1px 5px;">⚖️ Judge</span>` : ''}
                           ${b.server ? html`<span class="meta-badge" style="background: ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; color: ${b.server === 'secondary' ? '#fbbf24' : '#34d399'}; border: 1px solid ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.3)' : 'rgba(16, 185, 129, 0.3)'}; font-size: 0.6rem; padding: 1px 5px;">${b.server === 'secondary' ? '🟠 Secondary' : '🟢 Primary'}</span>` : ''}
-                          ${b.is_tested ? html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>` : ''}
+                          ${b.is_tested ? (b.status === 'aborted' ? html`<span class="meta-badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">⛔ Aborted</span>` : html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>`) : ''}
                           ${b.is_ready ?
                             html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">🟢 Ready</span>` :
                             html`<span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">🔴 Offline</span>`
@@ -400,7 +400,16 @@ export function renderDetailsModal(ctx) {
               <div style="display: flex; gap: 6px; font-size: 0.72rem; flex-wrap: wrap;">
                 <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Quant: ${ctx.selectedBenchmarkDetails.quantization}</span>
                 <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Tested: ${ctx.selectedBenchmarkDetails.timestamp}</span>
-                <span class="meta-badge" style="background: ${ctx.selectedBenchmarkDetails.status && ctx.selectedBenchmarkDetails.status.includes('⚠️') ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)'}; color: ${ctx.selectedBenchmarkDetails.status && ctx.selectedBenchmarkDetails.status.includes('⚠️') ? '#f87171' : '#34d399'}; border: 1px solid ${ctx.selectedBenchmarkDetails.status && ctx.selectedBenchmarkDetails.status.includes('⚠️') ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)'}; padding: 2px 6px;">${ctx.selectedBenchmarkDetails.status}</span>
+                ${(() => {
+                  const s = (ctx.selectedBenchmarkDetails.status || '').toLowerCase();
+                  const isAborted = s === 'aborted';
+                  const isBad = isAborted || s.includes('⚠️') || s === 'failed';
+                  const bg = isBad ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)';
+                  const color = isBad ? '#f87171' : '#34d399';
+                  const border = isBad ? 'rgba(239,68,68,0.2)' : 'rgba(16,185,129,0.2)';
+                  const label = isAborted ? '⛔ Aborted (Too Slow)' : s;
+                  return html`<span class="meta-badge" style="background: ${bg}; color: ${color}; border: 1px solid ${border}; padding: 2px 6px;">${label}</span>`;
+                })()}
               </div>
               ${ctx.selectedBenchmarkDetails.notes ? html`
                 <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--text-muted); margin-top: 4px;">
@@ -420,16 +429,24 @@ export function renderDetailsModal(ctx) {
 
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <h4 style="font-size: 0.9rem; margin: 0; color: white;">🏅 Score Breakdown</h4>
-              ${ctx.selectedBenchmarkDetails.rounds && ctx.selectedBenchmarkDetails.rounds.map(r => html`
-                <div class="round-card">
-                  <div class="round-card-header">
-                    <span class="round-card-title">${formatRoundName(r.round_name)}</span>
-                    <span class="round-card-score">${r.score} pts</span>
+              ${ctx.selectedBenchmarkDetails.rounds && ctx.selectedBenchmarkDetails.rounds.map(r => {
+                const reasoning = r.reasoning || '';
+                const isAbortRound = reasoning.toLowerCase().includes('aborted') || reasoning.toLowerCase().includes('too slow') || reasoning.toLowerCase().includes('below minimum');
+                const borderColor = isAbortRound ? 'rgba(239,68,68,0.4)' : 'rgba(99,102,241,0.2)';
+                return html`
+                  <div class="round-card" style="border-color: ${borderColor}; ${isAbortRound ? 'background: rgba(239,68,68,0.04);' : ''}">
+                    <div class="round-card-header">
+                      <span class="round-card-title">${formatRoundName(r.round_name)}</span>
+                      <span class="round-card-score" style="color: ${isAbortRound ? '#f87171' : r.score >= 20 ? '#34d399' : r.score >= 10 ? '#fbbf24' : '#9ca3af'};">${r.score} pts</span>
+                    </div>
+                    ${reasoning ? html`<div class="round-card-reasoning" style="${isAbortRound ? 'color: #f87171; border-left: 3px solid rgba(239,68,68,0.5); padding-left: 10px; font-style: italic;' : ''}">${reasoning}</div>` : ''}
+                    <div class="round-card-meta">${r.speed_tps > 0 ? html`<span style="margin-top: 2px; color: ${isAbortRound ? '#f87171' : 'inherit'};">⚡ Speed: <strong>${r.speed_tps.toFixed(1)} t/s</strong></span>` : ''}</div>
                   </div>
-                  ${r.reasoning ? html`<div class="round-card-reasoning">${r.reasoning}</div>` : ''}
-                  <div class="round-card-meta">${r.speed_tps > 0 ? html`<span style="margin-top: 2px;">⚡ Speed: <strong>${r.speed_tps.toFixed(1)} t/s</strong></span>` : ''}</div>
-                </div>
-              `)}
+                `;
+              })}
+              ${(!ctx.selectedBenchmarkDetails.rounds || ctx.selectedBenchmarkDetails.rounds.length === 0) ? html`
+                <div style="color: var(--text-muted); text-align: center; padding: 20px; background: rgba(0,0,0,0.1); border-radius: var(--radius-md); font-style: italic;">No round data available — benchmark may not have completed.</div>
+              ` : ''}
             </div>
           `}
         </div>

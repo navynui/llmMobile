@@ -47,6 +47,35 @@ async def _send_telegram_notification(message: str):
     except Exception:
         pass  # Don't let Telegram failures affect benchmark
 
+
+# ── Low-speed abort DB helper ────────────────────────────────────────────────
+
+async def _store_low_speed_abort(model_id: str, run_id: str, speed_tps: float, rounds_list: list):
+    """Store low-speed abort info in the database so it appears in model details."""
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE models SET status = 'aborted', notes = ? WHERE model_id = ?
+        """, (f"Aborted: speed {speed_tps:.2f} t/s below minimum 10 t/s", model_id))
+        cursor.execute("""
+            INSERT INTO round_scores (run_id, round_name, score, reasoning, speed_tps)
+            VALUES (?, 'speed_metric', 0, ?, ?)
+        """, (run_id, f"Aborted at {speed_tps:.2f} t/s — below 10 t/s minimum", speed_tps))
+        for r in rounds_list:
+            rn = r.get("round_name", "unknown")
+            err = r.get("error", "Aborted due to low speed")
+            tps = r.get("metrics", {}).get("tokens_per_second", 0.0) if r.get("metrics") else 0.0
+            cursor.execute("""
+                INSERT INTO round_scores (run_id, round_name, score, reasoning, speed_tps)
+                VALUES (?, ?, 0, ?, ?)
+            """, (run_id, rn, err, tps))
+        conn.commit()
+        conn.close()
+    except Exception as db_err:
+        log_benchmark_error(f"Failed to store low-speed abort info for {model_id}: {db_err}")
+
+
 # ── Token-budget ramp for empty-response retries ───────────────────────────────
 # Initial attempt + 3 retries, each step widens the output budget so the model
 # has room to finish (esp. during long-form reasoning, code generation, or
@@ -254,6 +283,7 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
         if too_slow:
             log_benchmark(f"Skipping AI Judge — {model_id} was aborted due to low speed")
             broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
+            await _store_low_speed_abort(model_id, run_id, speed_tps, rounds_list)
         else:
             # Trigger judge
             log_benchmark("Starting AI Judge grading sequence...")
@@ -555,6 +585,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
             if too_slow:
                 log_benchmark(f"Skipping AI Judge — {model_id} was aborted due to low speed")
                 broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
+                await _store_low_speed_abort(model_id, run_id, speed_tps, rounds_list)
                 continue
 
             # Collect benchmark result for batch grading after all models finish

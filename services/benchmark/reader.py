@@ -261,7 +261,7 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             conn.close()
             raise HTTPException(status_code=404, detail="Model benchmark record not found")
         # Prefer per-run VRAM from test_runs, fallback to models.vram_gb
-        cursor.execute("SELECT run_id, timestamp, server, vram_gb FROM test_runs WHERE model_id = ? AND server = ? ORDER BY timestamp DESC LIMIT 1", (model_id, server))
+        cursor.execute("SELECT run_id, timestamp, server, vram_gb, raw_output_path FROM test_runs WHERE model_id = ? AND server = ? ORDER BY timestamp DESC LIMIT 1", (model_id, server))
         run_row = cursor.fetchone()
         rounds = []
         hallucinations = []
@@ -278,6 +278,23 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             rounds = [dict(row) for row in cursor.fetchall()]
             cursor.execute("SELECT round_name, description FROM model_hallucinations WHERE model_id = ?", (model_id,))
             hallucinations = [dict(row) for row in cursor.fetchall()]
+            # Fallback: if no round_scores but raw JSON exists, load round data for abort info
+            if not rounds and run_row["raw_output_path"] and os.path.exists(run_row["raw_output_path"]):
+                try:
+                    with open(run_row["raw_output_path"], "r", encoding="utf-8") as raw_f:
+                        raw_data = json.load(raw_f)
+                    for rnd in raw_data.get("rounds", []):
+                        error = rnd.get("error", "")
+                        if error:
+                            metrics = rnd.get("metrics", {}) or {}
+                            rounds.append({
+                                "round_name": rnd.get("round_name", "unknown"),
+                                "score": 0,
+                                "reasoning": error,
+                                "speed_tps": metrics.get("tokens_per_second", 0.0)
+                            })
+                except Exception as raw_err:
+                    print(f"[Benchmarks API] Failed to load raw JSON for {model_id}: {raw_err}")
         conn.close()
         effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
         total_gpu = 6.0 if server == "secondary" else 16.0
