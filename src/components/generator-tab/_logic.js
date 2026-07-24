@@ -7,6 +7,7 @@ export const RESOLUTIONS = [
 
 export async function submitTask(ctx) {
   if (!ctx.prompt.trim()) { ctx.errorMsg = 'Please enter a prompt.'; return; }
+  if (ctx.selectedWorkflows.length === 0) { ctx.errorMsg = 'Select at least one workflow.'; return; }
   ctx.errorMsg = '';
   ctx.submitting = true;
   ctx._savePrefs();
@@ -26,15 +27,19 @@ export async function submitTask(ctx) {
 
   const seedVal = ctx.seed.trim();
   const seedNum = parseInt(seedVal, 10);
+
+  // If only one workflow selected, use single-model mode
+  const isMulti = ctx.selectedWorkflows.length > 1;
   const body = {
     prompt: ctx.prompt.trim(),
     resolution: ctx.resolution,
-    num_images: ctx.numImages,
-    model: ctx.genMode,
+    num_images: isMulti ? ctx.selectedWorkflows.length : ctx.numImages,
+    model: isMulti ? 'both' : ctx.selectedWorkflows[0],
+    selected_workflows: ctx.selectedWorkflows,
     seed: (seedVal !== '' && !isNaN(seedNum)) ? seedNum : null,
     force_generate: ctx.forceGenerate,
-    krea_multiplier: ctx.kreaMultiplier,
-    enhancer_strength: ctx.enhancerStrength,
+    krea_multiplier: ctx.selectedWorkflows.includes('krea2') ? ctx.kreaMultiplier : null,
+    enhancer_strength: ctx.selectedWorkflows.includes('krea2') ? ctx.enhancerStrength : null,
   };
 
   if (!navigator.onLine) {
@@ -87,6 +92,8 @@ export async function clearDone() {
 export async function regenerateSingleImage(ctx, item, index) {
   ctx.errorMsg = '';
   const seed = item.seeds && index < item.seeds.length ? item.seeds[index] : null;
+  // Use the first selected workflow or item.model for regeneration
+  const wfs = item.selected_workflows || [item.model || 'zimage'];
   try {
     const res = await fetch('/api/generate/queue', {
       method: 'POST',
@@ -96,7 +103,8 @@ export async function regenerateSingleImage(ctx, item, index) {
         resolution: item.resolution || '1024x1024',
         num_images: 1,
         seed: seed,
-        model: item.model || 'zimage',
+        model: wfs[0],
+        selected_workflows: [wfs[0]],
       }),
     });
     if (!res.ok) {
@@ -110,6 +118,7 @@ export async function regenerateSingleImage(ctx, item, index) {
 
 export async function rerunItem(ctx, item) {
   ctx.errorMsg = '';
+  const wfs = item.selected_workflows || [item.model || 'zimage'];
   try {
     const res = await fetch('/api/generate/queue', {
       method: 'POST',
@@ -118,7 +127,10 @@ export async function rerunItem(ctx, item) {
         prompt: item.prompt,
         resolution: item.resolution || '1024x1024',
         num_images: item.total_images || item.num_images || 1,
-        model: item.model || 'zimage',
+        model: wfs.length > 1 ? 'both' : wfs[0],
+        selected_workflows: wfs,
+        krea_multiplier: item.krea_multiplier,
+        enhancer_strength: item.enhancer_strength,
       }),
     });
     if (!res.ok) {

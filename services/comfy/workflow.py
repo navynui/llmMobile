@@ -16,6 +16,7 @@ from models.requests import GenerateRequest
 from utils.common import (
     WORKFLOW_PATH,
     KREA_WORKFLOW_PATH,
+    BOOGU_WORKFLOW_PATH,
     COMFYUI_HOST,
     COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT,
@@ -24,8 +25,12 @@ from utils.common import (
     NODE_KREA_PROMPT_TEXT,
     NODE_KREA_RESOLUTION,
     NODE_KREA_KSAMPLER,
+    NODE_BOOGU_PROMPT_TEXT,
+    NODE_BOOGU_RESOLUTION,
+    NODE_BOOGU_KSAMPLER,
     MODEL_ZIMAGE,
     MODEL_KREA,
+    MODEL_BOOGU,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )
@@ -34,20 +39,30 @@ from utils.common import (
 # ───────────────────────────────────────────────
 _workflow_cache: Optional[dict] = None
 _workflow_cache_krea: Optional[dict] = None
+_workflow_cache_boogu: Optional[dict] = None
 _workflow_lock = threading.Lock()
 
 
 def _load_workflow(path: str = WORKFLOW_PATH) -> dict:
-    global _workflow_cache, _workflow_cache_krea
-    cache = _workflow_cache if path == WORKFLOW_PATH else _workflow_cache_krea
+    global _workflow_cache, _workflow_cache_krea, _workflow_cache_boogu
+    if path == WORKFLOW_PATH:
+        cache = _workflow_cache
+    elif path == KREA_WORKFLOW_PATH:
+        cache = _workflow_cache_krea
+    elif path == BOOGU_WORKFLOW_PATH:
+        cache = _workflow_cache_boogu
+    else:
+        cache = None
     with _workflow_lock:
         if cache is None:
             with open(path) as f:
                 cache = json.load(f)
             if path == WORKFLOW_PATH:
                 _workflow_cache = cache
-            else:
+            elif path == KREA_WORKFLOW_PATH:
                 _workflow_cache_krea = cache
+            elif path == BOOGU_WORKFLOW_PATH:
+                _workflow_cache_boogu = cache
         return _deep_copy(cache)
 
 
@@ -111,6 +126,21 @@ def _build_workflow(
                 node["inputs"]["filename_prefix"] = (
                     f"krea2-{queue_id}-{img_index}"
                 )
+        return wf
+
+    if workflow in ("boogu", "boogu-turbo"):
+        wf = _load_workflow(BOOGU_WORKFLOW_PATH)
+        if NODE_BOOGU_PROMPT_TEXT in wf:
+            wf[NODE_BOOGU_PROMPT_TEXT]["inputs"]["text"] = prompt
+        w, h = resolution.split("x")
+        if NODE_BOOGU_RESOLUTION in wf:
+            wf[NODE_BOOGU_RESOLUTION]["inputs"]["width"] = int(w)
+            wf[NODE_BOOGU_RESOLUTION]["inputs"]["height"] = int(h)
+        if NODE_BOOGU_KSAMPLER in wf:
+            wf[NODE_BOOGU_KSAMPLER]["inputs"]["seed"] = seed
+        for node in wf.values():
+            if isinstance(node, dict) and node.get("class_type") == "SaveImage":
+                node["inputs"]["filename_prefix"] = f"boogu-{queue_id}-{img_index}"
         return wf
 
     wf = _load_workflow(WORKFLOW_PATH)

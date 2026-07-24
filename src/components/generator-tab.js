@@ -13,7 +13,7 @@ export class GeneratorTab extends LitElement {
     submitting: { type: Boolean },
     errorMsg: { type: String },
     activeThumbnailMenu: { type: Object },
-    genMode: { type: String },
+    selectedWorkflows: { type: Array },
     seed: { type: String },
     forceGenerate: { type: Boolean },
     kreaMultiplier: { type: Number },
@@ -27,7 +27,7 @@ export class GeneratorTab extends LitElement {
     this.prompt = localStorage.getItem('gen_prompt') || '';
     this.resolution = localStorage.getItem('gen_resolution') || '1920x1088';
     this.numImages = parseInt(localStorage.getItem('gen_num_images') || '1', 10);
-    this.genMode = localStorage.getItem('gen_mode') || 'zimage';
+    this.selectedWorkflows = JSON.parse(localStorage.getItem('gen_selected_workflows') || '["zimage"]');
     this.seed = '';
     this.queue = [];
     this.submitting = false;
@@ -57,9 +57,23 @@ export class GeneratorTab extends LitElement {
     localStorage.setItem('gen_prompt', this.prompt);
     localStorage.setItem('gen_resolution', this.resolution);
     localStorage.setItem('gen_num_images', String(this.numImages));
-    localStorage.setItem('gen_mode', this.genMode);
+    localStorage.setItem('gen_selected_workflows', JSON.stringify(this.selectedWorkflows));
     localStorage.setItem('krea_multiplier', String(this.kreaMultiplier));
     localStorage.setItem('enhancer_strength', String(this.enhancerStrength));
+  }
+
+  _toggleWorkflow(id, checked) {
+    if (checked) {
+      if (!this.selectedWorkflows.includes(id)) {
+        this.selectedWorkflows = [...this.selectedWorkflows, id];
+      }
+    } else {
+      if (this.selectedWorkflows.length > 1) {
+        this.selectedWorkflows = this.selectedWorkflows.filter(w => w !== id);
+      }
+    }
+    this._savePrefs();
+    this.requestUpdate();
   }
 
   async _submit() { await submitTask(this); }
@@ -106,13 +120,26 @@ export class GeneratorTab extends LitElement {
     return { queued: 'pill-queued', running: 'pill-running', completed: 'pill-completed', error: 'pill-error', cancelled: 'pill-cancelled' }[status] || 'pill-queued';
   }
 
+  _workflowLabel(wf) {
+    const labels = {
+      'z-image-turbo': 'Z-Image',
+      'zimage': 'Z-Image',
+      'krea2-turbo': 'Krea2',
+      'krea2': 'Krea2',
+      'boogu-turbo': 'Boogu',
+      'boogu': 'Boogu',
+    };
+    return labels[wf] || wf;
+  }
+
   _subText(item) {
     if (item.isOffline) return 'Queued offline · Awaiting connection';
-    if (item.model === 'both') {
+    if (item.model === 'both' || (item.sub_items && item.sub_items.length > 1)) {
       const subItems = item.sub_items || [];
-      const done = Math.min(item.current_sub_index || 0, subItems.length);
-      const label = subItems[done]?.workflow === 'krea2' ? 'Krea2' : (subItems[done]?.workflow || '?');
-      return `Dual mode · ${label} (${done + 1}/${subItems.length})`;
+      const idx = Math.min(item.current_sub_index || 0, subItems.length - 1);
+      const current = subItems[idx]?.workflow || '?';
+      const label = this._workflowLabel(current);
+      return `Multi · ${label} (${idx + 1}/${subItems.length})`;
     }
     if (item.status === 'running') {
       return `Image ${item.image_num || 1}/${item.total_images} · ${Math.round((item.progress || 0) * 100)}%`;
@@ -150,7 +177,8 @@ export class GeneratorTab extends LitElement {
     });
     const combinedQueue = [...offlineItems, ...(this.queue || [])];
     const hasDone = combinedQueue.some(q => ['completed','error','cancelled'].includes(q.status));
-    const buttonLabel = this.submitting ? 'Submitting…' : (this.genMode === 'krea2' ? '🎨 Generate' : this.genMode === 'both' ? '🔀 Generate both' : '⚡ Generate');
+    const count = this.selectedWorkflows.length;
+    const buttonLabel = this.submitting ? 'Submitting…' : (count > 1 ? `🔀 Generate (${count} workflows)` : this.selectedWorkflows[0] === 'krea2' ? '🎨 Generate' : this.selectedWorkflows[0] === 'boogu' ? '🖼️ Generate' : '⚡ Generate');
     
     return html`
       ${renderForm(this, buttonLabel)}

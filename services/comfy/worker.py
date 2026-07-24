@@ -16,6 +16,7 @@ from models.requests import GenerateRequest
 from utils.common import (
     WORKFLOW_PATH,
     KREA_WORKFLOW_PATH,
+    BOOGU_WORKFLOW_PATH,
     COMFYUI_HOST,
     COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT,
@@ -26,6 +27,7 @@ from utils.common import (
     NODE_KREA_KSAMPLER,
     MODEL_ZIMAGE,
     MODEL_KREA,
+    MODEL_BOOGU,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )

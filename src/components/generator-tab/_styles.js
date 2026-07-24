@@ -44,6 +44,11 @@ export const generatorStyles = css`
     .empty-state .icon { font-size: 2.5rem; margin-bottom: 8px; }
     .clear-btn { align-self: flex-end; background: none; border: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.75rem; padding: 5px 10px; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition); }
     .clear-btn:hover { color: var(--danger); border-color: var(--danger); }
+    .checkbox-group { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+    .wf-checkbox { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 8px 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-md); transition: var(--transition); user-select: none; }
+    .wf-checkbox:hover { border-color: var(--primary); background: rgba(99,102,241,0.05); }
+    .wf-checkbox input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0; }
+    .wf-checkbox span { font-size: 0.9rem; color: var(--text-primary); }
     .action-sheet-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); z-index: 10000; display: flex; align-items: flex-end; justify-content: center; }
     .action-sheet { width: 100%; max-width: 500px; background: #111827; border-top: 1px solid var(--border-color); border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 20px; box-sizing: border-box; box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.5); animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
     @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }

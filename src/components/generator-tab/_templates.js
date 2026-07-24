@@ -1,6 +1,12 @@
 import { html } from 'lit';
 import { RESOLUTIONS } from './_logic.js';
 
+const WORKFLOWS = [
+  { id: 'zimage', label: '⚡ Z-Image Turbo' },
+  { id: 'krea2', label: '🎨 Krea2 Turbo' },
+  { id: 'boogu', label: '🖼️ Boogu Image Turbo' },
+];
+
 export function renderForm(ctx, buttonLabel) {
   return html`
     <div class="card" style="margin-bottom: 16px;">
@@ -19,21 +25,26 @@ export function renderForm(ctx, buttonLabel) {
           </select>
         </div>
       </div>
-      <div class="row" style="margin-top:14px;">
-        <div>
-          <label>Mode</label>
-          <select .value="${ctx.genMode}" @change="${e => { ctx.genMode = e.target.value; ctx._savePrefs(); }}">
-            <option value="zimage" ?selected="${ctx.genMode === 'zimage'}">⚡ Z-Image Turbo</option>
-            <option value="krea2" ?selected="${ctx.genMode === 'krea2'}">🎨 Krea2 Turbo</option>
-            <option value="both" ?selected="${ctx.genMode === 'both'}">🔀 Both (2 images)</option>
-          </select>
+      <div style="margin-top:14px;">
+        <label>Workflows</label>
+        <div class="checkbox-group">
+          ${WORKFLOWS.map(wf => html`
+            <label class="wf-checkbox">
+              <input type="checkbox"
+                .checked="${ctx.selectedWorkflows.includes(wf.id)}"
+                @change="${e => ctx._toggleWorkflow(wf.id, e.target.checked)}" />
+              <span>${wf.label}</span>
+            </label>
+          `)}
         </div>
+      </div>
+      <div class="row" style="margin-top:14px;">
         <div>
           <label>Seed (optional)</label>
           <input type="text" .value="${ctx.seed}" @input="${e => { ctx.seed = e.target.value; }}" placeholder="Random" style="width:100%; padding:11px 14px; background:rgba(0,0,0,0.25); border:1px solid var(--border-color); border-radius:var(--radius-md); color:var(--text-primary); font-family:var(--font-sans); font-size:0.9rem; outline:none; box-sizing:border-box;">
         </div>
       </div>
-      ${ctx.genMode === 'krea2' || ctx.genMode === 'both' ? html`
+      ${ctx.selectedWorkflows.includes('krea2') ? html`
         <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
           <div>
             <label>Conditioning Multiplier: <span style="color:var(--primary);">${ctx.kreaMultiplier.toFixed(1)}</span></label>
@@ -55,7 +66,7 @@ export function renderForm(ctx, buttonLabel) {
       </div>
       ${ctx.errorMsg ? html`<p class="error-msg">${ctx.errorMsg}</p>` : ''}
       <div style="margin-top:16px;">
-        <button class="generate-btn" @click="${ctx._submit}" ?disabled="${ctx.submitting || !ctx.prompt.trim()}">
+        <button class="generate-btn" @click="${ctx._submit}" ?disabled="${ctx.submitting || !ctx.prompt.trim() || ctx.selectedWorkflows.length === 0}">
           ${buttonLabel}
         </button>
       </div>

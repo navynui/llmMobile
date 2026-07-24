@@ -16,6 +16,7 @@ from models.requests import GenerateRequest
 from utils.common import (
     WORKFLOW_PATH,
     KREA_WORKFLOW_PATH,
+    BOOGU_WORKFLOW_PATH,
     COMFYUI_HOST,
     COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT,
@@ -26,6 +27,7 @@ from utils.common import (
     NODE_KREA_KSAMPLER,
     MODEL_ZIMAGE,
     MODEL_KREA,
+    MODEL_BOOGU,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )
@@ -35,13 +37,53 @@ from .worker import queue_worker, _cancel_pending_cooldown
 # ───────────────────────────────────────────────
 # Queue route endpoints (from main.py)
 # ───────────────────────────────────────────────
+def _make_sub_items(selected_workflows: list[str], req: GenerateRequest) -> list[dict]:
+    """Build sub_items list from selected workflow identifiers."""
+    sub_items = []
+    for wf in selected_workflows:
+        sub_items.append({
+            "workflow": wf,
+            "num_images": 1,
+            "seed": None,
+        })
+    return sub_items
+
+
 async def submit_to_queue(req: GenerateRequest) -> dict:
     from services.push_svc import send_push
 
     model = getattr(req, "model", MODEL_ZIMAGE) or MODEL_ZIMAGE
     queue_id = "q" + uuid.uuid4().hex[:8]
 
-    if model == "both":
+    # Build sub_items from selected_workflows if provided (checkbox mode)
+    selected = req.selected_workflows or []
+    if selected and len(selected) >= 2:
+        sub_items = _make_sub_items(selected, req)
+        item = {
+            "id": queue_id,
+            "prompt": req.prompt,
+            "resolution": req.resolution,
+            "num_images": len(selected),
+            "seed": req.seed,
+            "model": "both",
+            "selected_workflows": selected,
+            "force_generate": getattr(req, "force_generate", False) or False,
+            "krea_multiplier": req.krea_multiplier,
+            "enhancer_strength": req.enhancer_strength,
+            "sub_items": sub_items,
+            "current_sub_index": 0,
+            "status": "queued",
+            "image_ids": [],
+            "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "started_at": None,
+            "completed_at": None,
+            "progress": 0.0,
+            "image_num": 0,
+            "total_images": len(selected),
+            "seeds": [],
+        }
+    elif model == "both":
+        # Legacy fallback: hardcoded krea2 + zimage
         sub_items = [
             {
                 "workflow": MODEL_KREA,
@@ -61,6 +103,7 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "num_images": 2,
             "seed": req.seed,
             "model": model,
+            "selected_workflows": [MODEL_KREA, MODEL_ZIMAGE],
             "force_generate": getattr(req, "force_generate", False) or False,
             "krea_multiplier": req.krea_multiplier,
             "enhancer_strength": req.enhancer_strength,
@@ -84,6 +127,7 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
             "num_images": max(1, min(req.num_images, 16)),
             "seed": req.seed,
             "model": model,
+            "selected_workflows": [model],
             "force_generate": getattr(req, "force_generate", False) or False,
             "krea_multiplier": req.krea_multiplier if model in ("krea2", "krea2-turbo") else None,
             "enhancer_strength": req.enhancer_strength if model in ("krea2", "krea2-turbo") else None,

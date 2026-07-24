@@ -13,6 +13,7 @@ class GenerateRequest(BaseModel):
     num_images: int = 1
     seed: Optional[int] = None
     model: str = "zimage"
+    selected_workflows: Optional[list[str]] = None
     force_generate: Optional[bool] = False
     krea_multiplier: Optional[float] = None
     enhancer_strength: Optional[float] = None

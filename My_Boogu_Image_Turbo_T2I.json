@@ -1,0 +1,127 @@
+{
+  "33": {
+    "inputs": {
+      "filename_prefix": "Boogu",
+      "images": [
+        "34:3",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "34:9": {
+    "inputs": {
+      "conditioning": [
+        "34:11",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "34:3": {
+    "inputs": {
+      "samples": [
+        "34:32",
+        0
+      ],
+      "vae": [
+        "34:5",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "34:7": {
+    "inputs": {
+      "clip_name": "qwen3vl_8b_fp8_scaled.safetensors",
+      "type": "boogu",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "34:5": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "34:2": {
+    "inputs": {
+      "unet_name": "boogu_image_turbo_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "34:8": {
+    "inputs": {
+      "width": 720,
+      "height": 1280,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "34:11": {
+    "inputs": {
+      "text": "**Image Generation Prompt:**\n\n**A hyper-realistic, cinematic portrait of a stunningly alluring young Mongolian woman.**\n\n**1. Scene Description (Location, Setting):**\nThe setting is a weathered, rustic wooden pier jutting into deep, sapphire blue water at the edge of a tranquil coastline during the golden hour. The background features softly blurred, distant rolling hills meeting the horizon, creating an exotic and expansive backdrop. The dock planks are dark, rich mahogany, showing subtle textures of salt spray and time.\n\n**2. Subject Details (Appearance, Pose, Clothing):**\nThe woman possesses striking, almond-shaped eyes that catch the light, high cheekbones, and defined, elegant features characteristic of Mongolian heritage. Her skin is warm, luminous, and flawlessly sculpted. She is posed leaning slightly against a piling, one hand gracefully tracing the edge of the wood, creating a classic, captivating curve in her body. Her attire is minimal and luxurious: perhaps a sheer, wet silk slip draped artfully over one shoulder, or barely-there, clinging fabric that hints at the contours of her figure, revealing maximum skin.\n\n**3. Camera Angle and Composition:**\nMedium close-up shot, slightly low angle to enhance her regal presence and silhouette against the water. The composition utilizes the rule of thirds, with the pier lines leading the eye toward her face. A very shallow depth of field (bokeh) isolates the subject sharply from the shimmering background, ensuring every strand of hair and the texture of her skin is razor-sharp.\n\n**4. Environmental Elements and Atmosphere:**\nThe air is thick with a warm, humid mist rising subtly off the water. Tiny droplets of sea spray catch the light around her. The atmosphere is intensely seductive, warm, exotic, and deeply sensual. Water reflections ripple across the foreground, adding depth and movement to the scene.\n\n**5. Lighting Conditions:**\nDramatic, warm golden hour lighting (the 'magic hour",
+      "clip": [
+        "34:7",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "34:32": {
+    "inputs": {
+      "seed": 366169396943768,
+      "steps": 4,
+      "cfg": 1,
+      "sampler_name": "lcm",
+      "scheduler": "sgm_uniform",
+      "denoise": 1,
+      "model": [
+        "34:2",
+        0
+      ],
+      "positive": [
+        "34:11",
+        0
+      ],
+      "negative": [
+        "34:9",
+        0
+      ],
+      "latent_image": [
+        "34:8",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  }
+}

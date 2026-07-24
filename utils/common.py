@@ -35,8 +35,13 @@ KREA_WORKFLOW_PATH = "/app/MyKrea2E_Turbo.json"
 if not os.path.exists(KREA_WORKFLOW_PATH):
     KREA_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "MyKrea2E_Turbo.json")
 
+BOOGU_WORKFLOW_PATH = "/app/My_Boogu_Image_Turbo_T2I.json"
+if not os.path.exists(BOOGU_WORKFLOW_PATH):
+    BOOGU_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "My_Boogu_Image_Turbo_T2I.json")
+
 MODEL_ZIMAGE = "z-image-turbo"
 MODEL_KREA = "krea2-turbo"
+MODEL_BOOGU = "boogu-turbo"
 
 PROMPTS_FILE = "/app/PROMPTS"
 if not os.path.exists(PROMPTS_FILE):
@@ -52,6 +57,10 @@ NODE_KSAMPLER = "57:3"
 NODE_KREA_PROMPT_TEXT = "4"
 NODE_KREA_RESOLUTION = "6"
 NODE_KREA_KSAMPLER = "3"
+
+NODE_BOOGU_PROMPT_TEXT = "34:11"
+NODE_BOOGU_RESOLUTION = "34:8"
+NODE_BOOGU_KSAMPLER = "34:32"
 
 VRAM_CRITICAL_THRESHOLD = 90.0
 VRAM_EMERGENCY_THRESHOLD = 95.0
