@@ -7,6 +7,7 @@ import asyncio
 import traceback
 from typing import Optional
 import httpx
+from dotenv import load_dotenv
 from fastapi import BackgroundTasks, HTTPException
 
 from utils.db_utils import get_db_conn, _clean_model_id
@@ -20,6 +21,31 @@ from utils.common import get_quantization_from_name
 from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
 from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
+
+
+# ── Load environment variables ────────────────────────────────────────────────
+load_dotenv()
+
+
+# ── Telegram notification helper ───────────────────────────────────────────────
+
+async def _send_telegram_notification(message: str):
+    """Send a notification to Telegram via the bot API."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return  # Skip if not configured
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    text = f"<b>Notification</b> <i>{timestamp}</i>\n🌐 <b>{message}</b>"
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+                timeout=10
+            )
+    except Exception:
+        pass  # Don't let Telegram failures affect benchmark
 
 # ── Token-budget ramp for empty-response retries ───────────────────────────────
 # Initial attempt + 3 retries, each step widens the output budget so the model
@@ -609,12 +635,14 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
 
         log_benchmark("--- Automated Benchmark Queue Completed Successfully! ---")
         broadcast_notification(f"🏁 Benchmark queue completed successfully for {len(models)} models")
+        await _send_telegram_notification(f"Benchmark queue completed successfully for {len(models)} models")
 
     except Exception as queue_err:
         traceback.format_exc()
         log_benchmark_error(f"Benchmark queue execution failed: {queue_err}")
     finally:
         broadcast_notification(f"🏁 All {len(models)} benchmark models completed")
+        await _send_telegram_notification(f"All {len(models)} benchmark models completed")
         async with _benchmark_lock:
             set_benchmark_running(False)
         _benchmark_progress["running"] = False

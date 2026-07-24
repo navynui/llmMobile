@@ -9,4 +9,5 @@ websocket-client==1.8.0
 paho-mqtt==1.6.1
 pywebpush==1.14.0
 curl_cffi>=0.15.0
+python-dotenv>=1.0.0
 
