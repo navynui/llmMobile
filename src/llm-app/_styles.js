@@ -260,7 +260,7 @@ export const appStyles = css`
     .hard-refresh-btn {
       position: fixed;
       top: 10px;
-      right: 10px;
+      left: 10px;
       width: 40px;
       height: 40px;
       border-radius: 50%;
@@ -303,7 +303,7 @@ export const appStyles = css`
     @media (max-width: 768px) {
       .hard-refresh-btn {
         top: 8px;
-        right: 8px;
+        left: 8px;
         width: 36px;
         height: 36px;
         font-size: 1rem;
