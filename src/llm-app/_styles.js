@@ -255,4 +255,58 @@ export const appStyles = css`
       from { transform: translateY(20px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
+
+    /* Floating Hard Refresh Button */
+    .hard-refresh-btn {
+      position: fixed;
+      bottom: 76px;
+      right: 16px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border-color);
+      background: rgba(17, 24, 39, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      box-shadow: var(--shadow-lg);
+      transition: var(--transition);
+      font-size: 1.15rem;
+      line-height: 1;
+      padding: 0;
+    }
+
+    .hard-refresh-btn:hover {
+      color: var(--primary);
+      border-color: var(--primary);
+      transform: scale(1.1);
+    }
+
+    .hard-refresh-btn:active {
+      transform: scale(0.95);
+    }
+
+    .refresh-icon {
+      display: block;
+      transition: transform 0.3s ease;
+    }
+
+    .hard-refresh-btn:hover .refresh-icon {
+      transform: rotate(180deg);
+    }
+
+    @media (max-width: 768px) {
+      .hard-refresh-btn {
+        bottom: 80px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        font-size: 1rem;
+      }
+    }
   `;

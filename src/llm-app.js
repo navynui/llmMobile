@@ -222,6 +222,29 @@ export class LlmApp extends LitElement {
     }
   }
 
+  async hardRefresh() {
+    this.showToast('🧹 Clearing cache and reloading app...');
+
+    // 1. Unregister all service workers
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const reg of registrations) {
+        await reg.unregister();
+      }
+    }
+
+    // 2. Clear all caches
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const key of keys) {
+        await caches.delete(key);
+      }
+    }
+
+    // 3. Force reload from server (no cache)
+    window.location.reload();
+  }
+
   render() {
     return renderApp(this);
   }
