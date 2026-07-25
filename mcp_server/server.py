@@ -2,14 +2,14 @@
 """
 llmMobile MCP Server — Background worker that exposes guarded tools to LLM agents.
 
-This server runs as a standalone FastMCP process on port 8001 (configurable via
+This server runs as a standalone FastMCP process on port 8002 (configurable via
 MCP_SERVER_PORT env var). It wraps all dangerous FastAPI actions with:
   - Pre-flight validation (VRAM, disk, state checks)
   - Post-flight verification (did it actually work?)
   - Clear, structured error messages
 
 Usage:
-    python mcp_server/server.py              # Starts MCP SSE server on :8001
+    python mcp_server/server.py              # Starts MCP SSE server on :8002
     python mcp_server/server.py --stdio      # Starts MCP stdio server (for Claude Desktop)
 """
 

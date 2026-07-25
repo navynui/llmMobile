@@ -20,7 +20,7 @@ STORAGE_SAFE_MARGIN_GB = 20.0  # Minimum free space we require
 MODELS_DIR = "/models"
 BENCHMARK_RESULTS_DIR = "/app/benchmark_results"
 
-MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8001"))
+MCP_SERVER_PORT = int(os.environ.get("MCP_SERVER_PORT", "8002"))
 MCP_SERVER_HOST = os.environ.get("MCP_SERVER_HOST", "0.0.0.0")
 
 

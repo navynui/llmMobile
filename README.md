@@ -122,7 +122,7 @@ llmMobile/
 │   └── test_endpoints.py
 ├── main.py                       # Re-exports app for Uvicorn
 ├── mcp_server/                   # MCP server (FastMCP tools for LLM agent access)
-│   ├── server.py                 # FastMCP server entry point (port 8001)
+│   ├── server.py                 # FastMCP server entry point (port 8002)
 │   ├── utils.py                  # Shared helpers (VRAM/disk/state checks)
 │   └── tools/                    # 32 guarded tool implementations
 │       ├── model_tools.py        # Model load/unload/delete/list
@@ -292,7 +292,7 @@ Mobile portal at `http://localhost:8000`.
 | `start_server` / `stop_server` / `restart_server` | Server lifecycle | ✅ Benchmark conflict check on stop/restart |
 | `save_ini_config` | Save server configuration | ✅ INI syntax validation |
 
-> **MCP Port:** The MCP SSE server runs on **port 8001** inside the container. Start via `python mcp_server/server.py`. See `mcp_server/` for the full tool registry.
+> **MCP Port:** The MCP SSE server runs on **port 8002** inside the container. Start via `python mcp_server/server.py`. See `mcp_server/` for the full tool registry.
 
 ---
 
@@ -335,4 +335,4 @@ This repository implements the complete roadmap for the `llmMobile` project:
 - **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge via llama-server `/slots` endpoint, polled every 2.5s. All repository source files are now under 550 lines.
 
 ### MCP Server Integration (Phase N)
-- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded FastMCP tools wrapping all FastAPI endpoints. Background worker on port 8001 with pre-flight validation (VRAM, disk, state) and post-flight verification. See `MCPnSkills.md` for the implementation plan.
+- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded FastMCP tools wrapping all FastAPI endpoints. Background worker on port 8002 with pre-flight validation (VRAM, disk, state) and post-flight verification. See `MCPnSkills.md` for the implementation plan.
