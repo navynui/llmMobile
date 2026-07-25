@@ -95,9 +95,5 @@ export function renderApp(ctx) {
       </div>
     ` : ''}
 
-    <!-- Floating Hard Refresh Button (always visible) -->
-    <button class="hard-refresh-btn" title="Force-refresh app (clear cache & reload)" @click="${() => ctx.hardRefresh()}">
-      <span class="refresh-icon">↻</span>
-    </button>
   `;
 }

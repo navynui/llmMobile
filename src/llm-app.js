@@ -58,7 +58,10 @@ export class LlmApp extends LitElement {
     // 5. Request notifications permission
     this.initNotifications();
 
-    // 6. Listen to offline operation queue events
+    // 6. Listen for hard-refresh from server-status-card
+    this.addEventListener('hard-refresh', () => this.hardRefresh());
+
+    // 7. Listen to offline operation queue events
     window.addEventListener('op-queue-notification', (e) => {
       this.showToast(e.detail.message);
     });

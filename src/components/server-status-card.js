@@ -83,6 +83,20 @@ ${buttonStyles}
   border: 1px solid rgba(239, 68, 68, 0.15);
 }
 
+.refresh-trigger {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+  line-height: 1;
+  transition: transform 0.3s ease;
+  color: inherit;
+}
+.refresh-trigger:hover {
+  transform: rotate(180deg);
+}
+
 @keyframes pulse-busy {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
@@ -219,7 +233,7 @@ ${buttonStyles}
       <div>
         <div class="card">
           <div class="card-title">
-            <span>⚡ LLM Service Status</span>
+            <span><button class="refresh-trigger" title="Force-refresh app (clear cache & reload)" @click="${(e) => { e.stopPropagation(); this.dispatchEvent(new CustomEvent('hard-refresh', { bubbles: true, composed: true })); }}">⚡</button> LLM Service Status</span>
           </div>
 
           ${servers.length === 0
