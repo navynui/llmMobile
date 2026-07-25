@@ -33,7 +33,10 @@ COPY --from=builder /build/dist ./dist
 # Copy the rest of the application (main.py, MyZimage_turbo.json, PROMPTS, etc.)
 COPY . .
 
-EXPOSE 8000
+EXPOSE 8000 8001
+
+# Make entrypoint executable
+RUN chmod +x docker-entrypoint.sh
 
 # Run as root to ensure access to /var/run/docker.sock for managing containers
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./docker-entrypoint.sh"]

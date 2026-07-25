@@ -373,3 +373,49 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 
 ### Live Server Activity & Further Code Splitting (Phase M)
 - **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with a barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge on the Server tab by proxying llama-server's `/slots` endpoint, polled every 2.5s. All files in the repository are now under 550 lines.
+
+### MCP Server Integration (Phase N)
+- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded tools wrapping all FastAPI endpoints. The MCP server runs as a background worker (port 8001) alongside the main FastAPI server (port 8000), started by `docker-entrypoint.sh`. Each tool includes pre-flight validation (VRAM checks, disk space checks, state conflict detection) and post-flight verification. Written skills for all critical operations: model lifecycle, benchmarks, downloads, image generation, gallery management, server lifecycle. See `MCPnSkills.md` for the full implementation plan.
+
+---
+
+## 🔧 MCP Server Critical Rules
+
+### 1. MCP Tools Must Always Validate Before Acting
+
+Every MCP tool in `mcp_server/tools/` must perform resource checks before calling FastAPI endpoints:
+- **Before loading a model**: check VRAM availability, check no benchmark is running, check file exists
+- **Before downloading**: check disk space, check not already downloaded
+- **Before deleting**: require explicit `confirm=True` parameter, check if model is currently loaded
+
+### 2. MCP Tools Must Verify After Acting
+
+After calling a FastAPI endpoint, the tool must confirm the expected state change occurred:
+- After loading: poll the server's `/models` until the model shows as loaded
+- After unloading: poll until no loaded model shows
+- After download: scan and verify the file is registered
+
+### 3. MCP Tool Names Are Fixed
+
+Do not rename MCP tools without updating the LLM agent's skill documentation in `.pi/agent/skills/`. The 32 registered tools are:
+
+**Model Management**: `list_models`, `load_model`, `unload_model`, `delete_model`, `get_server_models`
+**Download**: `search_huggingface_models`, `get_model_details`, `download_model`, `check_download_status`, `cancel_download`, `scan_and_register_models`
+**Benchmark**: `run_benchmark`, `run_benchmark_queue`, `run_temperature_sweep`, `check_benchmark_status`, `get_benchmark_results`, `list_benchmarks`
+**Generation**: `generate_image`, `check_generation_status`, `cancel_generation`
+**Gallery**: `browse_gallery`, `get_gallery_folders`, `delete_gallery_images`, `create_gallery_folder`
+**Server**: `get_server_status`, `get_system_stats`, `start_server`, `stop_server`, `restart_server`, `get_server_logs`
+**Config**: `get_ini_config`, `save_ini_config`
+
+### 4. Docker Rebuild Required After MCP Changes
+
+The MCP server runs inside the `llm-mobile` container. After any change to `mcp_server/`, `requirements.txt`, or `docker-entrypoint.sh`:
+```bash
+cd /home/nui/llmaCPP
+docker compose build llm-mobile
+docker compose up -d --no-deps llm-mobile
+```
+
+### 5. The `mcp_server` Package Name Is Intentional
+
+The package is named `mcp_server` (not `mcp`) to avoid conflicts with the installed `mcp` library (`from mcp.server.fastmcp import FastMCP`). All internal imports use `from mcp_server.xxx import yyy` — never `from ..xxx import yyy`.

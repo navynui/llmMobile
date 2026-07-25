@@ -121,9 +121,21 @@ llmMobile/
 │   ├── conftest.py
 │   └── test_endpoints.py
 ├── main.py                       # Re-exports app for Uvicorn
+├── mcp_server/                   # MCP server (FastMCP tools for LLM agent access)
+│   ├── server.py                 # FastMCP server entry point (port 8001)
+│   ├── utils.py                  # Shared helpers (VRAM/disk/state checks)
+│   └── tools/                    # 32 guarded tool implementations
+│       ├── model_tools.py        # Model load/unload/delete/list
+│       ├── download_tools.py     # HuggingFace download with disk checks
+│       ├── benchmark_tools.py    # Benchmark run/queue/sweep
+│       ├── generation_tools.py   # Image generation queue
+│       ├── gallery_tools.py      # Gallery browse/delete/create
+│       ├── server_tools.py       # Server lifecycle + stats
+│       └── config_tools.py       # INI config read/write
+├── docker-entrypoint.sh          # Launches FastAPI + MCP background worker
 ├── Dockerfile                    # Multi-stage Dockerfile (Vite build + Python env)
 ├── package.json                  # Frontend dependencies & Vite scripts
-├── requirements.txt              # Python dependencies
+├── requirements.txt              # Python dependencies (includes mcp)
 ├── PROMPTS/                      # Predefined prompt templates
 ├── public/                       # Static frontend assets
 ├── src/                          # Frontend source code (Lit + Vite)
@@ -265,9 +277,26 @@ Mobile portal at `http://localhost:8000`.
 | `/api/generate/queue` | `GET` `POST` `DELETE` | ComfyUI generation queue management |
 | `/api/comfy/free` | `POST` | Free ComfyUI VRAM cache |
 
+### MCP Server (for LLM Agent Access)
+| Tool Name | Description | Safety Guardrails |
+|---|---|---|
+| `list_models` | List all GGUF models on disk | — |
+| `load_model` | Load a model onto a server | ✅ VRAM check, ✅ state conflict check, ✅ file existence |
+| `unload_model` | Unload current model from server | ✅ Verify unload via polling |
+| `delete_model` | Permanently delete a model file | ✅ Requires `confirm=True`, ✅ checks if loaded |
+| `download_model` | Download from HuggingFace | ✅ Disk space check, ✅ duplicate check |
+| `run_benchmark` | Run 5-round benchmark | ✅ State conflict check, ✅ model loaded check |
+| `run_benchmark_queue` | Run multi-model benchmark queue | ✅ All models exist check, ✅ estimated time |
+| `generate_image` | Queue image generation | ✅ Prompt validation, ✅ num_images clamp |
+| `delete_gallery_images` | Delete gallery images | ✅ Requires `confirm=True` |
+| `start_server` / `stop_server` / `restart_server` | Server lifecycle | ✅ Benchmark conflict check on stop/restart |
+| `save_ini_config` | Save server configuration | ✅ INI syntax validation |
+
+> **MCP Port:** The MCP SSE server runs on **port 8001** inside the container. Start via `python mcp_server/server.py`. See `mcp_server/` for the full tool registry.
+
 ---
 
-## 🔒 Critical Guidelines
+## 🔒 Critical
 
 * **Build Safety:** Always run `npm run build` after any frontend change. Fix all Vite/Lit errors before considering work complete.
 * **Docker Rebuild Required:** Code changes are not hot-reloaded in production. Use `docker compose build llm-mobile && docker compose up -d --no-deps llm-mobile` to deploy.
@@ -304,3 +333,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### Live Server Activity & Further Code Splitting (Phase M)
 - **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge via llama-server `/slots` endpoint, polled every 2.5s. All repository source files are now under 550 lines.
+
+### MCP Server Integration (Phase N)
+- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded FastMCP tools wrapping all FastAPI endpoints. Background worker on port 8001 with pre-flight validation (VRAM, disk, state) and post-flight verification. See `MCPnSkills.md` for the implementation plan.
