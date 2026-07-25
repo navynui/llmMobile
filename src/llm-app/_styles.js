@@ -259,8 +259,8 @@ export const appStyles = css`
     /* Floating Hard Refresh Button */
     .hard-refresh-btn {
       position: fixed;
-      bottom: 76px;
-      right: 16px;
+      top: 10px;
+      right: 10px;
       width: 40px;
       height: 40px;
       border-radius: 50%;
@@ -302,8 +302,8 @@ export const appStyles = css`
 
     @media (max-width: 768px) {
       .hard-refresh-btn {
-        bottom: 80px;
-        right: 12px;
+        top: 8px;
+        right: 8px;
         width: 36px;
         height: 36px;
         font-size: 1rem;
