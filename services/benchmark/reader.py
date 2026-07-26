@@ -31,29 +31,63 @@ def _get_platform(server: str) -> str:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _read_ini_models(ini_path: str) -> set:
-    """Return set of lowercased model filenames found in the given INI."""
+    """Return set of lowercased model filenames found in the given INI.
+
+    Checks both the section header name AND each section's `model = ...` line
+    so that presets with logical aliases (e.g. MTP wrappers) are still marked
+    as ready even if no file matching the section name exists on disk.
+    """
     filenames = set()
     if not os.path.exists(ini_path):
         return filenames
     try:
         with open(ini_path) as f:
+            current_section = None
             for line in f:
                 line = line.strip()
                 if not line or line.startswith(";"):
                     continue
+                # Section header
                 m = re.match(r'^\[(.+?)\]$', line)
                 if m:
                     raw_name = m.group(1)
                     if raw_name == "*":
+                        current_section = None
                         continue
+                    current_section = raw_name
                     if raw_name.lower().endswith(".gguf"):
-                        base_name = raw_name[:-5]
+                        section_base = raw_name[:-5]
                     else:
-                        base_name = raw_name
-                    filename = base_name + ".gguf"
+                        section_base = raw_name
+                    filename = section_base + ".gguf"
                     if os.path.exists(os.path.join(MODELS_DIR, filename)):
+                        # Exact match: section header = filename on disk
                         filenames.add(filename.lower())
-                        filenames.add(base_name.lower())
+                        filenames.add(section_base.lower())
+                # model= path inside a section — check if the target file exists
+                elif current_section and line.startswith("model"):
+                    eq_idx = line.find("=")
+                    if eq_idx != -1:
+                        model_path = line[eq_idx + 1:].strip()
+                        model_basename = os.path.basename(model_path)
+                        if model_basename.lower().endswith(".gguf"):
+                            model_base = model_basename[:-5]
+                        else:
+                            model_base = model_basename
+                        model_filename = model_base + ".gguf"
+                        if os.path.exists(os.path.join(MODELS_DIR, model_filename)):
+                            filenames.add(model_filename.lower())
+                            filenames.add(model_base.lower())
+                            # Also add the section name so presets stored in DB
+                            # by their logical (section) name are found as ready.
+                            if current_section:
+                                cs = current_section
+                                if cs.lower().endswith(".gguf"):
+                                    cs_base = cs[:-5]
+                                else:
+                                    cs_base = cs
+                                filenames.add(cs.lower())
+                                filenames.add(cs_base.lower())
     except Exception as e:
         print(f"[Benchmarks API] Failed to parse {ini_path}: {e}")
     return filenames
