@@ -107,26 +107,31 @@ export function renderLightbox(ctx) {
     <div class="lightbox" @click="${e => e.target === e.currentTarget && (ctx.lightbox = null, ctx.requestUpdate())}">
       <button class="lb-close" @click="${() => { ctx.lightbox = null; ctx.requestUpdate(); }}">✕</button>
       
-      <div class="lightbox-carousel" @scroll="${(e) => logic.onCarouselScroll(ctx, e)}">
-        ${ctx.lightbox.images.map(img => html`
-          <div class="carousel-slide">
-            <img src="${img.url}" alt="${img.filename}" />
+      <div class="lightbox-content">
+        <div class="lightbox-carousel" @scroll="${(e) => logic.onCarouselScroll(ctx, e)}">
+          ${ctx.lightbox.images.map(img => html`
+            <div class="carousel-slide">
+              <img src="${img.url}" alt="${img.filename}" />
+            </div>
+          `)}
+        </div>
+        
+        ${lbImg.prompt ? html`
+          <div class="lb-actions">
+            <button class="lb-copy-btn" @click="${() => logic.copyPrompt(ctx, lbImg)}">📋 Copy Prompt</button>
           </div>
-        `)}
+        ` : ''}
+        
+        <div class="lb-meta">
+          ${lbImg.prompt ? html`<div class="lb-prompt">${lbImg.prompt}</div>` : ''}
+          <div class="lb-details">
+            ${lbImg.seed ? `Seed: ${lbImg.seed}` : ''}
+            ${lbImg.model ? ` · Model: ${lbImg.model}` : ''}
+            ${lbImg.timestamp ? ` · ${new Date(lbImg.timestamp).toLocaleString()}` : ''}
+          </div>
+        </div>
       </div>
       
-      <div class="lb-meta">
-        ${lbImg.prompt ? html`<div class="lb-prompt">${lbImg.prompt}</div>` : ''}
-        <div>
-          ${lbImg.seed ? `Seed: ${lbImg.seed}` : ''}
-          ${lbImg.model ? ` · Model: ${lbImg.model}` : ''}
-          ${lbImg.timestamp ? ` · ${new Date(lbImg.timestamp).toLocaleString()}` : ''}
-        </div>
-        ${lbImg.prompt ? html`
-          <button style="margin-top:8px; padding:5px 12px; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#fff; border-radius:var(--radius-sm); cursor:pointer; font-size:0.75rem;"
-            @click="${() => logic.copyPrompt(ctx, lbImg)}">Copy Prompt</button>
-        ` : ''}
-      </div>
       ${ctx.lightbox.images.length > 1 ? html`
         <div class="lb-nav">
           <button @click="${() => logic.lbNav(ctx, -1)}">◀ Prev</button>

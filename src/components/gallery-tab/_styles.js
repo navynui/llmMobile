@@ -224,15 +224,16 @@ export const galleryStyles = css`
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 20px;
+      justify-content: flex-start;
+      padding: 56px 16px 16px;
     }
     
     .lightbox-carousel {
       display: flex;
       width: 100%;
       max-width: 800px;
-      height: 60vh;
+      max-height: 50vh;
+      flex-shrink: 0;
       overflow-x: auto;
       scroll-snap-type: x mandatory;
       scrollbar-width: none;
@@ -270,18 +271,65 @@ export const galleryStyles = css`
       display: flex; align-items:center; justify-content:center;
       z-index: 10;
     }
+    .lightbox-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      max-width: 800px;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .lb-actions {
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      padding: 10px 0 8px;
+      flex-shrink: 0;
+    }
+
+    .lb-copy-btn {
+      padding: 8px 20px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+    .lb-copy-btn:hover {
+      background: rgba(255,255,255,0.14);
+    }
+
     .lb-meta {
-      margin-top: 12px;
+      width: 100%;
       max-width: 500px;
       text-align: center;
       font-size: 0.8rem;
       color: var(--text-secondary);
       line-height: 1.5;
+      overflow-y: auto;
+      flex: 1;
+      min-height: 0;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 8px;
     }
     .lb-prompt {
       color: var(--text-primary);
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       margin-bottom: 6px;
+      word-break: break-word;
+    }
+
+    .lb-details {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding-top: 4px;
     }
     .lb-nav {
       display: flex; gap:16px; margin-top:12px;
