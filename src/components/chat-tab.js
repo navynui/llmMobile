@@ -32,7 +32,7 @@ export class ChatTab extends LitElement {
     this.isReloading = false;
     this.chatServer = 'primary';
     this.loadedModelName = '';
-    this.toolsEnabled = true;
+    this.toolsEnabled = false;
 
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');
