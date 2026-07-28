@@ -8,12 +8,14 @@ function _api(ctx, endpoint) {
       models: '/api/llm/models',
       vision: '/models/vision-capabilities',
       load: '/api/llm/models/load',
+      ini: '/models',
     },
     mini: {
       chat_completions: '/api/chat-mini/completions',
       models: '/api/llm-mini/models',
       vision: '/models-mini/vision-capabilities',
       load: '/api/llm-mini/models/load',
+      ini: '/models-mini',
     },
   };
   const srv = ctx.chatServer || 'primary';
@@ -58,6 +60,79 @@ export async function checkModelStatus(ctx) {
     }
   } catch (e) {
     console.warn("Failed checking model status:", e);
+  }
+}
+
+export async function fetchAvailableModels(ctx) {
+  const cacheKey = 'chat_models_' + (ctx.chatServer || 'primary');
+  
+  // Serve cached list immediately (only changes on server restart)
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) {
+    try { ctx.availableModels = JSON.parse(cached); } catch (e) { /* ignore */ }
+  }
+
+  try {
+    const resp = await fetch(_api(ctx, 'ini'));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const models = data.models || [];
+    ctx.availableModels = models;
+    localStorage.setItem(cacheKey, JSON.stringify(models));
+  } catch (e) {
+    console.warn('Failed to fetch available models:', e);
+  }
+}
+
+export async function selectModel(ctx, filename) {
+  if (!filename || ctx.loadingModel) return;
+  ctx.loadingModel = true;
+  ctx.loadedModelName = ''; // clear old model so glow can start
+
+  try {
+    const res = await fetch(_api(ctx, 'load'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: filename })
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('Failed to load model:', err);
+      return;
+    }
+
+    // Server accepted the load. Now poll /models until the model shows as loaded.
+    // Do NOT kill the glow until we can confirm the green dot will appear.
+    const normId = filename.replace('.gguf', '');
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise(r => setTimeout(r, 600));
+      try {
+        const resp = await fetch(_api(ctx, 'models'));
+        if (!resp.ok) continue;
+        const data = await resp.json();
+        const model = data.data?.find(m => {
+          const mId = (m.id || '').replace('.gguf', '');
+          return mId === normId;
+        });
+        if (model) {
+          const isLoaded = model.status === 'loaded' ||
+            (typeof model.status === 'object' && model.status?.value === 'loaded');
+          if (isLoaded) {
+            ctx.loadedModelName = model.id; // green dot appears now
+            ctx.requestUpdate();
+            await checkVisionSupport(ctx);
+            return; // success — finally will set loadingModel = false, glow stops
+          }
+        }
+      } catch (e) { /* poll err */ }
+    }
+    // Timed out waiting for model to appear as loaded
+    console.warn('Model load confirmed by API but never appeared as loaded in /models');
+  } catch (e) {
+    console.error('Error loading model:', e);
+  } finally {
+    ctx.loadingModel = false;
   }
 }
 

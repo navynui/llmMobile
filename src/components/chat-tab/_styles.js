@@ -520,6 +520,12 @@ export const chatStyles = css`
       to { transform: rotate(360deg); }
     }
 
+    /* Loading bar pulse (indeterminate) */
+    @keyframes selectGlow {
+      0%, 100% { box-shadow: 0 0 4px rgba(99,102,241,0.3); border-color: rgba(99,102,241,0.3); }
+      50% { box-shadow: 0 0 14px rgba(99,102,241,0.7); border-color: rgba(99,102,241,0.8); }
+    }
+
     .tool-call-check {
       color: #22c55e;
       font-weight: bold;
@@ -532,14 +538,29 @@ export const chatStyles = css`
       flex-wrap: wrap;
     }
 
+    /* Model selector dropdown — explicit dark theme so option text is visible */
+    .model-selector select {
+      color-scheme: dark;
+      background: #1e1e2e;
+      color: #cdd6f4;
+    }
+    .model-selector select option {
+      background: #1e1e2e;
+      color: #cdd6f4;
+    }
+
     @media (max-width: 499px) {
       .server-label {
         display: none !important;
       }
-      .model-name {
+      .model-selector {
         flex-basis: 100%;
         margin-left: 0 !important;
         margin-top: 2px;
+      }
+      .model-selector select {
+        max-width: 100% !important;
+        flex: 1;
       }
     }
   `;

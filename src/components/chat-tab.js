@@ -15,7 +15,10 @@ export class ChatTab extends LitElement {
     isReloading: { type: Boolean },
     chatServer: { type: String },
     loadedModelName: { type: String },
-    toolsEnabled: { type: Boolean }
+    availableModels: { type: Array },
+    toolsEnabled: { type: Boolean },
+    loadingModel: { type: Boolean },
+    loadProgress: { type: Number }
   };
 
   static styles = chatStyles;
@@ -32,7 +35,10 @@ export class ChatTab extends LitElement {
     this.isReloading = false;
     this.chatServer = 'primary';
     this.loadedModelName = '';
+    this.availableModels = [];
     this.toolsEnabled = false;
+    this.loadingModel = false;
+    this.loadProgress = -1;
 
     // Load chat history from localStorage
     const saved = localStorage.getItem('chat_history');
@@ -61,6 +67,7 @@ export class ChatTab extends LitElement {
   async firstUpdated() {
     await logic.checkVisionSupport(this);
     await logic.checkModelStatus(this);
+    await logic.fetchAvailableModels(this);
   }
 
   updated(changedProperties) {

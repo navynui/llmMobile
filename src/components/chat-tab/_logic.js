@@ -32,4 +32,6 @@ export {
   updateAssistantMessage,
   updateAssistantMeta,
   clearConversation,
+  fetchAvailableModels,
+  selectModel,
 } from './_api.js';
