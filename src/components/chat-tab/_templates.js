@@ -21,7 +21,7 @@ export function renderChat(ctx) {
           🛠️ Tools ${ctx.toolsEnabled ? 'ON' : 'OFF'}
         </button>
         <div class="model-selector" style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
-          <select style="padding: 3px 8px; font-size: 0.72rem; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.15); max-width: 140px; cursor: pointer; ${ctx.loadingModel && !ctx.loadedModelName ? 'animation: selectGlow 1.2s ease-in-out infinite;' : ''}" 
+          <select style="padding: 3px 8px; font-size: 0.72rem; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.15); max-width: min(280px, 100%); cursor: pointer; ${ctx.loadingModel && !ctx.loadedModelName ? 'animation: selectGlow 1.2s ease-in-out infinite;' : ''}" 
             @change="${(e) => logic.selectModel(ctx, e.target.value)}"
             ?disabled="${ctx.loadingModel}">
             <option value="">${ctx.loadingModel ? '⏳ Loading...' : '— Select model —'}</option>
