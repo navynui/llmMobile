@@ -1,8 +1,8 @@
 import { LitElement, html } from 'lit';
 import { opQueue } from '../utils/op-queue.js';
 import { generatorStyles } from './generator-tab/_styles.js';
-import { submitTask, cancelItem, clearDone, regenerateSingleImage, rerunItem } from './generator-tab/_logic.js';
-import { renderForm, renderQueue, renderLightbox, renderActionSheet } from './generator-tab/_templates.js';
+import { submitTask, cancelItem, clearDone, regenerateSingleImage, rerunItem, submitEditTask } from './generator-tab/_logic.js';
+import { renderForm, renderEditForm, renderQueue, renderLightbox, renderActionSheet } from './generator-tab/_templates.js';
 
 export class GeneratorTab extends LitElement {
   static properties = {
@@ -18,6 +18,10 @@ export class GeneratorTab extends LitElement {
     forceGenerate: { type: Boolean },
     kreaMultiplier: { type: Number },
     enhancerStrength: { type: Number },
+    editPrompt: { type: String },
+    editSteps: { type: Number },
+    editSubmitting: { type: Boolean },
+    editErrorMsg: { type: String },
   };
 
   static styles = generatorStyles;
@@ -37,6 +41,12 @@ export class GeneratorTab extends LitElement {
     this.forceGenerate = false;
     this.kreaMultiplier = parseFloat(localStorage.getItem('krea_multiplier')) || 1;
     this.enhancerStrength = parseFloat(localStorage.getItem('enhancer_strength')) || 1;
+    this.editPrompt = '';
+    this.editSteps = 8;
+    this.editSubmitting = false;
+    this.editErrorMsg = '';
+    this.imageA = null;
+    this.imageB = null;
   }
 
   connectedCallback() {
@@ -77,6 +87,7 @@ export class GeneratorTab extends LitElement {
   }
 
   async _submit() { await submitTask(this); }
+  async _submitEdit() { await submitEditTask(this); }
   async _cancelItem(id) { await cancelItem(id); }
   async _clearDone() { await clearDone(); }
   async _regenerateSingleImage(item, index) { await regenerateSingleImage(this, item, index); }
@@ -134,6 +145,7 @@ export class GeneratorTab extends LitElement {
 
   _subText(item) {
     if (item.isOffline) return 'Queued offline · Awaiting connection';
+    if (item.model === 'krea2-edit') return `Edit · ${item.edit_steps || 8} steps`;
     if (item.model === 'both' || (item.sub_items && item.sub_items.length > 1)) {
       const subItems = item.sub_items || [];
       const idx = Math.min(item.current_sub_index || 0, subItems.length - 1);
@@ -182,6 +194,7 @@ export class GeneratorTab extends LitElement {
     
     return html`
       ${renderForm(this, buttonLabel)}
+      ${renderEditForm(this)}
       ${renderQueue(this, combinedQueue, hasDone)}
       ${renderLightbox(this)}
       ${renderActionSheet(this)}

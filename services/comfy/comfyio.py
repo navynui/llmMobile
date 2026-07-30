@@ -82,6 +82,9 @@ def _wait_comfy(
     try:
         while True:
             raw = ws.recv()
+            # Skip binary frames (preview images from custom nodes)
+            if isinstance(raw, bytes):
+                continue
             msg = json.loads(raw)
             mtype = msg.get("type")
             data = msg.get("data", {})
@@ -127,6 +130,29 @@ def _get_comfy_history(prompt_id: str) -> Optional[dict]:
                 }
             )
     return {"prompt_id": prompt_id, "images": images} if images else None
+
+
+def _upload_comfy_image(file_bytes: bytes, filename: str) -> str | None:
+    """Upload an image to ComfyUI's input directory. Returns the saved filename."""
+    try:
+        files = {
+            "image": (filename, file_bytes, "image/png"),
+        }
+        data = {
+            "type": "input",
+            "overwrite": "True",
+        }
+        resp = _COMFY_HTTP.post("/upload/image", files=files, data=data, timeout=60)
+        if resp.status_code == 200:
+            data = resp.json()
+            saved_name = data.get("name", filename)
+            print(f"[ComfyUI] Uploaded image: {saved_name}")
+            return saved_name
+        else:
+            print(f"[ComfyUI] Upload image failed ({resp.status_code}): {resp.text}")
+    except Exception as e:
+        print(f"[ComfyUI] Upload image error: {e}")
+    return None
 
 
 def _write_sidecar(

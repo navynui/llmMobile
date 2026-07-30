@@ -7,6 +7,50 @@ const WORKFLOWS = [
   { id: 'boogu', label: '🖼️ Boogu Image Turbo' },
 ];
 
+export function renderEditForm(ctx) {
+  return html`
+    <div class="card edit-section">
+      <h2>🖌️ Image Edit</h2>
+      <p style="font-size:0.8rem; color:var(--text-muted); margin:-10px 0 14px 0;">
+        Krea2 Identity Edit — load one image for text-guided editing, or two images to transfer subject from image B into image A.
+      </p>
+      <div class="file-input-row">
+        <div class="file-input-wrapper">
+          <label>Image A (target)</label>
+          <input type="file" accept="image/*" @change="${e => {
+            ctx.imageA = e.target.files?.[0] || null;
+            ctx.requestUpdate();
+          }}" />
+          <div class="file-label">${ctx.imageA ? ctx.imageA.name : 'No file selected'}</div>
+        </div>
+        <div class="file-input-wrapper">
+          <label>Image B (subject, optional)</label>
+          <input type="file" accept="image/*" @change="${e => {
+            ctx.imageB = e.target.files?.[0] || null;
+            ctx.requestUpdate();
+          }}" />
+          <div class="file-label">${ctx.imageB ? ctx.imageB.name : 'No file selected'}</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <label>Edit Prompt</label>
+        <textarea .value="${ctx.editPrompt}" @input="${e => { ctx.editPrompt = e.target.value; }}" placeholder="Describe the edit you want to apply…"></textarea>
+      </div>
+      <div class="steps-slider-row">
+        <label style="margin-bottom:0; white-space:nowrap;">KSampler Steps:</label>
+        <input type="range" min="4" max="12" step="1" .value="${ctx.editSteps}" @input="${e => { ctx.editSteps = parseInt(e.target.value); }}" />
+        <span class="steps-value">${ctx.editSteps}</span>
+      </div>
+      ${ctx.editErrorMsg ? html`<p class="error-msg">${ctx.editErrorMsg}</p>` : ''}
+      <div class="edit-submit-row">
+        <button class="generate-btn" @click="${ctx._submitEdit}" ?disabled="${ctx.editSubmitting || !ctx.editPrompt.trim() || !ctx.imageA}">
+          ${ctx.editSubmitting ? 'Submitting…' : ctx.imageB ? '🔄 Transfer Subject' : '✏️ Edit Image'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 export function renderForm(ctx, buttonLabel) {
   return html`
     <div class="card" style="margin-bottom: 16px;">

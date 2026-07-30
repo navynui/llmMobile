@@ -18,6 +18,11 @@ class GenerateRequest(BaseModel):
     krea_multiplier: Optional[float] = None
     enhancer_strength: Optional[float] = None
 
+
+class GenerateEditRequest(BaseModel):
+    prompt: str
+    steps: int = 8
+
 class MkdirRequest(BaseModel):
     current_path: str
     folder_name: str

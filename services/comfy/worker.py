@@ -28,10 +28,11 @@ from utils.common import (
     MODEL_ZIMAGE,
     MODEL_KREA,
     MODEL_BOOGU,
+    MODEL_KREA_EDIT,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )
-from .workflow import _build_workflow
+from .workflow import _build_workflow, _build_edit_workflow
 from .comfyio import _queue_comfy, _wait_comfy, _write_sidecar, _free_comfy_cache
 from .queue_state import _queue_lock, get_gen_queue, set_queue_running, broadcast_queue
 # ───────────────────────────────────────────────
@@ -75,16 +76,27 @@ async def _run_subtask(
             item["seeds"] = seeds
         await broadcast_queue()
 
-        wf = _build_workflow(
-            prompt,
-            resolution,
-            seed,
-            item["id"],
-            img_index,
-            workflow=workflow,
-            krea_multiplier=krea_multiplier,
-            enhancer_strength=enhancer_strength,
-        )
+        if workflow == MODEL_KREA_EDIT:
+            wf = _build_edit_workflow(
+                prompt=prompt,
+                steps=item.get("edit_steps", 8),
+                image_a_filename=item.get("image_a_filename", ""),
+                image_b_filename=item.get("image_b_filename"),
+                seed=seed,
+                queue_id=item["id"],
+                img_index=img_index,
+            )
+        else:
+            wf = _build_workflow(
+                prompt,
+                resolution,
+                seed,
+                item["id"],
+                img_index,
+                workflow=workflow,
+                krea_multiplier=krea_multiplier,
+                enhancer_strength=enhancer_strength,
+            )
 
         def on_progress(event_type, event_data):
             if event_type == "progress":

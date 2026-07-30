@@ -5,7 +5,7 @@ import datetime
 import traceback
 import time
 import uuid
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, File, UploadFile, Form
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from utils.common import (
@@ -48,7 +48,8 @@ from services.comfy.api import (
     clear_completed as svc_clear_completed,
     stream_queue as svc_stream_queue,
 )
-from services.comfy.comfyio import _free_comfy_cache as svc_free_comfy_cache
+from services.comfy.comfyio import _free_comfy_cache as svc_free_comfy_cache, _upload_comfy_image
+from services.comfy.api import submit_edit_to_queue as svc_submit_edit_to_queue
 from services.gallery_svc import (
     browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
     gallery_mkdir as svc_gallery_mkdir, gallery_move as svc_gallery_move,
@@ -242,6 +243,41 @@ async def submit_to_queue(req: GenerateRequest):
 async def route_free_comfy():
     success = await svc_free_comfy_cache()
     return {"success": success, "detail": "ComfyUI memory freed" if success else "Failed to free ComfyUI memory"}
+
+
+@app.post("/api/generate/edit")
+async def route_generate_edit(
+    image_a: UploadFile = File(...),
+    image_b: UploadFile | None = File(None),
+    prompt: str = Form(...),
+    steps: int = Form(8),
+):
+    """Upload images for editing, build workflow, and queue the generation."""
+    # Clamp steps to valid range
+    steps = max(4, min(12, steps))
+
+    # Read and upload image A
+    image_a_bytes = await image_a.read()
+    image_a_filename = _upload_comfy_image(image_a_bytes, image_a.filename or "image_a.png")
+    if not image_a_filename:
+        return JSONResponse(status_code=500, content={"detail": "Failed to upload image A to ComfyUI"})
+
+    # Read and upload image B (if provided)
+    image_b_filename = None
+    if image_b and image_b.filename:
+        image_b_bytes = await image_b.read()
+        image_b_filename = _upload_comfy_image(image_b_bytes, image_b.filename or "image_b.png")
+        if not image_b_filename:
+            return JSONResponse(status_code=500, content={"detail": "Failed to upload image B to ComfyUI"})
+
+    # Queue the edit task
+    result = await svc_submit_edit_to_queue(
+        prompt=prompt,
+        steps=steps,
+        image_a_filename=image_a_filename,
+        image_b_filename=image_b_filename,
+    )
+    return result
 
 @app.get("/api/generate/queue")
 def get_queue():

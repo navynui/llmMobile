@@ -28,6 +28,7 @@ from utils.common import (
     MODEL_ZIMAGE,
     MODEL_KREA,
     MODEL_BOOGU,
+    MODEL_KREA_EDIT,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )
@@ -145,6 +146,58 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
         }
 
     # Cancel any pending cooldown reload if new generation arrives mid-cooldown
+    cancelled = _cancel_pending_cooldown()
+    if cancelled:
+        print("[Queue] New generation request arrived during cooldown — cancelling pending llama.cpp reload.")
+
+    should_start = not is_queue_running()
+    with _queue_lock:
+        get_gen_queue().append(item)
+    await broadcast_queue()
+    if should_start:
+        set_queue_running(True)
+        asyncio.create_task(queue_worker(send_push_fn=send_push))
+    return {"queue_id": queue_id, "position": len(get_gen_queue())}
+
+
+async def submit_edit_to_queue(
+    prompt: str,
+    steps: int,
+    image_a_filename: str,
+    image_b_filename: str | None,
+) -> dict:
+    """Create a queue item for an image edit task."""
+    from services.push_svc import send_push
+
+    queue_id = "q" + uuid.uuid4().hex[:8]
+
+    item = {
+        "id": queue_id,
+        "prompt": prompt,
+        "resolution": "1024x1024",
+        "num_images": 1,
+        "seed": None,
+        "model": MODEL_KREA_EDIT,
+        "selected_workflows": [MODEL_KREA_EDIT],
+        "force_generate": False,
+        "krea_multiplier": None,
+        "enhancer_strength": None,
+        "image_a_filename": image_a_filename,
+        "image_b_filename": image_b_filename,
+        "edit_steps": steps,
+        "sub_items": [],
+        "current_sub_index": 0,
+        "status": "queued",
+        "image_ids": [],
+        "submitted_at": datetime.datetime.utcnow().isoformat() + "Z",
+        "started_at": None,
+        "completed_at": None,
+        "progress": 0.0,
+        "image_num": 0,
+        "total_images": 1,
+        "seeds": [],
+    }
+
     cancelled = _cancel_pending_cooldown()
     if cancelled:
         print("[Queue] New generation request arrived during cooldown — cancelling pending llama.cpp reload.")

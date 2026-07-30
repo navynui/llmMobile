@@ -42,6 +42,15 @@ if not os.path.exists(BOOGU_WORKFLOW_PATH):
 MODEL_ZIMAGE = "z-image-turbo"
 MODEL_KREA = "krea2-turbo"
 MODEL_BOOGU = "boogu-turbo"
+MODEL_KREA_EDIT = "krea2-edit"
+
+KREA2_EDIT1_WORKFLOW_PATH = "/app/Image1_krea2_edit.json"
+if not os.path.exists(KREA2_EDIT1_WORKFLOW_PATH):
+    KREA2_EDIT1_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Image1_krea2_edit.json")
+
+KREA2_EDIT2_WORKFLOW_PATH = "/app/Img2-to-Img1-text-krea2_edit.json"
+if not os.path.exists(KREA2_EDIT2_WORKFLOW_PATH):
+    KREA2_EDIT2_WORKFLOW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Img2-to-Img1-text-krea2_edit.json")
 
 PROMPTS_FILE = "/app/PROMPTS"
 if not os.path.exists(PROMPTS_FILE):

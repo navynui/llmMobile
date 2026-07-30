@@ -141,3 +141,48 @@ export async function rerunItem(ctx, item) {
     ctx.errorMsg = e.message;
   }
 }
+
+export async function submitEditTask(ctx) {
+  if (!ctx.editPrompt.trim()) {
+    ctx.editErrorMsg = 'Please enter an edit prompt.';
+    ctx.requestUpdate();
+    return;
+  }
+  if (!ctx.imageA) {
+    ctx.editErrorMsg = 'Please select at least one image.';
+    ctx.requestUpdate();
+    return;
+  }
+  ctx.editErrorMsg = '';
+  ctx.editSubmitting = true;
+
+  const fd = new FormData();
+  fd.append('image_a', ctx.imageA);
+  if (ctx.imageB) {
+    fd.append('image_b', ctx.imageB);
+  }
+  fd.append('prompt', ctx.editPrompt.trim());
+  fd.append('steps', String(ctx.editSteps));
+
+  try {
+    const res = await fetch('/api/generate/edit', {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Unknown error');
+    }
+    ctx.editPrompt = '';
+    ctx.imageA = null;
+    ctx.imageB = null;
+    // Reset the file input elements
+    const inputs = ctx.renderRoot?.querySelectorAll('input[type="file"]');
+    if (inputs) inputs.forEach(inp => { inp.value = ''; });
+  } catch (e) {
+    ctx.editErrorMsg = e.message;
+  } finally {
+    ctx.editSubmitting = false;
+    ctx.requestUpdate();
+  }
+}

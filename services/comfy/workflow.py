@@ -17,6 +17,8 @@ from utils.common import (
     WORKFLOW_PATH,
     KREA_WORKFLOW_PATH,
     BOOGU_WORKFLOW_PATH,
+    KREA2_EDIT1_WORKFLOW_PATH,
+    KREA2_EDIT2_WORKFLOW_PATH,
     COMFYUI_HOST,
     COMFY_CLIENT_ID,
     NODE_PROMPT_TEXT,
@@ -31,6 +33,7 @@ from utils.common import (
     MODEL_ZIMAGE,
     MODEL_KREA,
     MODEL_BOOGU,
+    MODEL_KREA_EDIT,
     IMAGE_GEN_OUTPUT,
     _deep_copy,
 )
@@ -40,17 +43,24 @@ from utils.common import (
 _workflow_cache: Optional[dict] = None
 _workflow_cache_krea: Optional[dict] = None
 _workflow_cache_boogu: Optional[dict] = None
+_workflow_cache_edit1: Optional[dict] = None
+_workflow_cache_edit2: Optional[dict] = None
 _workflow_lock = threading.Lock()
 
 
 def _load_workflow(path: str = WORKFLOW_PATH) -> dict:
     global _workflow_cache, _workflow_cache_krea, _workflow_cache_boogu
+    global _workflow_cache_edit1, _workflow_cache_edit2
     if path == WORKFLOW_PATH:
         cache = _workflow_cache
     elif path == KREA_WORKFLOW_PATH:
         cache = _workflow_cache_krea
     elif path == BOOGU_WORKFLOW_PATH:
         cache = _workflow_cache_boogu
+    elif path == KREA2_EDIT1_WORKFLOW_PATH:
+        cache = _workflow_cache_edit1
+    elif path == KREA2_EDIT2_WORKFLOW_PATH:
+        cache = _workflow_cache_edit2
     else:
         cache = None
     with _workflow_lock:
@@ -63,6 +73,10 @@ def _load_workflow(path: str = WORKFLOW_PATH) -> dict:
                 _workflow_cache_krea = cache
             elif path == BOOGU_WORKFLOW_PATH:
                 _workflow_cache_boogu = cache
+            elif path == KREA2_EDIT1_WORKFLOW_PATH:
+                _workflow_cache_edit1 = cache
+            elif path == KREA2_EDIT2_WORKFLOW_PATH:
+                _workflow_cache_edit2 = cache
         return _deep_copy(cache)
 
 
@@ -157,4 +171,51 @@ def _build_workflow(
             node["inputs"]["filename_prefix"] = f"z-image-{queue_id}-{img_index}"
     return wf
 
+
+def _build_edit_workflow(
+    prompt: str,
+    steps: int,
+    image_a_filename: str,
+    image_b_filename: str | None,
+    seed: int,
+    queue_id: str,
+    img_index: int,
+) -> dict:
+    """Build a Krea2 Edit workflow. Uses single-image or dual-image workflow based on image_b_filename."""
+    is_dual = bool(image_b_filename)
+    path = KREA2_EDIT2_WORKFLOW_PATH if is_dual else KREA2_EDIT1_WORKFLOW_PATH
+    wf = _load_workflow(path)
+
+    load_image_count = 0
+    prompt_set = False
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type", "")
+        inp = node.get("inputs", {})
+
+        # Replace image filenames in LoadImage nodes
+        if ct == "LoadImage":
+            if load_image_count == 0:
+                inp["image"] = image_a_filename
+                load_image_count += 1
+            elif load_image_count == 1 and is_dual:
+                inp["image"] = image_b_filename
+                load_image_count += 1
+
+        # Inject prompt into the first Krea2EditGroundedEncode (positive)
+        elif ct == "Krea2EditGroundedEncode" and not prompt_set:
+            inp["prompt"] = prompt
+            prompt_set = True
+
+        # Set steps and seed in KSampler
+        elif ct == "KSampler":
+            inp["steps"] = steps
+            inp["seed"] = seed
+
+        # Set filename prefix in SaveImage
+        elif ct == "SaveImage":
+            inp["filename_prefix"] = f"krea2-edit-{queue_id}-{img_index}"
+
+    return wf
 

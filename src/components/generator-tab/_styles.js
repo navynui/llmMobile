@@ -3,8 +3,9 @@ import { css } from 'lit';
 export const generatorStyles = css`
     :host { display: block; padding: 16px 16px 80px; }
     .container { max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-    .card { background: var(--bg-card); backdrop-filter: blur(var(--blur)); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-lg); transition: var(--transition); }
+    .card { background: var(--bg-card); backdrop-filter: blur(var(--blur)); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; box-shadow: var(--shadow-lg); transition: var(--transition); margin-bottom: 16px; }
     .card:hover { border-color: var(--border-active); }
+    .card:last-child { margin-bottom: 0; }
     h2 { font-family: var(--font-title); font-size: 1.1rem; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
     label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
     select, textarea { width: 100%; padding: 11px 14px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-sans); font-size: 0.9rem; outline: none; transition: var(--transition); box-sizing: border-box; }
@@ -63,4 +64,15 @@ export const generatorStyles = css`
     .action-btn:hover { background: rgba(255,255,255,0.08); border-color: var(--border-active); }
     .action-btn.danger { color: var(--danger); border-color: rgba(239, 68, 68, 0.2); }
     .action-btn.danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+    .file-input-row { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+    .file-input-wrapper { flex: 1; min-width: 140px; }
+    .file-input-wrapper label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 6px; }
+    .file-input-wrapper input[type="file"] { width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-sans); font-size: 0.8rem; outline: none; box-sizing: border-box; cursor: pointer; }
+    .file-input-wrapper input[type="file"]::file-selector-button { background: var(--primary); color: #fff; border: none; border-radius: var(--radius-sm); padding: 5px 10px; font-size: 0.75rem; cursor: pointer; margin-right: 8px; }
+    .file-input-wrapper .file-label { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+    .steps-slider-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+    .steps-slider-row input[type="range"] { flex: 1; accent-color: var(--primary); }
+    .steps-slider-row .steps-value { font-size: 1rem; font-weight: 600; color: var(--primary); min-width: 28px; text-align: center; }
+    .edit-submit-row { margin-top: 16px; }
   `;
