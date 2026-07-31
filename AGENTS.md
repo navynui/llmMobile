@@ -38,6 +38,14 @@ The app manages **two independent `llama-server` instances**:
 
 Both servers share the `/models` volume but maintain separate preset configs and can load different models simultaneously.
 
+### ComfyUI On-Demand Lifecycle
+ComfyUI (the `comfyui` container, port 8188) is managed on demand via the Docker SDK (`services/comfy/lifecycle.py`):
+
+- **Auto-start on submit**: `queue_worker` calls `ensure_comfy_ready()` before generation — it starts the container if it is off and polls `/system_stats` (up to 180s) until HTTP-ready.
+- **Manual control**: `/api/comfyui/start`, `/api/comfyui/stop`, `/api/comfyui/status`. The Generator tab shows a live status chip (`off` / `starting` / `ready`) with Start/Stop buttons (4s polling).
+- **Idle watchdog**: `_idle_watchdog_loop()` stops the container after `IDLE_TIMEOUT_SECONDS = 600` (10 minutes) of no generation activity, checked every 30s. It is skipped while the queue is running or has queued/running items. Activity is recorded via `touch_activity()` on submit, completion, start, and readiness.
+- **VRAM-first design**: generation unloads the loaded llama.cpp model first (`swap_vram_for_generation`), frees ComfyUI VRAM afterwards (`_free_comfy_cache`), then reloads the LLM after `COMFY_IDLE_COOLDOWN_SECONDS` (default 180s).
+
 ---
 
 ## 📂 Layout & Core Architecture
@@ -56,14 +64,15 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
   - `reader.py` — `get_benchmarks`, `get_benchmark_details`, `get_benchmark_logs`, `get_benchmark_outputs`
   - `api.py` — `run_benchmark`, `run_benchmark_queue` (FastAPI entry points)
 
-* **`services/comfy/`** — ComfyUI workflow validation, prompt injection, image generation queue:
+* **`services/comfy/`** — ComfyUI workflow validation, prompt injection, image generation queue, on-demand container lifecycle:
   - `__init__.py` — re-export shim
   - `client.py` — `get_comfy_http`, `set_comfy_http`
-  - `workflow.py` — `_load_workflow`, `_build_workflow`
+  - `workflow.py` — `_load_workflow`, `_build_workflow`, `_build_edit_workflow`
   - `comfyio.py` — `_free_comfy_cache`, `_queue_comfy`, `_wait_comfy`, `_get_comfy_history`, `_write_sidecar`
   - `queue_state.py` — locks, running flag, snapshot, persist (load/save), SSE subscribers, `broadcast_queue`
   - `worker.py` — `_run_subtask`, `queue_worker`, VRAM swap helpers
   - `api.py` — `submit_to_queue`, `get_queue`, `cancel_queue_item`, `clear_completed`, `stream_queue`
+  - `lifecycle.py` — `start_comfy`/`stop_comfy`, `ensure_comfy_ready`, `touch_activity`, 10-min idle watchdog
 
 * **`services/download/`** — Model download queue, progress tracking, HuggingFace search:
   - `__init__.py` — re-export shim
@@ -267,6 +276,14 @@ When the frontend is updated and changes aren't reflected in production, the ser
 * Users may need to unregister the old service worker in DevTools → Application → Service Workers to clear the stale cache immediately.
 * Always verify the new JS bundle hash in Docker (`/app/dist/assets/`) matches what the browser loads.
 
+### 14. ComfyUI Lifecycle: docker SDK `stop()` Is Keyword-Only
+
+docker SDK 7.x defines `Container.stop(self, **kwargs)` — `timeout` must be passed as a **keyword argument**.
+
+* Never call `c.stop(30)` or `asyncio.to_thread(c.stop, 30)` — the positional timeout raises `TypeError: Container.stop() takes 1 positional argument but 2 were given`, which is swallowed by the watchdog's `except` and silently leaves ComfyUI running.
+* Always use `c.stop(timeout=30)`. In async watchdog code use `await asyncio.to_thread(lambda: c.stop(timeout=30))` (`asyncio.to_thread` only forwards positional args, so a lambda is required).
+* The idle watchdog in `services/comfy/lifecycle.py` (`_idle_watchdog_loop`) stops the `comfyui` container after `IDLE_TIMEOUT_SECONDS = 600` of no generation activity; do not remove or reorder its guards (container running, queue not running, no queued/running items, idle timeout elapsed).
+
 The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/VRAM, storage) sourced **exclusively from Home Assistant via MQTT**. Local hardware queries (e.g., `nvidia-smi`, `psutil`) must **never** be used to populate system stats.
 
 * The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
@@ -375,7 +392,13 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 - **Phase M – Chat-tab Logic Splitting & Inference Activity Indicator**: Further split `chat-tab/_logic.js` (923 → 35 lines) into `_tools.js`, `_formatting.js`, and `_api.js` with a barrel re-export. Added live `○ Idle`/`● Inferring…` per-server activity badge on the Server tab by proxying llama-server's `/slots` endpoint, polled every 2.5s. All files in the repository are now under 550 lines.
 
 ### MCP Server Integration (Phase N)
-- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded tools wrapping all FastAPI endpoints. The MCP server runs as a background worker (port 8001) alongside the main FastAPI server (port 8000), started by `docker-entrypoint.sh`. Each tool includes pre-flight validation (VRAM checks, disk space checks, state conflict detection) and post-flight verification. Written skills for all critical operations: model lifecycle, benchmarks, downloads, image generation, gallery management, server lifecycle. See `MCPnSkills.md` for the full implementation plan.
+- **Phase N – MCP Server for Safe LLM Agent Access**: Added `mcp_server/` package with 32 guarded tools wrapping all FastAPI endpoints. The MCP server runs as a background worker (port 8002 — 8001 is taken by kokoro-tts on the host) alongside the main FastAPI server (port 8000), started by `docker-entrypoint.sh`. Each tool includes pre-flight validation (VRAM checks, disk space checks, state conflict detection) and post-flight verification. Written skills for all critical operations: model lifecycle, benchmarks, downloads, image generation, gallery management, server lifecycle. See `MCPnSkills.md` for the full implementation plan.
+
+### On-Demand ComfyUI Lifecycle & Image Workflow Expansion (Phase O)
+- **Phase O – On-Demand ComfyUI Lifecycle & Image Workflow Expansion**: Added `services/comfy/lifecycle.py` — docker-SDK start/stop, HTTP readiness probing, generation-activity tracking, and a 10-minute idle watchdog that stops the ComfyUI container when no generation has run. Queue worker auto-starts ComfyUI and waits for readiness before unload/generation; the edit flow returns 409 when ComfyUI is off. New endpoints `/api/comfyui/status|start|stop`; the Generator tab shows a status chip + Start/Stop button (4s polling). Also added **Krea2 Identity Edit** workflows (single-image text-guided edit + dual-image subject transfer via `/api/generate/edit`), **Boogu Image Turbo** T2I, and checkbox-based multi-workflow selection (`selected_workflows`) in the Generator tab.
+
+### Benchmark & UX Enhancements (Phase P)
+- **Phase P – Benchmark & UX Enhancements**: Added Temperature Sweep (`/api/benchmarks/temperature-sweep`, background task, JSON-retry grading) with a button on the Benchmarks tab; optional Telegram notification when a benchmark queue finishes (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`); low-speed benchmark abort info persisted in the DB and shown in model details; logical INI preset names marked ready in the rank table; Chat tab model selector dropdown with glow-until-ready loading indicator; Tools toggle defaults to OFF; gallery mobile lightbox layout; floating ⚡ hard-refresh (PWA cache-bust) button on the server card; MCP server port corrected to 8002.
 
 ---
 
