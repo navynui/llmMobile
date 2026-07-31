@@ -211,7 +211,8 @@ async def _idle_watchdog_loop():
                 continue
             try:
                 c = client.containers.get(COMFY_CONTAINER)
-                await asyncio.to_thread(c.stop, 30)
+                # docker SDK 7.x: Container.stop() only accepts keyword args
+                await asyncio.to_thread(lambda: c.stop(timeout=30))
                 print("[ComfyUI Lifecycle] ComfyUI stopped by idle watchdog.")
             except Exception as e:
                 print(f"[ComfyUI Lifecycle] Failed to stop ComfyUI: {e}")
