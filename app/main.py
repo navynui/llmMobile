@@ -50,6 +50,12 @@ from services.comfy.api import (
 )
 from services.comfy.comfyio import _free_comfy_cache as svc_free_comfy_cache, _upload_comfy_image
 from services.comfy.api import submit_edit_to_queue as svc_submit_edit_to_queue
+from services.comfy.lifecycle import (
+    get_comfy_status as svc_get_comfy_status,
+    start_comfy as svc_start_comfy,
+    stop_comfy as svc_stop_comfy,
+    start_idle_watchdog,
+)
 from services.gallery_svc import (
     browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
     gallery_mkdir as svc_gallery_mkdir, gallery_move as svc_gallery_move,
@@ -91,6 +97,7 @@ async def startup_event():
     _start_mqtt_listener()
     sse_startup()
     init_push()
+    start_idle_watchdog()
     has_queued = load_persisted_queue()
     if has_queued and not is_queue_running():
         set_queue_running(True)
@@ -245,6 +252,24 @@ async def route_free_comfy():
     return {"success": success, "detail": "ComfyUI memory freed" if success else "Failed to free ComfyUI memory"}
 
 
+# ───────────────────────────────────────────────
+# REST endpoints – ComfyUI container lifecycle
+# ───────────────────────────────────────────────
+@app.get("/api/comfyui/status")
+def route_comfyui_status():
+    return svc_get_comfy_status()
+
+
+@app.post("/api/comfyui/start")
+def route_comfyui_start():
+    return svc_start_comfy()
+
+
+@app.post("/api/comfyui/stop")
+def route_comfyui_stop():
+    return svc_stop_comfy()
+
+
 @app.post("/api/generate/edit")
 async def route_generate_edit(
     image_a: UploadFile = File(...),
@@ -255,6 +280,13 @@ async def route_generate_edit(
     """Upload images for editing, build workflow, and queue the generation."""
     # Clamp steps to valid range
     steps = max(4, min(12, steps))
+
+    # Editing uploads straight to ComfyUI — make sure it is up first.
+    if svc_get_comfy_status()["status"] != "ready":
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "ComfyUI is not running. Start it with the button above, then retry the edit."},
+        )
 
     # Read and upload image A
     image_a_bytes = await image_a.read()

@@ -35,6 +35,7 @@ from utils.common import (
 from .workflow import _build_workflow, _build_edit_workflow
 from .comfyio import _queue_comfy, _wait_comfy, _write_sidecar, _free_comfy_cache
 from .queue_state import _queue_lock, get_gen_queue, set_queue_running, broadcast_queue
+from .lifecycle import ensure_comfy_ready, touch_activity
 # ───────────────────────────────────────────────
 # Queue worker
 # ───────────────────────────────────────────────
@@ -265,6 +266,21 @@ async def queue_worker(send_push_fn=None):
     """
     global _cooldown_task
 
+    # Ensure ComfyUI is up and HTTP-ready before we unload the LLM model.
+    # If the container is off, this auto-starts it and waits for readiness.
+    try:
+        await ensure_comfy_ready()
+    except Exception as e:
+        print(f"[Queue Worker] ComfyUI unavailable: {e}")
+        with _queue_lock:
+            for qi in get_gen_queue():
+                if qi["status"] == "queued":
+                    qi["status"] = "error"
+                    qi["error"] = f"ComfyUI unavailable: {str(e)}"
+        await broadcast_queue()
+        set_queue_running(False)
+        return
+
     first_item = None
     with _queue_lock:
         for qi in get_gen_queue():
@@ -351,6 +367,7 @@ async def queue_worker(send_push_fn=None):
                                 f"Error: {error_msg} for: {item['prompt'][:40]}...",
                             )
                 await broadcast_queue()
+                touch_activity()
 
     except Exception as e:
         print(f"[Queue Worker] Swapping or generation failed: {e}")

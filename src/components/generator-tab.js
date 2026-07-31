@@ -1,7 +1,7 @@
 import { LitElement, html } from 'lit';
 import { opQueue } from '../utils/op-queue.js';
 import { generatorStyles } from './generator-tab/_styles.js';
-import { submitTask, cancelItem, clearDone, regenerateSingleImage, rerunItem, submitEditTask } from './generator-tab/_logic.js';
+import { submitTask, cancelItem, clearDone, regenerateSingleImage, rerunItem, submitEditTask, refreshComfyStatus, toggleComfy } from './generator-tab/_logic.js';
 import { renderForm, renderEditForm, renderQueue, renderLightbox, renderActionSheet } from './generator-tab/_templates.js';
 
 export class GeneratorTab extends LitElement {
@@ -22,6 +22,9 @@ export class GeneratorTab extends LitElement {
     editSteps: { type: Number },
     editSubmitting: { type: Boolean },
     editErrorMsg: { type: String },
+    comfyStatus: { type: String },
+    comfyBusy: { type: Boolean },
+    comfyDetail: { type: Object },
   };
 
   static styles = generatorStyles;
@@ -47,6 +50,10 @@ export class GeneratorTab extends LitElement {
     this.editErrorMsg = '';
     this.imageA = null;
     this.imageB = null;
+    this.comfyStatus = 'off';
+    this.comfyBusy = false;
+    this.comfyDetail = null;
+    this._comfyTimer = null;
   }
 
   connectedCallback() {
@@ -55,12 +62,27 @@ export class GeneratorTab extends LitElement {
     window.addEventListener('op-queue-changed', this._onOpQueueChanged);
     this._onQueueUpdate = () => this.requestUpdate();
     window.addEventListener('queue-update', this._onQueueUpdate);
+    this._startComfyPolling();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     window.removeEventListener('op-queue-changed', this._onOpQueueChanged);
     window.removeEventListener('queue-update', this._onQueueUpdate);
+    this._stopComfyPolling();
+  }
+
+  _startComfyPolling() {
+    this._stopComfyPolling();
+    refreshComfyStatus(this);
+    this._comfyTimer = setInterval(() => refreshComfyStatus(this), 4000);
+  }
+
+  _stopComfyPolling() {
+    if (this._comfyTimer) {
+      clearInterval(this._comfyTimer);
+      this._comfyTimer = null;
+    }
   }
 
   _savePrefs() {
@@ -92,6 +114,8 @@ export class GeneratorTab extends LitElement {
   async _clearDone() { await clearDone(); }
   async _regenerateSingleImage(item, index) { await regenerateSingleImage(this, item, index); }
   async _rerunItem(item) { await rerunItem(this, item); }
+  async _refreshComfyStatus() { await refreshComfyStatus(this); }
+  async _toggleComfy() { await toggleComfy(this); }
 
   _openThumbnailMenu(item, index) {
     this.activeThumbnailMenu = { item, index };

@@ -55,6 +55,16 @@ export function renderForm(ctx, buttonLabel) {
   return html`
     <div class="card" style="margin-bottom: 16px;">
       <h2>🎨 Image Generator</h2>
+      <div class="comfy-status-row">
+        <div class="comfy-status-info">
+          <span class="comfy-dot ${ctx.comfyStatus}"></span>
+          <span class="comfy-status-text">ComfyUI: <strong>${{ off: 'Off', starting: 'Starting…', ready: 'Ready', stopping: 'Stopping…', error: 'Error' }[ctx.comfyStatus] || ctx.comfyStatus}</strong></span>
+          ${ctx.comfyStatus === 'off' ? html`<span class="comfy-hint">auto-starts on generate</span>` : ''}
+        </div>
+        <button class="clear-btn comfy-toggle-btn" @click="${ctx._toggleComfy}" ?disabled="${ctx.comfyBusy}">
+          ${ctx.comfyBusy ? 'Working…' : (ctx.comfyStatus === 'ready' || ctx.comfyStatus === 'starting' ? 'Stop ComfyUI' : 'Start ComfyUI')}
+        </button>
+      </div>
       <div class="row">
         <div>
           <label>Resolution</label>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'llm-mobile-v4';
+const CACHE_NAME = 'llm-mobile-v5';
 const ASSETS = [
   '/',
   '/index.html',

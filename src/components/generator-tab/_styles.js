@@ -75,4 +75,16 @@ export const generatorStyles = css`
     .steps-slider-row input[type="range"] { flex: 1; accent-color: var(--primary); }
     .steps-slider-row .steps-value { font-size: 1rem; font-weight: 600; color: var(--primary); min-width: 28px; text-align: center; }
     .edit-submit-row { margin-top: 16px; }
+
+    .comfy-status-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 16px; padding: 10px 12px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-color); border-radius: var(--radius-md); }
+    .comfy-status-info { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-secondary); min-width: 0; }
+    .comfy-status-info strong { color: var(--text-primary); }
+    .comfy-dot { width: 10px; height: 10px; border-radius: var(--radius-full); flex-shrink: 0; }
+    .comfy-dot.ready { background: var(--success); box-shadow: 0 0 8px var(--success-glow); }
+    .comfy-dot.starting { background: #f59e0b; box-shadow: 0 0 8px rgba(245,158,11,0.5); animation: comfyPulse 1.2s infinite; }
+    .comfy-dot.off { background: var(--text-muted); }
+    .comfy-dot.error { background: var(--danger); }
+    .comfy-hint { font-size: 0.7rem; color: var(--text-muted); white-space: nowrap; }
+    .comfy-toggle-btn { flex-shrink: 0; }
+    @keyframes comfyPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   `;

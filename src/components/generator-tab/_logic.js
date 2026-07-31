@@ -5,6 +5,40 @@ export const RESOLUTIONS = [
   '1024x1024', '1536x864', '864x1536',
 ];
 
+export async function refreshComfyStatus(ctx) {
+  try {
+    const res = await fetch('/api/comfyui/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    ctx.comfyStatus = data.status || 'off';
+    ctx.comfyDetail = data;
+    ctx.requestUpdate();
+  } catch (e) {
+    // Keep last known status if the backend is unreachable.
+  }
+}
+
+export async function toggleComfy(ctx) {
+  if (ctx.comfyBusy) return;
+  ctx.comfyBusy = true;
+  try {
+    const target = (ctx.comfyStatus === 'ready' || ctx.comfyStatus === 'starting') ? 'stop' : 'start';
+    const res = await fetch(`/api/comfyui/${target}`, { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json();
+      ctx.errorMsg = err.detail || 'ComfyUI action failed';
+    } else {
+      ctx.errorMsg = '';
+    }
+    await refreshComfyStatus(ctx);
+  } catch (e) {
+    ctx.errorMsg = e.message;
+  } finally {
+    ctx.comfyBusy = false;
+    ctx.requestUpdate();
+  }
+}
+
 export async function submitTask(ctx) {
   if (!ctx.prompt.trim()) { ctx.errorMsg = 'Please enter a prompt.'; return; }
   if (ctx.selectedWorkflows.length === 0) { ctx.errorMsg = 'Select at least one workflow.'; return; }

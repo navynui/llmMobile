@@ -35,6 +35,7 @@ from utils.common import (
 from .client import _COMFY_HTTP
 from .queue_state import _queue_lock, get_gen_queue, is_queue_running, set_queue_running, get_queue_snapshot, broadcast_queue, _queue_sse_subscribers
 from .worker import queue_worker, _cancel_pending_cooldown
+from .lifecycle import touch_activity
 # ───────────────────────────────────────────────
 # Queue route endpoints (from main.py)
 # ───────────────────────────────────────────────
@@ -153,6 +154,7 @@ async def submit_to_queue(req: GenerateRequest) -> dict:
     should_start = not is_queue_running()
     with _queue_lock:
         get_gen_queue().append(item)
+    touch_activity()
     await broadcast_queue()
     if should_start:
         set_queue_running(True)
@@ -205,6 +207,7 @@ async def submit_edit_to_queue(
     should_start = not is_queue_running()
     with _queue_lock:
         get_gen_queue().append(item)
+    touch_activity()
     await broadcast_queue()
     if should_start:
         set_queue_running(True)
