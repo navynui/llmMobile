@@ -296,7 +296,7 @@ async def get_server_slots_status() -> list[dict]:
     for entry in _MANAGED_LLM_SERVERS:
         base_url = "http://llm-server:8080" if entry["name"] == "llama-server" else "http://llm-server-mini:8080"
         container_name = entry["container"]
-        info = {"name": entry["name"], "container": container_name, "label": entry["label"], "slots": [], "processing": False, "error": None}
+        info = {"name": entry["name"], "container": container_name, "label": entry["label"], "slots": [], "processing": False, "loaded_model": None, "error": None}
 
         # Check container is running first
         cinfo = _container_info(container_name)
@@ -319,6 +319,7 @@ async def get_server_slots_status() -> list[dict]:
                             break
 
                 if loaded_model:
+                    info["loaded_model"] = loaded_model
                     # /slots requires ?model= query param with the loaded model name
                     slots_resp = await client.get(f"{base_url}/slots", params={"model": loaded_model})
                     if slots_resp.status_code == 200:

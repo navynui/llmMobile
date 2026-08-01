@@ -56,6 +56,7 @@ from services.comfy.lifecycle import (
     stop_comfy as svc_stop_comfy,
     start_idle_watchdog,
 )
+from services.llm_lifecycle import start_llm_idle_watchdog
 from services.gallery_svc import (
     browse_gallery as svc_browse_gallery, get_all_folders as svc_get_all_folders,
     gallery_mkdir as svc_gallery_mkdir, gallery_move as svc_gallery_move,
@@ -99,6 +100,7 @@ async def startup_event():
     sse_startup()
     init_push()
     start_idle_watchdog()
+    start_llm_idle_watchdog()
     has_queued = load_persisted_queue()
     if has_queued and not is_queue_running():
         set_queue_running(True)

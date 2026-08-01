@@ -89,6 +89,7 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 **Single-file services (intentionally kept whole):**
 
 * **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval, self-healing MQTT telemetry listener (reconnect + stale-data watchdog).
+* **`llm_lifecycle.py`**: LLM idle-unload watchdog — unloads the loaded model from each llama-server after `LLM_IDLE_UNLOAD_SECONDS` (default 600s) of no inference activity to free VRAM per GPU; guarded against benchmarks and active ComfyUI generation. Mirrors the ComfyUI idle-watchdog pattern.
 * **`model_svc.py`**: Model scanning, loading, INI management (`models.ini` + `modelg.ini`), weight deletion — supports both primary and mini servers.
 * **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports both primary (`/api/chat/completions`) and mini (`/api/chat-mini/completions`) servers.
 * **`sse_svc.py`**: Server-Sent Event subscription management.
@@ -404,6 +405,9 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 
 ### MQTT Telemetry Resilience (Phase Q)
 - **Phase Q – Self-Healing MQTT Telemetry**: Hardened the MQTT telemetry pipeline after the Server-tab VRAM bars were observed stuck at stale values (P100 showing 0% while `nvidia-smi` reported ~97%) because paho's `loop_start()` thread had died silently and `_stats_cache` froze. `_start_mqtt_listener()` now tears down any previous client, registers `on_connect`/`on_disconnect` logging callbacks, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger so broker failures appear in container logs. Added `start_mqtt_watchdog()` (daemon thread, wired into `app/main.py` startup) which restarts the listener when no telemetry has arrived for 90s (checked every 30s). Stats continue to come **exclusively from Home Assistant via MQTT** — no `nvidia-smi`/`psutil` fallback was reintroduced.
+
+### LLM Idle Unload (Phase R)
+- **Phase R – LLM Idle Unload to Free VRAM**: Added `services/llm_lifecycle.py` — a watchdog (mirroring the ComfyUI idle pattern) that unloads the loaded model from each llama-server independently after **10 minutes** (default) of no inference activity, freeing VRAM per GPU. Activity = any busy `/slots` slot (probed every 30s via `get_server_slots_status()`), plus explicit `touch_activity()` calls from model-load (`model_svc`) and chat send paths (`chat_svc`, `services/tools/chat.py`) so short requests between probes aren't missed. Guards: skipped while a benchmark is running or the ComfyUI generation queue has queued/running items. `get_server_slots_status()` now returns `loaded_model` so the watchdog knows what to unload. Config: `LLM_IDLE_UNLOAD_ENABLED` (default `1`) and `LLM_IDLE_UNLOAD_SECONDS` (default `600`). Unloads are logged to the container log (`[LLM Idle] …`); no frontend countdown/toast.
 
 ---
 

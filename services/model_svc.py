@@ -183,6 +183,8 @@ async def proxy_llm_load(req: ModelActionRequest):
 
             # On success, spawn a background coroutine to capture VRAM.
             if resp.status_code == 200:
+                from services.llm_lifecycle import touch_activity
+                touch_activity("llama-server")
                 model_id = req.model
                 async def _capture_vram():
                     from services.vram_svc import wait_for_idle_trigger, capture_and_store_vram
@@ -423,6 +425,9 @@ async def proxy_llm_mini_load(req: ModelActionRequest):
         try:
             preset_id = await _get_preset_id_for_model(req.model)
             resp = await c.post(f"{MINI_SERVER_URL}/models/load", json={"model": preset_id}, timeout=30)
+            if resp.status_code == 200:
+                from services.llm_lifecycle import touch_activity
+                touch_activity("llama-server-mini")
             return resp.json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))

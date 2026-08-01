@@ -94,6 +94,8 @@ async def _stream_final_response(
 
 async def chat_with_tools(request: Request, server_url: str) -> StreamingResponse:
     """Handle a chat request that may include tool definitions."""
+    from services.llm_lifecycle import touch_activity, _server_key_from_url
+    touch_activity(_server_key_from_url(server_url))
     body = await request.body()
     try:
         data = json.loads(body) if body else {}

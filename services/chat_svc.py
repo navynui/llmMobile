@@ -19,6 +19,8 @@ async def _get_loaded_model() -> Optional[str]:
     return None
 
 async def proxy_chat(request: Request):
+    from services.llm_lifecycle import touch_activity
+    touch_activity("llama-server")
     body = await request.body()
     try:
         data = json.loads(body) if body else {}
@@ -57,6 +59,8 @@ async def _get_loaded_mini_model() -> Optional[str]:
     return None
 
 async def proxy_chat_mini(request: Request):
+    from services.llm_lifecycle import touch_activity
+    touch_activity("llama-server-mini")
     body = await request.body()
     try:
         data = json.loads(body) if body else {}

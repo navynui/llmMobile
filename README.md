@@ -357,3 +357,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### MQTT Telemetry Resilience (Phase Q)
 - **Phase Q – Self-Healing MQTT Telemetry**: Hardened the MQTT telemetry pipeline after Server-tab VRAM bars froze at stale values (paho `loop_start()` thread died silently). `_start_mqtt_listener()` now tears down stale clients, registers `on_connect`/`on_disconnect` logging, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger. Added `start_mqtt_watchdog()` (daemon thread) that restarts the listener after 90s without telemetry (checked every 30s). Stats remain **exclusively MQTT** — no `nvidia-smi`/`psutil` fallback.
+
+### LLM Idle Unload (Phase R)
+- **Phase R – LLM Idle Unload to Free VRAM**: New `services/llm_lifecycle.py` watchdog unloads the loaded model from each llama-server independently after 10 minutes (default) of no inference activity, freeing VRAM per GPU. Activity = busy `/slots` slots (probed every 30s) plus `touch_activity()` from model-load and chat send paths. Skipped while benchmarks run or the ComfyUI generation queue is active. `get_server_slots_status()` now returns `loaded_model`. Env: `LLM_IDLE_UNLOAD_ENABLED` (default `1`), `LLM_IDLE_UNLOAD_SECONDS` (default `600`). Unloads logged via `[LLM Idle] …`; no frontend UI changes.
