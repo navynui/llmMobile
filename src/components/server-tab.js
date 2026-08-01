@@ -125,6 +125,7 @@ export class ServerTab extends LitElement {
   async handleScanAndRegister() { return logic.handleScanAndRegister(this); }
   async executeDeleteModel(filename) { return logic.executeDeleteModel(this, filename); }
   async handleFreeComfyUI() { return logic.handleFreeComfyUI(this); }
+  async handleUnloadKokoro() { return logic.handleUnloadKokoro(this); }
   // Mini (modelg.ini) handlers
   async fetchModelsMiniList() { return logic.fetchModelsMiniList(this); }
   async fetchActiveMiniModel() { return logic.fetchActiveMiniModel(this); }

@@ -148,7 +148,7 @@ ${buttonStyles}
 
 .server-meta-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
 }
 
@@ -221,12 +221,16 @@ ${buttonStyles}
   _handleFreeComfy() {
     this.dispatchEvent(new CustomEvent('free-comfy', { bubbles: true, composed: true }));
   }
+  _handleUnloadKokoro() {
+    this.dispatchEvent(new CustomEvent('unload-kokoro', { bubbles: true, composed: true }));
+  }
 
   render() {
     const stats = this.stats || {};
     const status = this.status || {};
     const managerStatus = status.manager || {};
     const comfyuiStatus = status.comfyui || {};
+    const kokoroStatus = status.kokoro || {};
     const servers = Array.isArray(this.servers) ? this.servers : (status.servers || []);
 
     return html`
@@ -282,10 +286,21 @@ ${buttonStyles}
               <div>Image: ${comfyuiStatus.image || 'N/A'}</div>
               ${comfyuiStatus.status === 'running' ? html`<div>Uptime: ${comfyuiStatus.uptime || 'N/A'}</div>` : ''}
             </div>
+            <div>
+              <div><strong>kokoro-tts</strong></div>
+              <div class="status-badge ${statusClass(kokoroStatus.status)}">● ${kokoroStatus.status || 'Unknown'}</div>
+              <div>Image: ${kokoroStatus.image || 'N/A'}</div>
+              ${kokoroStatus.status === 'running' ? html`<div>Uptime: ${kokoroStatus.uptime || 'N/A'}</div>` : ''}
+            </div>
           </div>
-          <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="width: 100%; justify-content: center; padding: 12px 8px; margin-top: 12px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);">
-            🧹 Free ComfyUI
-          </button>
+          <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="flex: 1; justify-content: center; padding: 10px 8px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);">
+              🧹 Free ComfyUI
+            </button>
+            <button class="btn btn-secondary" @click="${this._handleUnloadKokoro}" ?disabled="${this.actionPending}" style="flex: 1; justify-content: center; padding: 10px 8px; border-color: rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.04); color: var(--text-primary);">
+              ❄️ Unload Kokoro Model
+            </button>
+          </div>
         </div>
 
         <div class="card" style="margin-top: 16px;">

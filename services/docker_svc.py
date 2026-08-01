@@ -88,6 +88,19 @@ def _container_info(name: str) -> dict:
 def list_managed_llm_servers() -> list[dict]:
     return _MANAGED_LLM_SERVERS
 
+def unload_kokoro_models():
+    """Request kokoro-tts server to unload GPU models from VRAM."""
+    import httpx
+    try:
+        # kokoro-tts container runs on port 8000 internally (port 8001 on host / docker network kokoro-tts:8000)
+        resp = httpx.post("http://kokoro-tts:8000/api/unload", timeout=5.0)
+        if resp.status_code == 200:
+            return {"success": True, "detail": "Kokoro-TTS GPU models unloaded"}
+        return {"success": False, "detail": f"Unload endpoint returned {resp.status_code}"}
+    except Exception as e:
+        return {"success": False, "detail": f"Failed to unload Kokoro-TTS: {str(e)}"}
+
+
 def get_status():
     if not _docker_client:
         raise HTTPException(status_code=500, detail="Docker client not initialized.")
@@ -110,7 +123,9 @@ def get_status():
         "server": primary_info or {"status": "not_found", "image": None, "uptime": None},
         "servers": servers,
         "comfyui": _container_info("comfyui"),
+        "kokoro": _container_info("kokoro-tts"),
     }
+
 
 def get_system_stats():
     with _stats_lock:

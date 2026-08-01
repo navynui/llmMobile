@@ -383,6 +383,25 @@ export async function handleFreeComfyUI(ctx) {
   }
 }
 
+export async function handleUnloadKokoro(ctx) {
+  ctx.actionPending = true;
+  ctx.showStatus('Unloading Kokoro-TTS GPU model...');
+  try {
+    const res = await fetch('/api/kokoro/unload', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      ctx.showStatus('Kokoro-TTS model unloaded from VRAM');
+    } else {
+      ctx.showStatus(data.detail || 'Failed to unload Kokoro-TTS model', true);
+    }
+  } catch (e) {
+    console.error(e);
+    ctx.showStatus(`Error: ${e.message}`, true);
+  } finally {
+    ctx.actionPending = false;
+  }
+}
+
 // ── Mini (llama-server-mini / modelg.ini) API functions ─────────────────────
 
 export async function fetchModelsMiniList(ctx) {

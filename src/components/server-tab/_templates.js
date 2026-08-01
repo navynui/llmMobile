@@ -12,6 +12,7 @@ export function renderServerTab(ctx) {
         .slotInfo="${ctx.slotInfo}"
         @server-action="${(e) => ctx.handleServerAction(e.detail.server, e.detail.action)}"
         @free-comfy="${() => ctx.handleFreeComfyUI()}"
+        @unload-kokoro="${() => ctx.handleUnloadKokoro()}"
       >
       </server-status-card>
 

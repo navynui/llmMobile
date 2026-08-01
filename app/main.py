@@ -26,7 +26,8 @@ from models.requests import (
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
     start_llm_server, stop_llm_server, restart_llm_server,
-    _start_mqtt_listener, start_mqtt_watchdog, get_logs, get_server_slots_status
+    _start_mqtt_listener, start_mqtt_watchdog, get_logs, get_server_slots_status,
+    unload_kokoro_models
 )
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
@@ -253,6 +254,12 @@ async def submit_to_queue(req: GenerateRequest):
 async def route_free_comfy():
     success = await svc_free_comfy_cache()
     return {"success": success, "detail": "ComfyUI memory freed" if success else "Failed to free ComfyUI memory"}
+
+
+@app.post("/api/kokoro/unload")
+async def route_unload_kokoro():
+    return unload_kokoro_models()
+
 
 
 # ───────────────────────────────────────────────
