@@ -354,3 +354,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
 
 ### Benchmark & UX Enhancements (Phase P)
 - **Phase P – Benchmark & UX Enhancements**: Temperature Sweep with JSON-retry grading, Telegram notifications on queue completion, low-speed abort info in DB, Chat tab model selector with glow-until-ready indicator, Tools toggle default OFF, gallery mobile lightbox, floating ⚡ hard-refresh (PWA cache-bust) button, MCP port moved to 8002.
+
+### MQTT Telemetry Resilience (Phase Q)
+- **Phase Q – Self-Healing MQTT Telemetry**: Hardened the MQTT telemetry pipeline after Server-tab VRAM bars froze at stale values (paho `loop_start()` thread died silently). `_start_mqtt_listener()` now tears down stale clients, registers `on_connect`/`on_disconnect` logging, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger. Added `start_mqtt_watchdog()` (daemon thread) that restarts the listener after 90s without telemetry (checked every 30s). Stats remain **exclusively MQTT** — no `nvidia-smi`/`psutil` fallback.

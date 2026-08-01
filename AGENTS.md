@@ -88,7 +88,7 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 
 **Single-file services (intentionally kept whole):**
 
-* **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval.
+* **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval, self-healing MQTT telemetry listener (reconnect + stale-data watchdog).
 * **`model_svc.py`**: Model scanning, loading, INI management (`models.ini` + `modelg.ini`), weight deletion — supports both primary and mini servers.
 * **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports both primary (`/api/chat/completions`) and mini (`/api/chat-mini/completions`) servers.
 * **`sse_svc.py`**: Server-Sent Event subscription management.
@@ -235,6 +235,7 @@ The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/
 
 * The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
 * Home Assistant publishes the correct per-GPU values (e.g., Tesla P100 VRAM, GPU utilization) via its own MQTT topics. Rely on those rather than trying to parse `nvidia-smi` output locally, which is unreliable with multi-GPU setups.
+* The listener is **self-healing**: `_start_mqtt_listener()` registers `on_connect`/`on_disconnect` callbacks, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger so broker failures are visible in container logs. A daemon watchdog (`start_mqtt_watchdog()` → `_mqtt_watchdog_loop()`, started in `app/main.py` startup) restarts the listener if no telemetry message has arrived for **90 seconds** (checked every 30s), because paho's `loop_start()` thread can die silently and leave `_stats_cache` frozen (VRAM bars stuck at stale values).
 
 ### 9. Tool Orchestrator Final Response Must Stream
 
@@ -288,6 +289,7 @@ The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/
 
 * The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
 * Home Assistant publishes the correct per-GPU values (e.g., Tesla P100 VRAM, GPU utilization) via its own MQTT topics. Rely on those rather than trying to parse `nvidia-smi` output locally, which is unreliable with multi-GPU setups.
+* The listener is **self-healing**: `_start_mqtt_listener()` registers `on_connect`/`on_disconnect` callbacks, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger so broker failures are visible in container logs. A daemon watchdog (`start_mqtt_watchdog()` → `_mqtt_watchdog_loop()`, started in `app/main.py` startup) restarts the listener if no telemetry message has arrived for **90 seconds** (checked every 30s), because paho's `loop_start()` thread can die silently and leave `_stats_cache` frozen (VRAM bars stuck at stale values).
 
 ---
 
@@ -399,6 +401,9 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 
 ### Benchmark & UX Enhancements (Phase P)
 - **Phase P – Benchmark & UX Enhancements**: Added Temperature Sweep (`/api/benchmarks/temperature-sweep`, background task, JSON-retry grading) with a button on the Benchmarks tab; optional Telegram notification when a benchmark queue finishes (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`); low-speed benchmark abort info persisted in the DB and shown in model details; logical INI preset names marked ready in the rank table; Chat tab model selector dropdown with glow-until-ready loading indicator; Tools toggle defaults to OFF; gallery mobile lightbox layout; floating ⚡ hard-refresh (PWA cache-bust) button on the server card; MCP server port corrected to 8002.
+
+### MQTT Telemetry Resilience (Phase Q)
+- **Phase Q – Self-Healing MQTT Telemetry**: Hardened the MQTT telemetry pipeline after the Server-tab VRAM bars were observed stuck at stale values (P100 showing 0% while `nvidia-smi` reported ~97%) because paho's `loop_start()` thread had died silently and `_stats_cache` froze. `_start_mqtt_listener()` now tears down any previous client, registers `on_connect`/`on_disconnect` logging callbacks, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger so broker failures appear in container logs. Added `start_mqtt_watchdog()` (daemon thread, wired into `app/main.py` startup) which restarts the listener when no telemetry has arrived for 90s (checked every 30s). Stats continue to come **exclusively from Home Assistant via MQTT** — no `nvidia-smi`/`psutil` fallback was reintroduced.
 
 ---
 

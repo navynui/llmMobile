@@ -3,6 +3,7 @@ import time
 import datetime
 import threading
 import subprocess
+import logging
 import docker as _docker_module
 import paho.mqtt.client as mqtt
 from fastapi import HTTPException
@@ -28,6 +29,8 @@ _stats_cache: dict = {"data": {
 }}
 _stats_lock = threading.Lock()
 last_mqtt_update_time: float = 0.0
+_mqtt_client = None
+_mqtt_watchdog_started = False
 
 def _compute_storage_used(percent: float) -> float:
     if _HOST_STORAGE_TOTAL_GB <= 0 or percent <= 0:
@@ -191,18 +194,72 @@ def _on_mqtt_message(client, userdata, msg):
     except Exception as e:
         print(f"MQTT Parse Error: {e}")
 
+def _on_mqtt_connect(client, userdata, flags, rc):
+    print(f"MQTT connected rc={rc}")
+
+def _on_mqtt_disconnect(client, userdata, rc):
+    print(f"MQTT disconnected rc={rc}")
+
 def _start_mqtt_listener():
+    global _mqtt_client
     try:
+        # Tear down any previous client before (re)connecting.
+        if _mqtt_client is not None:
+            try:
+                _mqtt_client.loop_stop()
+            except Exception:
+                pass
+            try:
+                _mqtt_client.disconnect()
+            except Exception:
+                pass
+            _mqtt_client = None
+
+        # Make paho's own warnings/errors visible in container logs.
+        _paho_logger = logging.getLogger("paho.mqtt")
+        if not _paho_logger.handlers:
+            _paho_logger.addHandler(logging.StreamHandler())
+        _paho_logger.setLevel(logging.WARNING)
+
         client = mqtt.Client()
         client.on_message = _on_mqtt_message
+        client.on_connect = _on_mqtt_connect
+        client.on_disconnect = _on_mqtt_disconnect
         client.username_pw_set(MQTT_CONFIG["user"], MQTT_CONFIG["pass"])
+        client.reconnect_delay_set(min_delay=1, max_delay=30)
         client.connect(MQTT_CONFIG["broker"], 1883, 60)
         for topic in MQTT_CONFIG["topics"]:
             client.subscribe(topic)
         client.loop_start()
+        _mqtt_client = client
         print(f"MQTT Telemetry Listener started at {datetime.datetime.utcnow().isoformat()} UTC")
     except Exception as e:
         print(f"MQTT Connection Error: {e}")
+
+def _mqtt_watchdog_loop():
+    """Restart the MQTT listener if telemetry has gone stale for too long.
+
+    paho's loop_start thread can die silently (broker restart, network blip,
+    unhandled exception) leaving _stats_cache frozen. This watchdog restarts
+    the listener when no message has arrived for STALE_MQTT_SECONDS.
+    """
+    stale_seconds = 90
+    check_interval = 30
+    while True:
+        time.sleep(check_interval)
+        with _stats_lock:
+            idle_for = time.time() - last_mqtt_update_time
+        if idle_for > stale_seconds:
+            print(f"MQTT telemetry stale for {idle_for:.0f}s — restarting listener")
+            _start_mqtt_listener()
+
+def start_mqtt_watchdog():
+    global _mqtt_watchdog_started
+    if _mqtt_watchdog_started:
+        return
+    _mqtt_watchdog_started = True
+    t = threading.Thread(target=_mqtt_watchdog_loop, daemon=True)
+    t.start()
 
 
 def get_logs(container_name: str = "llm-server", lines: int = 100):

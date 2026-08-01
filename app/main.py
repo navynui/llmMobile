@@ -26,7 +26,7 @@ from models.requests import (
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
     start_llm_server, stop_llm_server, restart_llm_server,
-    _start_mqtt_listener, get_logs, get_server_slots_status
+    _start_mqtt_listener, start_mqtt_watchdog, get_logs, get_server_slots_status
 )
 from services.model_svc import (
     list_models, delete_model, get_models_ini, save_models_ini,
@@ -95,6 +95,7 @@ async def startup_event():
     init_download_queue()
     asyncio.create_task(download_queue_worker())
     _start_mqtt_listener()
+    start_mqtt_watchdog()
     sse_startup()
     init_push()
     start_idle_watchdog()
