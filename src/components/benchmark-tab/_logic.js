@@ -95,7 +95,11 @@ export async function runBenchmark(ctx) {
     const res = await fetch('/api/benchmarks/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId, server: ctx.selectedBenchmarkServer || 'primary' })
+      body: JSON.stringify({
+        judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId,
+        server: ctx.selectedBenchmarkServer || 'primary',
+        execution_mode: ctx.executionMode || 'full'
+      })
     });
     const data = await res.json();
     if (res.ok) {
@@ -268,6 +272,10 @@ export function getFilteredAndSortedBenchmarks(ctx) {
 
   if (ctx.platformFilter && ctx.platformFilter !== 'all') {
     list = list.filter(b => b.server === ctx.platformFilter);
+  }
+
+  if (ctx.categoryFilter && ctx.categoryFilter !== 'all') {
+    list = list.filter(b => b.category === ctx.categoryFilter);
   }
 
   // Hide offline models unless user toggles them on

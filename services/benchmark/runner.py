@@ -103,7 +103,15 @@ def _get_server_config(server: str = "primary") -> dict:
 
 # ── Benchmark execution tasks ──────────────────────────────────────────────────
 
-async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optional[str], server: str = "primary"):
+async def run_benchmark_task(
+    run_id: str,
+    model_id: str,
+    judge_model_id: Optional[str],
+    server: str = "primary",
+    execution_mode: str = "full",
+    run_count: int = 1,
+    temperature: float = 0.7
+):
     from services.judge import judge_benchmark, get_gold_key, get_llm_server_url
     from services.model_svc import _get_preset_id_for_model
 
@@ -116,15 +124,23 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
     _benchmark_progress["rounds_completed"] = 0
     _benchmark_progress["logs"] = []
 
-    log_benchmark(f"Starting benchmark sequence for model: {model_id}")
+    log_benchmark(f"Starting benchmark sequence ({execution_mode} mode) for model: {model_id}")
 
-    prompts = {
+    all_prompts = {
         "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
         "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
         "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
         "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
         "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
     }
+
+    if execution_mode == "fast_screen":
+        prompts = {
+            k: v for k, v in all_prompts.items()
+            if k in ("Round 1: Knowledge QA", "Round 3: Code Generation", "Round 4: Abstract Reasoning")
+        }
+    else:
+        prompts = all_prompts
 
     rounds_list = []
 
@@ -139,16 +155,17 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
 
         async with httpx.AsyncClient(timeout=3600.0) as client:
             too_slow = False
+            total_rounds = len(prompts)
             for idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
                 _benchmark_progress["current_round"] = round_name
                 log_benchmark(f"Executing {round_name}...")
-                broadcast_notification(f"📊 Round {idx}/5: {round_name}")
+                broadcast_notification(f"📊 Round {idx}/{total_rounds}: {round_name}")
 
                 preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
                 payload = {
                     "model": preset_id,
                     "messages": [{"role": "user", "content": prompt_text}],
-                    "temperature": 0.7,
+                    "temperature": temperature,
                     "stream": False,
                     "max_tokens": RETRY_MAX_TOKENS_RAMP[0]  # 4096 baseline
                 }
@@ -260,8 +277,9 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     break
 
                 if idx < len(prompts):
-                    log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
-                    await asyncio.sleep(10)
+                    cooldown = 5 if (vram_gb is not None and vram_gb < 11.0) else 10
+                    log_benchmark(f"Cooling down for {cooldown} seconds to prevent VRAM locks...")
+                    await asyncio.sleep(cooldown)
 
         # Capture VRAM AFTER the rounds have run — the KV/context cache is now
         # allocated, so per-run VRAM reflects the model's real footprint instead

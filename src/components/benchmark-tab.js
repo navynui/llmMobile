@@ -38,6 +38,10 @@ export class BenchmarkTab extends LitElement {
 
     // Chart linkage
     highlightedModelId: { type: String },
+
+    // Category & Mode state
+    categoryFilter: { type: String },
+    executionMode: { type: String },
   };
 
   static styles = benchmarkStyles;
@@ -83,6 +87,10 @@ export class BenchmarkTab extends LitElement {
 
     // Chart linkage
     this.highlightedModelId = '';
+
+    // Category & Mode
+    this.categoryFilter = 'all';
+    this.executionMode = 'full';
   }
 
   connectedCallback() {

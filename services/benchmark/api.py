@@ -60,22 +60,32 @@ async def run_benchmark(req: BenchmarkRunRequest, background_tasks: BackgroundTa
                     notes = ?
             """, (model_id, display_name, get_quantization_from_name(raw_model_id),
                   f"Testing run initiated at {timestamp}", f"Testing run initiated at {timestamp}"))
-            cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (model_id,))
-            old_runs = cursor.fetchall()
-            for old_run in old_runs:
-                cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
+            
+            mode = req.execution_mode or "full"
+            temp = req.temperature if req.temperature is not None else 0.7
             cursor.execute("""
-                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server)
-                VALUES (?, ?, ?, ?, ?)
-            """, (run_id, model_id, timestamp, raw_output_path, req.server))
+                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server, execution_mode, temperature)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (run_id, model_id, timestamp, raw_output_path, req.server, mode, temp))
             conn.commit()
             conn.close()
-            background_tasks.add_task(run_benchmark_task, run_id, model_id, req.judge_model_id, req.server)
+
+            background_tasks.add_task(
+                run_benchmark_task,
+                run_id,
+                model_id,
+                req.judge_model_id,
+                req.server,
+                mode,
+                req.run_count or 1,
+                temp
+            )
             return {
                 "status": "success",
-                "message": "Benchmark sequence initiated successfully in the background.",
+                "message": f"Benchmark sequence ({mode} mode) initiated successfully in the background.",
                 "run_id": run_id,
                 "model_id": model_id,
+                "execution_mode": mode,
             }
         except Exception as e:
             async with get_benchmark_lock():

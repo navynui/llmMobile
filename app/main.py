@@ -446,6 +446,11 @@ def route_get_benchmark_outputs():
 async def route_judge_benchmark(req: JudgeRequest):
     return await svc_judge_benchmark(req)
 
+@app.post("/api/benchmarks/aggregate")
+def route_aggregate_benchmark(model_id: str):
+    from services.benchmark import calculate_and_store_model_aggregates
+    return calculate_and_store_model_aggregates(model_id)
+
 # ───────────────────────────────────────────────
 # Logs
 # ───────────────────────────────────────────────

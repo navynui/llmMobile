@@ -260,10 +260,20 @@ export function renderBenchmarksView(ctx) {
           >
         </div>
 
-        <div class="filter-pills">
-          <button class="pill ${ctx.platformFilter === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All Server</button>
+        <div class="filter-pills" style="display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; align-items: center;">
+          <span style="font-size: 0.72rem; color: var(--text-secondary);">Server:</span>
+          <button class="pill ${(ctx.platformFilter || 'all') === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All</button>
           <button class="pill ${ctx.platformFilter === 'primary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'primary'}">Primary</button>
           <button class="pill ${ctx.platformFilter === 'secondary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'secondary'}">Secondary</button>
+          
+          <span style="font-size: 0.72rem; color: var(--text-secondary); margin-left: 8px;">Category:</span>
+          <button class="pill ${(ctx.categoryFilter || 'all') === 'all' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'all'}">All</button>
+          <button class="pill ${ctx.categoryFilter === 'speed_first' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'speed_first'}">⚡ Speed</button>
+          <button class="pill ${ctx.categoryFilter === 'reasoning' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'reasoning'}">🧠 Reasoning</button>
+          <button class="pill ${ctx.categoryFilter === 'vram_efficient' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'vram_efficient'}">🔋 VRAM</button>
+          <button class="pill ${ctx.categoryFilter === 'balanced' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'balanced'}">⚖️ Balanced</button>
+          <button class="pill ${ctx.categoryFilter === 'specialized' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'specialized'}">🎯 Specialized</button>
+
           <button class="pill ${ctx.showOfflineModels ? '' : 'active'}" style="margin-left: auto; font-size: 0.65rem;" @click="${() => ctx.showOfflineModels = !ctx.showOfflineModels}">${ctx.showOfflineModels ? '📂 Show Offline' : '📂 Hide Offline'}</button>
         </div>
 
@@ -347,10 +357,14 @@ export function renderBenchmarksView(ctx) {
                         </div>
                         <!-- Quant / Speed / Score chips -->
                         ${b.is_tested ? html`
-                          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
+                          <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; align-items: center;">
                             <span class="bench-chip" style="background: rgba(99,102,241,0.08); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">${b.quant}</span>
                             <span class="bench-chip" style="background: rgba(16,185,129,0.08); color: ${speedColor}; border: 1px solid rgba(16,185,129,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ ${b.tokens_sec} t/s</span>
-                            <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">★ ${b.score}</span>
+                            <span class="bench-chip" style="background: rgba(251,191,36,0.08); color: ${scoreColor}; border: 1px solid rgba(251,191,36,0.15); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">
+                              ★ ${b.avg_score || b.score}${b.score_stddev ? ` ± ${b.score_stddev}` : ''}
+                            </span>
+                            ${b.runs_count > 1 ? html`<span class="bench-chip" style="background: rgba(99,102,241,0.12); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.25); font-size: 0.65rem; padding: 1px 6px; border-radius: var(--radius-sm);">🔄 ${b.runs_count} runs</span>` : ''}
+                            ${b.category_label && b.category !== 'unclassified' ? html`<span class="bench-chip" style="background: rgba(20,184,166,0.12); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.25); font-size: 0.65rem; padding: 1px 6px; border-radius: var(--radius-sm);">${b.category_label}</span>` : ''}
                             ${renderVramChip(b)}
                             ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
                             ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
@@ -397,9 +411,10 @@ export function renderDetailsModal(ctx) {
           ` : html`
             <div style="display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px;">
               <span style="font-weight: bold; font-size: 1.05rem; color: white; word-break: break-all;">${ctx.selectedBenchmarkDetails.name}</span>
-              <div style="display: flex; gap: 6px; font-size: 0.72rem; flex-wrap: wrap;">
+              <div style="display: flex; gap: 6px; font-size: 0.72rem; flex-wrap: wrap; align-items: center;">
                 <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Quant: ${ctx.selectedBenchmarkDetails.quantization}</span>
                 <span class="meta-badge" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 2px 6px;">Tested: ${ctx.selectedBenchmarkDetails.timestamp}</span>
+                ${ctx.selectedBenchmarkDetails.category_label ? html`<span class="meta-badge" style="background: rgba(20,184,166,0.15); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.3); padding: 2px 6px;">${ctx.selectedBenchmarkDetails.category_label}</span>` : ''}
                 ${(() => {
                   const s = (ctx.selectedBenchmarkDetails.status || '').toLowerCase();
                   const isAborted = s === 'aborted';
@@ -411,6 +426,29 @@ export function renderDetailsModal(ctx) {
                   return html`<span class="meta-badge" style="background: ${bg}; color: ${color}; border: 1px solid ${border}; padding: 2px 6px;">${label}</span>`;
                 })()}
               </div>
+
+              ${ctx.selectedBenchmarkDetails.runs_count > 1 || ctx.selectedBenchmarkDetails.score_stddev > 0 ? html`
+                <div style="display: flex; gap: 12px; background: rgba(99,102,241,0.06); border: 1px solid rgba(99,102,241,0.15); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 0.8rem; margin-top: 4px; flex-wrap: wrap;">
+                  <span>📊 <strong>Avg Score:</strong> ${ctx.selectedBenchmarkDetails.avg_total_score || 'N/A'}</span>
+                  <span>📉 <strong>StdDev:</strong> ±${ctx.selectedBenchmarkDetails.score_stddev || 0}</span>
+                  <span>🔄 <strong>Runs Tracked:</strong> ${ctx.selectedBenchmarkDetails.runs_count}</span>
+                  <span>⚡ <strong>Avg Speed:</strong> ${ctx.selectedBenchmarkDetails.avg_tps ? ctx.selectedBenchmarkDetails.avg_tps.toFixed(1) + ' t/s' : 'N/A'}</span>
+                </div>
+              ` : ''}
+
+              ${ctx.selectedBenchmarkDetails.runs_history && ctx.selectedBenchmarkDetails.runs_history.length > 1 ? html`
+                <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
+                  <h4 style="font-size: 0.85rem; margin: 0; color: #a5b4fc;">📜 Run History (${ctx.selectedBenchmarkDetails.runs_history.length} passes)</h4>
+                  <div style="background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--radius-sm); padding: 8px; font-size: 0.75rem;">
+                    ${ctx.selectedBenchmarkDetails.runs_history.map(rh => html`
+                      <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed rgba(255,255,255,0.05);">
+                        <span>${rh.timestamp} (${rh.execution_mode || 'full'})</span>
+                        <span>${rh.speed_tps ? rh.speed_tps.toFixed(1) + ' t/s' : ''} | <strong>${rh.total_score || 0} pts</strong></span>
+                      </div>
+                    `)}
+                  </div>
+                </div>
+              ` : ''}
               ${ctx.selectedBenchmarkDetails.notes ? html`
                 <div style="font-size: 0.78rem; color: var(--text-secondary); background: rgba(0,0,0,0.15); padding: 8px 12px; border-radius: var(--radius-sm); border-left: 3px solid var(--text-muted); margin-top: 4px;">
                   <strong>Notes:</strong> ${ctx.selectedBenchmarkDetails.notes}

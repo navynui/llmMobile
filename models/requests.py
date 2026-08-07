@@ -44,12 +44,18 @@ class DownloadRequest(BaseModel):
 class BenchmarkRunRequest(BaseModel):
     judge_model_id: Optional[str] = None
     server: str = "primary"
+    execution_mode: Optional[str] = "full"  # 'full', 'fast_screen', 'speed_multi'
+    run_count: Optional[int] = 1
+    temperature: Optional[float] = 0.7
 
 
 class BenchmarkQueueRequest(BaseModel):
     models: list[str]
     judge_model_id: str
     server: str = "primary"
+    execution_mode: Optional[str] = "full"
+    run_count: Optional[int] = 1
+    temperature: Optional[float] = 0.7
 
 class TemperatureSweepRequest(BaseModel):
     judge_model_id: Optional[str] = None

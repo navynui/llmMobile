@@ -161,23 +161,26 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 GROUP BY lr.model_id, lr.run_id, lr.timestamp, lr.server, lr.vram_gb
             )
             SELECT m.model_id, m.name, m.quantization, LOWER(m.status) as status, m.notes,
-                   m.vram_gb as model_vram_gb,
+                   m.vram_gb as model_vram_gb, m.category, m.avg_total_score, m.avg_tps as agg_avg_tps,
+                   m.score_stddev, m.runs_count,
                    rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps, rsa.server, rsa.vram_gb as run_vram_gb,
                    (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
             FROM models m
             LEFT JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
-            ORDER BY rsa.total_score DESC;
+            ORDER BY COALESCE(m.avg_total_score, rsa.total_score) DESC;
         """
         cursor.execute(query)
         rows = cursor.fetchall()
         conn.close()
 
+        from .aggregation import CATEGORY_LABELS
+
         benchmarks = []
         tested_names_lower = set()
 
         for r in rows:
-            avg_tps = r["avg_tps"] or 0.0
-            total_score = r["total_score"] or 0
+            avg_tps = r["avg_tps"] or r["agg_avg_tps"] or 0.0
+            total_score = r["avg_total_score"] if r["avg_total_score"] is not None else (r["total_score"] or 0)
             hallucinated = r["hallucination_count"] > 0
             model_name = r["name"]
             name_low = model_name.lower()
@@ -189,25 +192,18 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
             tested_names_lower.add(r["model_id"].lower())
             is_model_ready = (name_low in all_ready) or (r["model_id"].lower() in all_ready)
 
-            # Determine server from DB or from ready map
             bench_server = r["server"] or "primary"
             if not show_all:
                 if avg_tps < 20.0 or hallucinated or total_score < 50:
                     if not is_model_ready:
                         continue
 
-            # Prefer per-run VRAM. models.vram_gb is a single value shared across
-            # BOTH GPUs (last writer wins), so for a secondary/GTX row it can be a
-            # value captured on the primary P100 — displaying the wrong VRAM next to
-            # the 6 GB secondary total. Only fall back to it for primary rows.
             if bench_server == "secondary":
                 effective_vram = r["run_vram_gb"]
             else:
                 effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
             vram_total = 16.0 if bench_server == "primary" else 6.0
 
-            # Look up capabilities from INI (try multiple key variants since
-            # DB names may or may not have .gguf extension)
             def _lookup_caps(key_low):
                 caps = cap_lookup.get(key_low) or {}
                 if not caps and not key_low.endswith('.gguf'):
@@ -217,6 +213,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 return caps
             caps = _lookup_caps(name_low) or _lookup_caps(r["model_id"].lower())
 
+            cat_key = r["category"] or "unclassified"
+
             benchmarks.append({
                 "model_id": r["model_id"],
                 "model": model_name,
@@ -225,6 +223,11 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 "quant": r["quantization"] or "Unknown",
                 "tokens_sec": round(avg_tps, 1),
                 "score": total_score,
+                "avg_score": r["avg_total_score"] or total_score,
+                "score_stddev": r["score_stddev"] or 0.0,
+                "runs_count": r["runs_count"] or 1,
+                "category": cat_key,
+                "category_label": CATEGORY_LABELS.get(cat_key, "❓ Unclassified"),
                 "vram_gb": effective_vram,
                 "vram_total_gb": vram_total,
                 "status": r["status"] if (r and r["status"]) else "testing",
@@ -290,25 +293,44 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
 
 
 def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
-    """Return detailed benchmark results for a specific model and server."""
+    """Return detailed benchmark results for a specific model and server, including run history and aggregates."""
     try:
         model_id = _clean_model_id(model_id)
         conn = get_db_conn()
         cursor = conn.cursor()
-        cursor.execute("SELECT model_id, name, quantization, LOWER(status) as status, vram_gb, notes FROM models WHERE model_id = ?", (model_id,))
+        cursor.execute("""
+            SELECT model_id, name, quantization, LOWER(status) as status, vram_gb, notes,
+                   category, avg_total_score, avg_tps, score_stddev, runs_count
+            FROM models WHERE model_id = ?
+        """, (model_id,))
         model_row = cursor.fetchone()
         if not model_row:
             conn.close()
             raise HTTPException(status_code=404, detail="Model benchmark record not found")
-        # Prefer per-run VRAM from test_runs, fallback to models.vram_gb
-        cursor.execute("SELECT run_id, timestamp, server, vram_gb, raw_output_path FROM test_runs WHERE model_id = ? AND server = ? ORDER BY timestamp DESC LIMIT 1", (model_id, server))
+
+        # Fetch latest run
+        cursor.execute("SELECT run_id, timestamp, server, vram_gb, raw_output_path, execution_mode, temperature FROM test_runs WHERE model_id = ? AND server = ? ORDER BY timestamp DESC LIMIT 1", (model_id, server))
         run_row = cursor.fetchone()
+
+        # Fetch all historical runs for this model & server
+        cursor.execute("""
+            SELECT tr.run_id, tr.timestamp, tr.server, tr.vram_gb, tr.execution_mode, tr.temperature,
+                   SUM(rs.score) as total_score,
+                   MAX(CASE WHEN rs.round_name = 'speed_metric' THEN rs.speed_tps END) as speed_tps
+            FROM test_runs tr
+            LEFT JOIN round_scores rs ON tr.run_id = rs.run_id
+            WHERE tr.model_id = ? AND tr.server = ?
+            GROUP BY tr.run_id
+            ORDER BY tr.timestamp DESC
+        """, (model_id, server))
+        history_rows = cursor.fetchall()
+        runs_history = [dict(r) for r in history_rows]
+
         rounds = []
         hallucinations = []
         timestamp = None
         run_id = None
         run_vram_gb = None
-        server = "primary"
         if run_row:
             run_id = run_row["run_id"]
             timestamp = run_row["timestamp"]
@@ -318,7 +340,6 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             rounds = [dict(row) for row in cursor.fetchall()]
             cursor.execute("SELECT round_name, description FROM model_hallucinations WHERE model_id = ?", (model_id,))
             hallucinations = [dict(row) for row in cursor.fetchall()]
-            # Fallback: if no round_scores but raw JSON exists, load round data for abort info
             if not rounds and run_row["raw_output_path"] and os.path.exists(run_row["raw_output_path"]):
                 try:
                     with open(run_row["raw_output_path"], "r", encoding="utf-8") as raw_f:
@@ -336,19 +357,27 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
                 except Exception as raw_err:
                     print(f"[Benchmarks API] Failed to load raw JSON for {model_id}: {raw_err}")
         conn.close()
-        # Per-run VRAM is the only server-scoped source. models.vram is shared
-        # across both GPUs, so never fall back to it for the secondary server
-        # (it may hold a value captured on the primary).
+
+        from .aggregation import CATEGORY_LABELS
+
+        cat_key = model_row["category"] or "unclassified"
         if server == "secondary":
             effective_vram = run_vram_gb
         else:
             effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
         total_gpu = 6.0 if server == "secondary" else 16.0
+
         return {
             "model_id": model_row["model_id"],
             "name": model_row["name"],
             "quantization": model_row["quantization"],
             "status": model_row["status"] if (model_row and model_row["status"]) else "testing",
+            "category": cat_key,
+            "category_label": CATEGORY_LABELS.get(cat_key, "❓ Unclassified"),
+            "avg_total_score": model_row["avg_total_score"],
+            "avg_tps": model_row["avg_tps"],
+            "score_stddev": model_row["score_stddev"] or 0.0,
+            "runs_count": model_row["runs_count"] or len(runs_history) or 1,
             "vram_gb": effective_vram,
             "vram_total_gb": total_gpu,
             "notes": model_row["notes"],
@@ -357,6 +386,7 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             "server": server,
             "rounds": rounds,
             "hallucinations": hallucinations,
+            "runs_history": runs_history,
         }
     except HTTPException as he:
         raise he
