@@ -57,7 +57,7 @@ This document outlines the architecture, database migrations, high-efficiency be
 Add columns to support multi-run retention, execution modes, statistical summaries, and model categories while preserving full backwards compatibility.
 
 **Files to modify:**
-- [ ] `utils/db_utils.py` — Update `run_migrations()` and `consolidate_database()`
+- [x] `utils/db_utils.py` — Update `run_migrations()` and `consolidate_database()`
 
 **Schema Changes:**
 ```sql
@@ -93,9 +93,9 @@ To obtain meaningful numbers efficiently, implement 3 target execution modes:
 | **`full_multi`** | Configurable ($N \times 3$ mins) | Runs $N$ full qualitative + quantitative passes (default $N=3$) with 10s GPU cooldown between passes. | High-confidence benchmarking & variance measurement |
 
 **Files to modify:**
-- [ ] `models/requests.py` — Add `execution_mode: str = "full"` and `run_count: int = 1` to `BenchmarkRunRequest` & `BenchmarkQueueRequest`.
-- [ ] `services/benchmark/runner.py` — Implement execution mode filtering in `run_benchmark_task()` and multi-run iteration loops with adaptive cooldown.
-- [ ] `services/benchmark/api.py` — Accept mode/run parameters and propagate to task runner.
+- [x] `models/requests.py` — Add `execution_mode: str = "full"` and `run_count: int = 1` to `BenchmarkRunRequest` & `BenchmarkQueueRequest`.
+- [x] `services/benchmark/runner.py` — Implement execution mode filtering in `run_benchmark_task()` and multi-run iteration loops with adaptive cooldown.
+- [x] `services/benchmark/api.py` — Accept mode/run parameters and propagate to task runner.
 
 ### 2.2 Adaptive VRAM Cooldown Optimization
 - Reduce inter-round cooldown from static 10s to dynamic **5s** when VRAM utilization is $<70\%$.
@@ -109,7 +109,7 @@ To obtain meaningful numbers efficiently, implement 3 target execution modes:
 Create a dedicated sub-module `services/benchmark/aggregation.py` to calculate multi-run statistical metrics.
 
 **Files to create:**
-- [ ] `services/benchmark/aggregation.py` — Re-calculate model summary statistics and category upon run completion.
+- [x] `services/benchmark/aggregation.py` — Re-calculate model summary statistics and category upon run completion.
 
 **Statistical Formulations:**
 - **Mean Score ($\mu$):**
@@ -151,8 +151,8 @@ def classify_model(avg_speed_tps: float, avg_reasoning: float, avg_code: float, 
 ### 4.1 New & Enhanced Endpoints (`services/benchmark/api.py` & `reader.py`)
 
 **Files to modify:**
-- [ ] `services/benchmark/reader.py` — Include aggregated score ($\mu \pm \sigma$), `category`, and `runs_count` in `/api/benchmarks` response.
-- [ ] `services/benchmark/api.py` — Add `/api/benchmark/models/{model_id}/aggregate` endpoint to trigger post-processing or fetch multi-run run history.
+- [x] `services/benchmark/reader.py` — Include aggregated score ($\mu \pm \sigma$), `category`, and `runs_count` in `/api/benchmarks` response.
+- [x] `services/benchmark/api.py` — Add `/api/benchmark/models/{model_id}/aggregate` endpoint to trigger post-processing or fetch multi-run run history.
 
 **API Response Schema (`/api/benchmarks`):**
 ```json
@@ -186,9 +186,9 @@ def classify_model(avg_speed_tps: float, avg_reasoning: float, avg_code: float, 
 - Add a Category Filter dropdown in the benchmark toolbar.
 
 **Files to modify:**
-- [ ] `src/components/benchmark-tab/_templates.js` — Render category pills, multi-run average score badges, and mode selector UI.
-- [ ] `src/components/benchmark-tab/_logic.js` — Handle execution mode parameters when triggering single/queue benchmarks.
-- [ ] `src/components/benchmark-tab/_styles.js` — CSS styles for category badges, variance pills, and multi-run stats.
+- [x] `src/components/benchmark-tab/_templates.js` — Render category pills, multi-run average score badges, and mode selector UI.
+- [x] `src/components/benchmark-tab/_logic.js` — Handle execution mode parameters when triggering single/queue benchmarks.
+- [x] `src/components/benchmark-tab/_styles.js` — CSS styles for category badges, variance pills, and multi-run stats.
 
 ### 5.2 Model Benchmark Details Modal
 - **Multi-Run History Tab:** Displays table of past $N$ runs with individual timestamps, TPS, total scores, and server platform.
@@ -204,23 +204,23 @@ def classify_model(avg_speed_tps: float, avg_reasoning: float, avg_code: float, 
 ## 🧪 Phase 6 — Testing & Empirical Verification
 
 ### 6.1 Backend & Database Verification
-- [ ] Verify `run_migrations()` correctly applies new columns to `test_runs` and `models`.
-- [ ] Test multi-run retention policy: verify $N$ historical runs persist in `test_runs` while cascading foreign keys clean up correctly.
-- [ ] Test statistical aggregation engine with 1, 3, and 5 benchmark runs.
-- [ ] Test auto-categorization logic against edge cases (zero VRAM, aborted runs, single-pass runs).
+- [x] Verify `run_migrations()` correctly applies new columns to `test_runs` and `models`.
+- [x] Test multi-run retention policy: verify $N$ historical runs persist in `test_runs` while cascading foreign keys clean up correctly.
+- [x] Test statistical aggregation engine with 1, 3, and 5 benchmark runs.
+- [x] Test auto-categorization logic against edge cases (zero VRAM, aborted runs, single-pass runs).
 
 ### 6.2 Frontend Compilation & UI Verification
-- [ ] Verify Lit/Vite build completes with zero bundling errors (`npm run build`).
-- [ ] Verify category pills, multi-run score display, and modal history render cleanly in mobile and desktop layouts.
-- [ ] Verify Docker container rebuild (`docker compose build llm-mobile && docker compose up -d --no-deps llm-mobile`).
+- [x] Verify Lit/Vite build completes with zero bundling errors (`npm run build`).
+- [x] Verify category pills, multi-run score display, and modal history render cleanly in mobile and desktop layouts.
+- [x] Verify Docker container rebuild (`docker compose build llm-mobile && docker compose up -d --no-deps llm-mobile`).
 
 ---
 
 ## 📅 Task Checklist & Execution Order
 
-- [ ] **Step 1:** Update `utils/db_utils.py` schema migrations & retention policy.
-- [ ] **Step 2:** Implement `services/benchmark/aggregation.py` post-processing statistics & auto-categorization engine.
-- [ ] **Step 3:** Extend `models/requests.py`, `services/benchmark/runner.py`, and `services/benchmark/api.py` for multi-mode execution (`fast_screen`, `speed_multi`, `full_multi`).
-- [ ] **Step 4:** Update `services/benchmark/reader.py` to return multi-run averages, stddev, category, and run counts.
-- [ ] **Step 5:** Modify frontend `benchmark-tab` components (`_templates.js`, `_logic.js`, `_styles.js`) and `benchmark-bubble-chart.js`.
-- [ ] **Step 6:** Run `npm run build` & Docker rebuild, and execute verification test.
+- [x] **Step 1:** Update `utils/db_utils.py` schema migrations & retention policy.
+- [x] **Step 2:** Implement `services/benchmark/aggregation.py` post-processing statistics & auto-categorization engine.
+- [x] **Step 3:** Extend `models/requests.py`, `services/benchmark/runner.py`, and `services/benchmark/api.py` for multi-mode execution (`fast_screen`, `speed_multi`, `full_multi`).
+- [x] **Step 4:** Update `services/benchmark/reader.py` to return multi-run averages, stddev, category, and run counts.
+- [x] **Step 5:** Modify frontend `benchmark-tab` components (`_templates.js`, `_logic.js`, `_styles.js`) and `benchmark-bubble-chart.js`.
+- [x] **Step 6:** Run `npm run build` & Docker rebuild, and execute verification test.
