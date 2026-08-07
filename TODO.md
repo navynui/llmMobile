@@ -1,383 +1,226 @@
-# TODO — Tool-Enabled Chat (Function Calling for llama.cpp)
+# 📊 LLM Multi-Run Benchmark Routine & Statistical Aggregation Plan
 
-Add **tool/function-calling** support to the Chat tab so the model can search the web, read/write files in a sandboxed workspace, and edit files — all orchestrated server-side.
-
----
-
-## 🗺️ Architecture Overview
-
-```
-Frontend sends {messages, tools, stream: true}
-  │
-  ▼
-Backend (services/tools/chat.py) intercepts, forwards to llama-server
-  │
-  ▼  model responds with tool_calls ──► Backend executes tool
-  │                                       ├─ web_search(query)
-  │                                       ├─ write_file(path, content)
-  │                                       ├─ read_file(path)
-  │                                       └─ edit_file(path, old, new)
-  │                                     results injected as new messages
-  │                                     loop until finish_reason == "stop"
-  ▼
-Stream final assistant response to frontend
-```
-
-### Sandbox: `/mnt/dashboard/`
-
-- **NFS mount** from `192.168.31.243:/home/nui/dashboard` (remote dashboard webserver)
-- Already **rw** mounted on host at `/mnt/dashboard`, symlinked at `/home/nui/dashboard`
-- **Git-tracked** with `.gitignore` that ignores `*.md`, `*.html`, `*.csv` (future files of these types remain untracked)
-- **Browser-accessible** — files the model generates (reports, visualizations, data exports) are immediately viewable
-- **✅ Docker mount** — `- /home/nui/dashboard:/mnt/dashboard:rw` added to `llm-mobile`
+This document outlines the architecture, database migrations, high-efficiency benchmarking routines, post-processing statistical aggregation engine, auto-categorization system, and UI/UX enhancements for recording and displaying **multi-run average scores** in `llmMobile`.
 
 ---
 
-## 📦 Phase 1 — Infrastructure & Dependencies
+## 🎯 Strategic Objectives
 
-### 1.1 Mount sandbox into container
-
-**File:** `docker-compose.yml` (at `/home/nui/llmaCPP/docker-compose.yml`)
-
-Add to `llm-mobile` volumes:
-```yaml
-- /home/nui/dashboard:/mnt/dashboard:rw
-```
-
-Also add to `llama-server` and `llama-server-mini` if we want the model's built-in `read_file` tool to access the sandbox (optional, Phase 1 can skip this).
-
-### 1.2 Enable llama-server built-in tools
-
-Add to both `llama-server` and `llama-server-mini` command flags:
-```yaml
-command: >
-  ...
-  --tools all
-```
-
-This enables the server-native tools (`read_file`, `file_glob_search`, `grep_search`). Our custom tools (`web_search`, `write_file`, `edit_file`) run on the backend, not inside llama-server.
-
-### 1.3 Add Python dependency
-
-**File:** `requirements.txt`
-```
-duckduckgo_search>=7.5.0
-```
-
-Free, no API key needed. Used for `web_search` tool.
-
-### 1.4 Docker rebuild
-
-```bash
-cd /home/nui/llmaCPP
-docker compose build llm-mobile
-docker compose up -d --no-deps llm-mobile
-```
-
-If `--tools` flag was added to llama-server, also rebuild those:
-```bash
-docker compose up -d --no-deps llama-server llama-server-mini
-```
-
-**Files to touch:**
-- [x] `docker-compose.yml` — sandbox mount + `--tools all`
-- [x] `requirements.txt` — add `curl_cffi`
+1. **Multi-Run Score Aggregation & History:** Track multiple benchmark runs per model without overwriting previous historical runs, displaying aggregated metrics ($\text{Mean} \pm \text{StdDev}$, Min/Max, and run count $N$).
+2. **High Efficiency & Speed ("Resultful numbers in less time"):** Reduce total benchmarking time by offering fast screening modes, speed sampling multi-passes, and optimized AI Judge batching—getting reliable statistics in a fraction of the time.
+3. **Automated Categorization System:** Integrate the categorization framework from `category.md` and `categorization_plan.md` directly into the database and UI (`⚡ Speed-First`, `🧠 Reasoning`, `🔋 VRAM-Efficient`, `⚖️ Balanced`, `🎯 Specialized`).
+4. **Enhanced UI/UX:** Render score confidence bands, category pills, run history breakdowns, and multi-run comparison charts in Lit components.
 
 ---
 
-## ⚙️ Phase 2 — Backend Tool Definitions (`services/tools/`)
+## 🏗️ Architectural Overview
 
-New sub-package following the Phase J pattern:
-
-### 2.1 Tool registry — `services/tools/registry.py`
-
-Define four tools as OpenAI function-calling JSON schemas:
-
-| Tool | Description | Parameters |
-|---|---|---|
-| `web_search` | Search the internet for current information | `query` (str required), `num_results` (int, default 5) |
-| `write_file` | Write content to a file in the sandbox | `path` (str required), `content` (str required), `mode` ("overwrite" \| "append") |
-| `read_file` | Read contents of an existing file | `path` (str required) |
-| `edit_file` | Edit a file by replacing text (first occurrence) | `path` (str required), `old_string` (str required), `new_string` (str required) |
-
-Export `TOOL_DEFINITIONS` list for injection into chat requests.
-
-### 2.2 Tool executor — `services/tools/executor.py`
-
-**`web_search(query, num_results)`**
-- Uses `curl_cffi` with `impersonate="chrome120"` — no API key
-- Returns JSON with `title`, `url`, `snippet` for each result
-- Timeout: 15s
-
-**`write_file(path, content, mode)`**
-- Resolves path against sandbox root: `/mnt/dashboard/`
-- Strict path sanitization — `os.path.realpath()` boundary check
-- Creates parent directories if needed
-- Mode: `"overwrite"` (truncate) or `"append"` (append to end)
-- Returns `{success, path, size}`
-
-**`read_file(path)`**
-- Same sanitization as write
-- Returns `{success, content, size}` or error
-
-**`edit_file(path, old_string, new_string)`**
-- Read → `str.replace(old, new, 1)` → write back
-- Returns `{success, path, replaced: bool}`
-
-**Path safety rules (critical) — ✅ implemented:**
-```python
-ALLOWED_BASE = "/mnt/dashboard"
-# Reject if realpath doesn't start with ALLOWED_BASE
-# Strip leading separators to prevent absolute-path shenanigans
+```
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                        llmMobile UI (Lit SPA)                          │
+ │  - Main Table: Avg Score ± StdDev, Category Pill, Run Count Badge      │
+ │  - Details Modal: Multi-Run History, Per-Round Variance, Mode Selector │
+ │  - Bubble Chart: Toggle Latest vs. Aggregated Multi-Run Averages       │
+ └───────────────────────────────────┬────────────────────────────────────┘
+                                     │ API Requests
+                                     ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                      FastAPI Backend Router                            │
+ │  - POST /api/benchmark/run (supports mode: full|fast_screen|speed_multi)│
+ │  - GET  /api/benchmark/models/{id}/aggregate (stats & category)        │
+ └───────────────────┬────────────────────────────────┬───────────────────┘
+                     │                                │
+                     ▼                                ▼
+ ┌───────────────────────────────┐   ┌───────────────────────────────────┐
+ │   Multi-Run Execution Engine  │   │  Post-Processing Aggregator Svc   │
+ │   (services/benchmark/runner) │   │  (services/benchmark/aggregation) │
+ │  - Fast Screen Mode (3 mins)  │   │  - Mean score, StdDev, Min/Max    │
+ │  - Speed Multi-Pass (1 min)   │   │  - Stability / Variance Index     │
+ │  - Full Multi-Run (N passes)  │   │  - Auto Categorization Rules      │
+ └───────────────┬───────────────┘   └────────────────┬──────────────────┘
+                 │                                    │
+                 └──────────────────┬─────────────────┘
+                                    ▼
+ ┌────────────────────────────────────────────────────────────────────────┐
+ │                       SQLite Database (llm_bench.db)                   │
+ │  - models: category, avg_score, avg_tps, score_stddev, runs_count       │
+ │  - test_runs: run_number, run_group_id, execution_mode, temperature    │
+ │  - round_scores & model_hallucinations (FOREIGN KEY ... ON DELETE CASCADE)│
+ └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 Chat orchestrator — `services/tools/chat.py`
+---
 
-The core loop:
+## 📦 Phase 1 — Database Schema & Migration Infrastructure
 
-```python
-async def chat_with_tools(request, server_url):
-    data = await request.json()
-    tools = data.pop("tools", None)
-    
-    if not tools:
-        return await passthrough_chat(data, server_url)  # fallback to normal
-    
-    messages = data["messages"]
-    
-    for iteration in range(MAX_TOOL_ITERATIONS):  # 10 max
-        response = await llama_chat_completion(messages, tools, server_url)
-        choice = response["choices"][0]
-        
-        if choice["finish_reason"] != "tool_calls":
-            return stream_final_response(choice)  # done
-        
-        # Process each tool call
-        for tc in choice["message"]["tool_calls"]:
-            yield SSE_event("tool_call", tc)        # notify frontend
-            result = await execute_tool_call(tc)    # run the tool
-            messages.append(tool_result_message(tc, result))
-    
-    yield error("Max tool call iterations reached")
-```
-
-**Key design choices — ✅ all implemented:**
-- Tool rounds use **non-streaming** requests (we need synchronous execution)
-- Only the **final** assistant response is streamed (preserves existing frontend SSE parsing)
-- Tool calls emitted as SSE events: `tool_call`, `tool_result_done`, `tool_history`, `timings`
-- Tool results truncated at **4096 characters** to prevent context overflow
-- Tool history persisted in `ctx.messages` for follow-up context
-
-### 2.4 Re-export shim — `services/tools/__init__.py`
-
-```python
-from .registry import TOOL_DEFINITIONS
-from .executor import execute_tool_call
-from .chat import chat_with_tools
-```
-
-### 2.5 Wire into FastAPI — `app/main.py`
-
-Add new route alongside existing chat proxy:
-```python
-from services.tools import chat_with_tools
-
-@app.post("/api/chat/completions")
-async def route_chat(request: Request):
-    body = await request.body()
-    data = json.loads(body) if body else {}
-    if "tools" in data:
-        return await chat_with_tools(request, "http://llm-server:8080")
-    return await proxy_chat(request)  # existing passthrough
-```
-
-Same for the mini endpoint:
-```python
-@app.post("/api/chat-mini/completions")
-async def route_chat_mini(request: Request):
-    body = await request.body()
-    data = json.loads(body) if body else {}
-    if "tools" in data:
-        return await chat_with_tools(request, "http://llm-server-mini:8080")
-    return await proxy_chat_mini(request)
-```
-
-**Files to create:**
-- [x] `services/tools/__init__.py`
-- [x] `services/tools/registry.py`
-- [x] `services/tools/executor.py`
-- [x] `services/tools/chat.py`
+### 1.1 DB Schema Migration (`utils/db_utils.py`)
+Add columns to support multi-run retention, execution modes, statistical summaries, and model categories while preserving full backwards compatibility.
 
 **Files to modify:**
-- [x] `app/main.py` — route dispatch for tool requests
-- [x] `requirements.txt` — add curl_cffi
+- [ ] `utils/db_utils.py` — Update `run_migrations()` and `consolidate_database()`
+
+**Schema Changes:**
+```sql
+-- 1. Extend test_runs table for multi-run tracking
+ALTER TABLE test_runs ADD COLUMN run_number INTEGER DEFAULT 1;
+ALTER TABLE test_runs ADD COLUMN run_group_id TEXT;
+ALTER TABLE test_runs ADD COLUMN execution_mode TEXT DEFAULT 'full'; -- 'full', 'fast_screen', 'speed_multi'
+ALTER TABLE test_runs ADD COLUMN temperature REAL DEFAULT 0.7;
+
+-- 2. Extend models table for aggregated metrics & categorization
+ALTER TABLE models ADD COLUMN category TEXT DEFAULT 'unclassified';
+ALTER TABLE models ADD COLUMN avg_total_score REAL;
+ALTER TABLE models ADD COLUMN avg_tps REAL;
+ALTER TABLE models ADD COLUMN score_stddev REAL;
+ALTER TABLE models ADD COLUMN runs_count INTEGER DEFAULT 0;
+```
+
+### 1.2 Migration & Data Retention Policy
+- Replace destructive `DELETE FROM test_runs WHERE model_id = ?` with a configurable **run retention window** (keep last $N=5$ runs per model/server).
+- Preserve existing foreign key `ON DELETE CASCADE` behavior for clean cleanup when pruning runs beyond retention window.
 
 ---
 
-## 🌐 Phase 3 — Frontend Integration
+## ⚡ Phase 2 — High-Efficiency Multi-Run Execution Engine
 
-### 3.1 Minimal (works invisibly)
+### 2.1 Benchmarking Execution Modes (`services/benchmark/runner.py`)
+To obtain meaningful numbers efficiently, implement 3 target execution modes:
 
-The frontend already sends `{messages, stream: "true"}`. If the backend detects `tools` in the request body, it handles the loop. **No frontend changes needed** for a working MVP — just send the `tools` array.
+| Mode | Duration | Description & Prompt Subset | Target Use Case |
+|---|---|---|---|
+| **`fast_screen`** | ~3–4 mins | Runs 3 core rounds: Speed Metric + Knowledge QA + Code Generation. Fast AI Judge evaluation. | Rapid model screening & instant initial category assignment |
+| **`speed_multi`** | ~1 min extra | Runs 1 qualitative pass + 3 rapid back-to-back TPS measurements without re-grading text. | Precise speed/TPS metrics with minimal GPU time |
+| **`full_multi`** | Configurable ($N \times 3$ mins) | Runs $N$ full qualitative + quantitative passes (default $N=3$) with 10s GPU cooldown between passes. | High-confidence benchmarking & variance measurement |
 
-To test: hardcode `tools` in `sendMessage()` in `chat-tab/_logic.js`:
-```javascript
-body: JSON.stringify({
-  messages: apiMessages,
-  stream: true,
-  tools: TOOL_DEFINITIONS  // imported from a static definition
-})
+**Files to modify:**
+- [ ] `models/requests.py` — Add `execution_mode: str = "full"` and `run_count: int = 1` to `BenchmarkRunRequest` & `BenchmarkQueueRequest`.
+- [ ] `services/benchmark/runner.py` — Implement execution mode filtering in `run_benchmark_task()` and multi-run iteration loops with adaptive cooldown.
+- [ ] `services/benchmark/api.py` — Accept mode/run parameters and propagate to task runner.
+
+### 2.2 Adaptive VRAM Cooldown Optimization
+- Reduce inter-round cooldown from static 10s to dynamic **5s** when VRAM utilization is $<70\%$.
+- Keep 10s cooldown for heavy $>14\text{GB}$ models to prevent VRAM fragmentation.
+
+---
+
+## 📈 Phase 3 — Post-Processing & Statistical Aggregation Service
+
+### 3.1 Aggregation Core Engine (`services/benchmark/aggregation.py`)
+Create a dedicated sub-module `services/benchmark/aggregation.py` to calculate multi-run statistical metrics.
+
+**Files to create:**
+- [ ] `services/benchmark/aggregation.py` — Re-calculate model summary statistics and category upon run completion.
+
+**Statistical Formulations:**
+- **Mean Score ($\mu$):**
+  $$\mu = \frac{1}{N} \sum_{i=1}^{N} S_i$$
+- **Standard Deviation ($\sigma$):**
+  $$\sigma = \sqrt{\frac{1}{N-1} \sum_{i=1}^{N} (S_i - \mu)^2}$$
+- **Score Range:** $[S_{\min}, S_{\max}]$
+- **Per-Round Means:** $\mu_{r}$ for each of the 5 qualitative/quantitative rounds.
+- **Hallucination Frequency:** Percentage of runs where hallucinations were detected ($H_{\text{freq}} = \frac{\text{Hallucinated Runs}}{N}$).
+
+### 3.2 Automated Categorization Rules
+Implement the exact rules defined in `category.md` & `categorization_plan.md`:
+
+```python
+def classify_model(avg_speed_tps: float, avg_reasoning: float, avg_code: float, vram_gb: float) -> str:
+    """
+    Categorize model based on aggregated multi-run benchmark results.
+    - avg_reasoning: avg score of abstract_logic & technical_reasoning (max 18)
+    - avg_code: code_generation score (max 18)
+    - avg_speed_tps: speed metric TPS
+    """
+    if avg_speed_tps >= 60.0:
+        return "speed_first"
+    elif avg_reasoning >= 14.0 and avg_code >= 14.0 and (vram_gb or 0) < 16.0:
+        return "reasoning"
+    elif (vram_gb or 0) > 0 and (vram_gb or 0) < 12.0 and avg_reasoning >= 10.0:
+        return "vram_efficient"
+    elif 15.0 <= avg_speed_tps <= 60.0 and 12.0 <= avg_reasoning <= 17.0:
+        return "balanced"
+    elif avg_reasoning >= 16.0 or avg_code >= 16.0:
+        return "specialized"
+    return "unclassified"
 ```
 
-### 3.2 Tool usage indicators — `chat-tab/_templates.js`
+---
 
-Add visual feedback for tool calls in the assistant message bubble:
+## 🌐 Phase 4 — Backend API Extensions
 
-```
-🤖 Let me search for that...
-🔍 Searching the web for "latest AI news 2026"... [done]
-📝 Writing result to research.md... [done]
-🧠 Based on my research, here's what I found:
-    ...
-```
+### 4.1 New & Enhanced Endpoints (`services/benchmark/api.py` & `reader.py`)
 
-Tool call events from SSE are parsed and rendered as lightweight inline blocks.
+**Files to modify:**
+- [ ] `services/benchmark/reader.py` — Include aggregated score ($\mu \pm \sigma$), `category`, and `runs_count` in `/api/benchmarks` response.
+- [ ] `services/benchmark/api.py` — Add `/api/benchmark/models/{model_id}/aggregate` endpoint to trigger post-processing or fetch multi-run run history.
 
-### 3.3 Tool toggles — `chat-tab/_templates.js` + `chat-tab/_logic.js`
-
-Add a toolbar row in the composer area:
-```
-[🔍 Web Search ✓] [📝 Write Files ✓] [📖 Read Files ✓] [✏️ Edit Files ✓]
-```
-
-Each pill toggles whether that tool definition is included in the request. Disabled tools are stripped from the `tools` array.
-
-### 3.4 Stream parser update — `chat-tab/_logic.js`
-
-The `sendMessage()` SSE parser needs to detect custom events:
-```javascript
-// In the stream parsing loop:
-if (parsed.type === "tool_call") {
-  // Update assistant message with tool call indicator
-  // Don't stop the stream — the tool is being executed on the backend
-  continue;
+**API Response Schema (`/api/benchmarks`):**
+```json
+{
+  "benchmarks": [
+    {
+      "model_id": "qwen2.5-7b-instruct-q8_0",
+      "model": "qwen2.5-7b-instruct-q8_0.gguf",
+      "platform": "Tesla P100 (16GB)",
+      "server": "primary",
+      "score": 84,
+      "avg_score": 84.5,
+      "score_stddev": 2.1,
+      "runs_count": 3,
+      "tokens_sec": 42.8,
+      "category": "balanced",
+      "category_label": "⚖️ Balanced",
+      "is_tested": true
+    }
+  ]
 }
 ```
 
+---
+
+## 🎨 Phase 5 — Frontend UI/UX Integration
+
+### 5.1 Main Benchmark Table Enhancements (`src/components/benchmark-tab/`)
+- Display aggregated score format: **`84.5 ± 2.1`** with a **`3 runs`** badge.
+- Add colored category badges (`⚡ Speed-First`, `🧠 Reasoning`, `🔋 VRAM-Efficient`, `⚖️ Balanced`, `🎯 Specialized`).
+- Add a Category Filter dropdown in the benchmark toolbar.
+
 **Files to modify:**
-- [x] `chat-tab/_logic.js` — send tools param, parse tool_call/tool_history/timings events, tool context persistence, markdown links, URL clickability
-- [x] `chat-tab/_templates.js` — tool usage rendering, Tools ON/OFF toggle pill
-- [x] `chat-tab/_styles.js` — tool bubble styling, link styling
+- [ ] `src/components/benchmark-tab/_templates.js` — Render category pills, multi-run average score badges, and mode selector UI.
+- [ ] `src/components/benchmark-tab/_logic.js` — Handle execution mode parameters when triggering single/queue benchmarks.
+- [ ] `src/components/benchmark-tab/_styles.js` — CSS styles for category badges, variance pills, and multi-run stats.
+
+### 5.2 Model Benchmark Details Modal
+- **Multi-Run History Tab:** Displays table of past $N$ runs with individual timestamps, TPS, total scores, and server platform.
+- **Statistical Summary Card:** Highlights Mean, Median, StdDev, Score Range ($[S_{\min}, S_{\max}]$), and Consistency Rating (High / Medium / Low variance).
+- **Benchmark Launch Options:** Modal toggle to choose Execution Mode (`Fast Screen`, `Speed Multi-Pass`, `Full Benchmark`) and target run count $N$.
+
+### 5.3 Benchmark Bubble Chart (`src/components/benchmark-bubble-chart.js`)
+- Toggle switch: "Latest Run" vs "Multi-Run Aggregated Average".
+- Color node borders by category.
 
 ---
 
-## 🔒 Phase 4 — Safety & Guard Rails
+## 🧪 Phase 6 — Testing & Empirical Verification
 
-### 4.1 Path traversal prevention — ✅ implemented
+### 6.1 Backend & Database Verification
+- [ ] Verify `run_migrations()` correctly applies new columns to `test_runs` and `models`.
+- [ ] Test multi-run retention policy: verify $N$ historical runs persist in `test_runs` while cascading foreign keys clean up correctly.
+- [ ] Test statistical aggregation engine with 1, 3, and 5 benchmark runs.
+- [ ] Test auto-categorization logic against edge cases (zero VRAM, aborted runs, single-pass runs).
 
-```python
-ALLOWED_BASE = "/mnt/dashboard"
-def _resolve_sandbox_path(user_path):
-    safe = user_path.lstrip("/")
-    full = os.path.realpath(os.path.join(ALLOWED_BASE, safe))
-    if not full.startswith(os.path.realpath(ALLOWED_BASE)):
-        raise PermissionError("Path traversal blocked")
-    return full
-```
-
-### 4.2 Tool iteration limit — ✅ implemented
-
-`MAX_TOOL_ITERATIONS = 10` in `chat.py`.
-
-### 4.3 Token / context size management — ✅ implemented
-
-- Tool results truncated at `TRUNCATE_TOOL_RESULT_CHARS = 4096`
-- Timings metadata streamed to frontend via `type: "timings"` SSE event
-
-### 4.4 Web search rate limiting — ❌ not yet
-
-### 4.5 Model compatibility — ❌ not yet
-
-### 4.6 Gitignore awareness — ✅ no action needed
+### 6.2 Frontend Compilation & UI Verification
+- [ ] Verify Lit/Vite build completes with zero bundling errors (`npm run build`).
+- [ ] Verify category pills, multi-run score display, and modal history render cleanly in mobile and desktop layouts.
+- [ ] Verify Docker container rebuild (`docker compose build llm-mobile && docker compose up -d --no-deps llm-mobile`).
 
 ---
 
-## 🧪 Phase 5 — Testing
+## 📅 Task Checklist & Execution Order
 
-### 5.1 Unit tests — `services/tools/`
-
-- [ ] `test_registry.py` — Tool schemas are valid JSON Schema
-- [ ] `test_executor.py` — Web search returns results (mock DDGS)
-- [ ] `test_executor.py` — Write file creates content correctly
-- [ ] `test_executor.py` — Edit file replaces correctly
-- [ ] `test_executor.py` — Path traversal attacks are blocked (`../../../etc/passwd`)
-- [ ] `test_executor.py` — Path outside sandbox is blocked
-- [ ] `test_executor.py` — Empty content, very large content edge cases
-
-### 5.2 Integration test — `services/tools/`
-
-- [ ] `test_chat.py` — Dispatch tools vs no-tools
-- [ ] `test_chat.py` — Tool call → execute → re-query loop (with mocked server)
-
-### 5.3 Frontend test
-
-- [ ] Verify SSE stream with tool_call events renders correctly in chat UI
-- [ ] Verify tool toggle pills enable/disable correctly
-
----
-
-## 🚀 Phase 6 — Polish & Future Enhancements
-
-### 6.1 File browser in chat UI
-
-Let the user browse `/mnt/dashboard/` from within the chat composer:
-- Dropdown or file tree next to the input box
-- Select a file → its path is inserted for the model to read/edit
-
-### 6.2 More tools
-
-| Tool | Use case |
-|---|---|
-| `list_files(path)` | List directory contents in sandbox |
-| `delete_file(path)` | Remove a file from sandbox |
-| `run_code(code)` | Execute Python/JS in a sandboxed runner (high risk — careful!) |
-| `fetch_url(url)` | Fetch a specific URL (complements web_search) |
-
-### 6.3 Streaming tool results
-
-Instead of non-streaming tool rounds, stream partial tool results as they execute:
-```
-🤖 Let me check...  (streaming text)
-🔍 Searching...     (tool call event - status)
-📄 Reading file...  (tool call event - status)
-And here's what I found: ...  (continue streaming)
-```
-
-### 6.4 Per-conversation workspace
-
-Each chat conversation gets a subdirectory:
-```
-/mnt/dashboard/chat_<uuid>/
-```
-So different conversations don't step on each other's files.
-
----
-
-## 📋 Full File Change Summary
-
-| File | Action | Phase |
-|---|---|---|
-| `docker-compose.yml` | Add `- /home/nui/dashboard:/mnt/dashboard:rw` | 1 | ✅
-| `docker-compose.yml` | Add `--tools all` to llama-server & llama-server-mini | 1 | ✅
-| `requirements.txt` | Add `curl_cffi>=0.15.0` | 1 | ✅
-| `services/tools/__init__.py` | **Create** — re-export shim | 2 | ✅
-| `services/tools/registry.py` | **Create** — tool definitions | 2 | ✅
-| `services/tools/executor.py` | **Create** — tool implementations + path safety | 2 | ✅
-| `services/tools/chat.py` | **Create** — tool orchestration loop + tool_history + timings | 2 | ✅
-| `app/main.py` | Route dispatch: tools → chat_with_tools, else → proxy_chat | 2 | ✅
-| `TODO.md` | Implementation plan | — | ✅
-| `chat-tab/_logic.js` | Add `tools` to request body, parse tool_call/tool_history/timings, markdown links, URL clickability | 3 | ✅
-| `chat-tab/_templates.js` | Tool usage indicators, Tools ON/OFF toggle pill | 3 | ✅
-| `chat-tab/_styles.js` | Tool bubble styling, link styling | 3 | ✅
-| `tests/test_tools_executor.py` | **Create** — unit tests | 5 | ❌
-| `tests/test_tools_chat.py` | **Create** — integration tests | 5 | ❌
+- [ ] **Step 1:** Update `utils/db_utils.py` schema migrations & retention policy.
+- [ ] **Step 2:** Implement `services/benchmark/aggregation.py` post-processing statistics & auto-categorization engine.
+- [ ] **Step 3:** Extend `models/requests.py`, `services/benchmark/runner.py`, and `services/benchmark/api.py` for multi-mode execution (`fast_screen`, `speed_multi`, `full_multi`).
+- [ ] **Step 4:** Update `services/benchmark/reader.py` to return multi-run averages, stddev, category, and run counts.
+- [ ] **Step 5:** Modify frontend `benchmark-tab` components (`_templates.js`, `_logic.js`, `_styles.js`) and `benchmark-bubble-chart.js`.
+- [ ] **Step 6:** Run `npm run build` & Docker rebuild, and execute verification test.
