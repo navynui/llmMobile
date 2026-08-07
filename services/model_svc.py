@@ -428,6 +428,21 @@ async def proxy_llm_mini_load(req: ModelActionRequest):
             if resp.status_code == 200:
                 from services.llm_lifecycle import touch_activity
                 touch_activity("llama-server-mini")
+                # Capture VRAM from the SECONDARY (GTX 1060) GPU after the model
+                # is idle — mirrors the primary load path so secondary loads record
+                # correct GTX VRAM instead of reading the primary P100.
+                model_id = req.model
+                async def _capture_vram_mini():
+                    from services.vram_svc import wait_for_idle_trigger, capture_and_store_vram
+                    await wait_for_idle_trigger(server="secondary")
+                    await asyncio.sleep(3)
+                    vram_gb = await capture_and_store_vram(model_id, status="good", server="secondary")
+                    if vram_gb is not None:
+                        print(f"[VRAM] Captured VRAM (secondary) for {model_id}: {vram_gb} GB")
+                try:
+                    asyncio.create_task(_capture_vram_mini())
+                except Exception as e:
+                    print(f"[VRAM] Failed to create secondary capture task: {e}")
             return resp.json()
         except Exception as e:
             raise HTTPException(status_code=502, detail=str(e))

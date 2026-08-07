@@ -263,6 +263,16 @@ async def run_benchmark_task(run_id: str, model_id: str, judge_model_id: Optiona
                     log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
                     await asyncio.sleep(10)
 
+        # Capture VRAM AFTER the rounds have run — the KV/context cache is now
+        # allocated, so per-run VRAM reflects the model's real footprint instead
+        # of the low idle post-load value. Overwrites the earlier pre-round value.
+        log_benchmark("Capturing VRAM after context allocation...")
+        await wait_for_idle_trigger(server=server)
+        await asyncio.sleep(3)
+        post_vram = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
+        if post_vram is not None:
+            log_benchmark(f"Captured VRAM after context allocation for {model_id}: {post_vram} GB (run_id={run_id})")
+
         # Save raw JSON
         results = {
             "model_id": model_id,
@@ -569,6 +579,15 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                     if r_idx < len(prompts):
                         log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
                         await asyncio.sleep(10)
+
+            # Capture VRAM AFTER the rounds have run (same as the standalone
+            # task): KV/context cache allocated, so per-run VRAM is real.
+            log_benchmark(f"Queue: Capturing VRAM after context allocation for {model_id}...")
+            await wait_for_idle_trigger(server=server)
+            await asyncio.sleep(3)
+            post_vram = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
+            if post_vram is not None:
+                log_benchmark(f"Queue: Captured VRAM after context allocation for {model_id}: {post_vram} GB (run_id={run_id})")
 
             # Save raw JSON results
             results = {

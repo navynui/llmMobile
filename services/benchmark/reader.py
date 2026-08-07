@@ -196,8 +196,14 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                     if not is_model_ready:
                         continue
 
-            # Prefer per-run VRAM, fallback to model-level VRAM
-            effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
+            # Prefer per-run VRAM. models.vram_gb is a single value shared across
+            # BOTH GPUs (last writer wins), so for a secondary/GTX row it can be a
+            # value captured on the primary P100 — displaying the wrong VRAM next to
+            # the 6 GB secondary total. Only fall back to it for primary rows.
+            if bench_server == "secondary":
+                effective_vram = r["run_vram_gb"]
+            else:
+                effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
             vram_total = 16.0 if bench_server == "primary" else 6.0
 
             # Look up capabilities from INI (try multiple key variants since
@@ -330,7 +336,13 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
                 except Exception as raw_err:
                     print(f"[Benchmarks API] Failed to load raw JSON for {model_id}: {raw_err}")
         conn.close()
-        effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
+        # Per-run VRAM is the only server-scoped source. models.vram is shared
+        # across both GPUs, so never fall back to it for the secondary server
+        # (it may hold a value captured on the primary).
+        if server == "secondary":
+            effective_vram = run_vram_gb
+        else:
+            effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
         total_gpu = 6.0 if server == "secondary" else 16.0
         return {
             "model_id": model_row["model_id"],
