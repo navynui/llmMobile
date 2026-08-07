@@ -266,12 +266,7 @@ JSON:"""
                     "speed_tps": 0.0
                 })
 
-        # 6. Save results to Database
-        cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ? AND run_id != ?", (model_id, run_id))
-        old_runs = cursor.fetchall()
-        for old_run in old_runs:
-            cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
-
+        # 6. Save results to Database & Prune old runs (retention window = 5)
         cursor.execute("DELETE FROM model_hallucinations WHERE model_id = ?", (model_id,))
         cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (run_id,))
 
@@ -310,6 +305,13 @@ JSON:"""
         conn.commit()
         conn.close()
 
+        # Prune old runs (keep up to 5) and update model statistical aggregates & category
+        from utils.db_utils import prune_old_runs
+        from services.benchmark import calculate_and_store_model_aggregates
+
+        prune_old_runs(model_id, max_keep=5)
+        aggregates = calculate_and_store_model_aggregates(model_id)
+
         return {
             "status": "success",
             "model_id": model_id,
@@ -317,7 +319,8 @@ JSON:"""
             "average_tps": round(avg_tps, 2),
             "speed_score": speed_score,
             "graded_rounds": graded_rounds,
-            "hallucinations_detected": len(hallucinations)
+            "hallucinations_detected": len(hallucinations),
+            "aggregates": aggregates
         }
     except Exception as e:
         traceback.format_exc()
