@@ -2,7 +2,7 @@
 
 > This document outlines coding standards, structural rules, and critical invariants for AI coding assistants working in the `llmMobile` repository.
 >
-> **Status:** All planned development phases (A–K) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs.
+> **Status:** All planned development phases (A–S) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs with multi-run statistical aggregation and automated model categorization.
 
 ---
 
@@ -60,9 +60,10 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
   - `__init__.py` — re-export shim (public surface unchanged)
   - `logging.py` — `log_benchmark_progress`, `log_benchmark_error`, `log_benchmark`
   - `state.py` — progress/running/lock getters & setters
-  - `runner.py` — `run_benchmark_task`, `run_benchmark_queue_task` (retry + cooldown + DB idempotency — G5)
+  - `runner.py` — `run_benchmark_task`, `run_benchmark_queue_task` (retry + cooldown + execution mode filtering)
   - `reader.py` — `get_benchmarks`, `get_benchmark_details`, `get_benchmark_logs`, `get_benchmark_outputs`
   - `api.py` — `run_benchmark`, `run_benchmark_queue` (FastAPI entry points)
+  - `aggregation.py` — `calculate_and_store_model_aggregates`, `classify_model`, `CATEGORY_LABELS` (Phase S)
 
 * **`services/comfy/`** — ComfyUI workflow validation, prompt injection, image generation queue, on-demand container lifecycle:
   - `__init__.py` — re-export shim
@@ -191,12 +192,13 @@ Reasoning LLMs (like DeepSeek-R1) generate reasoning streams inside `<think>...<
   ```
 * Do not replace this with a standard `json.loads` statement on direct raw outputs.
 
-### 3. Maintain Database Idempotency & Clean Cleansing
+### 3. Multi-Run Retention Policy & Aggregation Trigger
 
-To prevent orphaned scores and hallucinations, any new benchmark run or import for an existing `model_id` must prune historical runs:
+To prevent orphaned scores and stale statistics, benchmark run management now uses a **retention window** instead of hard-deleting all history:
 
-* Delete historical `test_runs` where the `model_id` matches.
-* Rely on foreign key cascading constraints (`ON DELETE CASCADE` on `round_scores` and `model_hallucinations`) to automatically prune related tables.
+* Call `prune_old_runs(model_id, max_keep=5)` (in `utils/db_utils.py`) to keep the last 5 runs per model/server. Do **not** use `DELETE FROM test_runs WHERE model_id = ?` which would destroy multi-run history.
+* Rely on foreign key cascading constraints (`ON DELETE CASCADE` on `round_scores` and `model_hallucinations`) to automatically prune scores and hallucination records for pruned runs.
+* Always call `calculate_and_store_model_aggregates(model_id)` (from `services/benchmark/aggregation.py`) after grading completes — this recalculates `avg_total_score`, `score_stddev`, `avg_tps`, `runs_count`, and `category` in the `models` table.
 * Execute database updates in a clean, committed transaction.
 
 ### 4. Empty Response Retry Logic
@@ -291,6 +293,20 @@ The `/system_stats` endpoint serves hardware telemetry (CPU temp/util, RAM, GPU/
 * The MQTT listener (`_on_mqtt_message` in `services/docker_svc.py`) writes incoming values directly into `_stats_cache["data"]`. The async poller that previously fell back to local nvidia-smi parsing has been removed — do not reintroduce it.
 * Home Assistant publishes the correct per-GPU values (e.g., Tesla P100 VRAM, GPU utilization) via its own MQTT topics. Rely on those rather than trying to parse `nvidia-smi` output locally, which is unreliable with multi-GPU setups.
 * The listener is **self-healing**: `_start_mqtt_listener()` registers `on_connect`/`on_disconnect` callbacks, enables paho auto-reconnect (`reconnect_delay_set(1, 30)`), and configures the `paho.mqtt` logger so broker failures are visible in container logs. A daemon watchdog (`start_mqtt_watchdog()` → `_mqtt_watchdog_loop()`, started in `app/main.py` startup) restarts the listener if no telemetry message has arrived for **90 seconds** (checked every 30s), because paho's `loop_start()` thread can die silently and leave `_stats_cache` frozen (VRAM bars stuck at stale values).
+
+### 15. Multi-Run Aggregation & Categorization Invariants
+
+The statistical aggregation engine in `services/benchmark/aggregation.py` must not be bypassed.
+
+* **`calculate_and_store_model_aggregates(model_id)`** must be called in `services/judge/judge.py` after every successful grading round. Do not skip this call or move it — it is the single point where `avg_total_score`, `score_stddev`, `avg_tps`, `runs_count`, and `category` are written back to the `models` table.
+* **`classify_model(avg_speed_tps, avg_reasoning, avg_code, vram_gb)`** implements fixed threshold rules from `category.md`. Do not change the thresholds without updating this document:
+  - `speed_first`: TPS ≥ 60.0
+  - `reasoning`: avg_reasoning ≥ 14.0 **and** avg_code ≥ 14.0 **and** VRAM < 16.0
+  - `vram_efficient`: 0 < VRAM < 12.0 **and** avg_reasoning ≥ 10.0
+  - `balanced`: 15.0 ≤ TPS ≤ 60.0 **and** 12.0 ≤ avg_reasoning ≤ 17.0
+  - `specialized`: avg_reasoning ≥ 16.0 **or** avg_code ≥ 16.0
+* **`CATEGORY_LABELS`** maps raw category keys to display emoji strings. Always import from `services/benchmark/aggregation.py` — never redefine inline.
+* **Execution modes:** `fast_screen` runs 3 rounds (Knowledge QA + Code Generation + Abstract Reasoning). `full` runs all 5 rounds. Do not rename these modes without updating `runner.py`, `api.py`, `models/requests.py`, and the frontend `_logic.js`.
 
 ---
 
@@ -408,6 +424,14 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 
 ### LLM Idle Unload (Phase R)
 - **Phase R – LLM Idle Unload to Free VRAM**: Added `services/llm_lifecycle.py` — a watchdog (mirroring the ComfyUI idle pattern) that unloads the loaded model from each llama-server independently after **10 minutes** (default) of no inference activity, freeing VRAM per GPU. Activity = any busy `/slots` slot (probed every 30s via `get_server_slots_status()`), plus explicit `touch_activity()` calls from model-load (`model_svc`) and chat send paths (`chat_svc`, `services/tools/chat.py`) so short requests between probes aren't missed. Guards: skipped while a benchmark is running or the ComfyUI generation queue has queued/running items. `get_server_slots_status()` now returns `loaded_model` so the watchdog knows what to unload. Config: `LLM_IDLE_UNLOAD_ENABLED` (default `1`) and `LLM_IDLE_UNLOAD_SECONDS` (default `600`). Unloads are logged to the container log (`[LLM Idle] …`); no frontend countdown/toast.
+
+### Multi-Run Benchmarking & Statistical Aggregation (Phase S)
+- **Phase S – Multi-Run Score Averaging, High-Efficiency Execution & Auto-Categorization**: Implemented a full multi-run benchmarking pipeline:
+  - **DB Schema** (`utils/db_utils.py`): Extended `test_runs` with `run_number`, `run_group_id`, `execution_mode`, `temperature`; extended `models` with `category`, `avg_total_score`, `avg_tps`, `score_stddev`, `runs_count`. Replaced hard-delete with `prune_old_runs(model_id, max_keep=5)` retention window.
+  - **Execution Modes** (`services/benchmark/runner.py`): `fast_screen` selects 3 core rounds (~3–4 mins); `full` runs all 5 rounds. Dynamic VRAM cooldown: 5s for models < 11 GB VRAM, 10s otherwise.
+  - **Aggregation Engine** (`services/benchmark/aggregation.py`): `calculate_and_store_model_aggregates()` computes $\mu$, $\sigma$, avg TPS, run count; auto-triggered by the AI Judge after grading. `classify_model()` assigns one of 5 categories based on speed and score thresholds from `category.md`.
+  - **API** (`services/benchmark/api.py`, `app/main.py`): `execution_mode` + `temperature` params passed through to the runner; new `POST /api/benchmarks/aggregate` endpoint for manual recalculation. `GET /api/benchmarks` now returns `avg_score`, `score_stddev`, `category_label`, and `runs_count`.
+  - **Frontend** (`benchmark-tab/`): Score column shows `★ μ ± σ` chip + `🔄 N runs` badge. Toolbar has category filter pills (`⚡ Speed`, `🧠 Reasoning`, `🔋 VRAM`, `⚖️ Balanced`, `🎯 Specialized`). Model details modal displays statistical summary card and historical runs list.
 
 ---
 
