@@ -24,21 +24,81 @@ def run_migrations():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
-        # Check if 'server' column exists in test_runs
+        # Check test_runs columns
         cursor.execute("PRAGMA table_info(test_runs)")
-        columns = [col["name"] for col in cursor.fetchall()]
-        if "server" not in columns:
+        test_runs_cols = [col["name"] for col in cursor.fetchall()]
+        if "server" not in test_runs_cols:
             cursor.execute("ALTER TABLE test_runs ADD COLUMN server TEXT DEFAULT 'primary'")
             print("[Migration] Added 'server' column to test_runs (default 'primary')")
 
-        if "vram_gb" not in columns:
+        if "vram_gb" not in test_runs_cols:
             cursor.execute("ALTER TABLE test_runs ADD COLUMN vram_gb REAL")
             print("[Migration] Added 'vram_gb' column to test_runs")
+
+        if "run_number" not in test_runs_cols:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN run_number INTEGER DEFAULT 1")
+            print("[Migration] Added 'run_number' column to test_runs (default 1)")
+
+        if "run_group_id" not in test_runs_cols:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN run_group_id TEXT")
+            print("[Migration] Added 'run_group_id' column to test_runs")
+
+        if "execution_mode" not in test_runs_cols:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN execution_mode TEXT DEFAULT 'full'")
+            print("[Migration] Added 'execution_mode' column to test_runs (default 'full')")
+
+        if "temperature" not in test_runs_cols:
+            cursor.execute("ALTER TABLE test_runs ADD COLUMN temperature REAL DEFAULT 0.7")
+            print("[Migration] Added 'temperature' column to test_runs (default 0.7)")
+
+        # Check models columns
+        cursor.execute("PRAGMA table_info(models)")
+        models_cols = [col["name"] for col in cursor.fetchall()]
+        if "category" not in models_cols:
+            cursor.execute("ALTER TABLE models ADD COLUMN category TEXT DEFAULT 'unclassified'")
+            print("[Migration] Added 'category' column to models (default 'unclassified')")
+
+        if "avg_total_score" not in models_cols:
+            cursor.execute("ALTER TABLE models ADD COLUMN avg_total_score REAL")
+            print("[Migration] Added 'avg_total_score' column to models")
+
+        if "avg_tps" not in models_cols:
+            cursor.execute("ALTER TABLE models ADD COLUMN avg_tps REAL")
+            print("[Migration] Added 'avg_tps' column to models")
+
+        if "score_stddev" not in models_cols:
+            cursor.execute("ALTER TABLE models ADD COLUMN score_stddev REAL")
+            print("[Migration] Added 'score_stddev' column to models")
+
+        if "runs_count" not in models_cols:
+            cursor.execute("ALTER TABLE models ADD COLUMN runs_count INTEGER DEFAULT 0")
+            print("[Migration] Added 'runs_count' column to models (default 0)")
 
         conn.commit()
         conn.close()
     except Exception as e:
         print(f"[Migration] Error: {e}")
+
+
+def prune_old_runs(model_id: str, server: str = "primary", max_keep: int = 5):
+    """Keep the latest `max_keep` runs for a (model_id, server) pair and prune older runs."""
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT run_id FROM test_runs
+            WHERE model_id = ? AND server = ?
+            ORDER BY timestamp DESC
+            LIMIT -1 OFFSET ?
+        """, (model_id, server, max_keep))
+        old_runs = cursor.fetchall()
+        for r in old_runs:
+            cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (r["run_id"],))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[DB Prune] Error pruning old runs for {model_id} ({server}): {e}")
+
 
 
 def consolidate_database():
