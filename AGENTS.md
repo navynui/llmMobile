@@ -306,7 +306,7 @@ The statistical aggregation engine in `services/benchmark/aggregation.py` must n
   - `balanced`: 15.0 ≤ TPS ≤ 60.0 **and** 12.0 ≤ avg_reasoning ≤ 17.0
   - `specialized`: avg_reasoning ≥ 16.0 **or** avg_code ≥ 16.0
 * **`CATEGORY_LABELS`** maps raw category keys to display emoji strings. Always import from `services/benchmark/aggregation.py` — never redefine inline.
-* **Execution modes:** `fast_screen` runs 3 rounds (Knowledge QA + Code Generation + Abstract Reasoning). `full` runs all 5 rounds. Do not rename these modes without updating `runner.py`, `api.py`, `models/requests.py`, and the frontend `_logic.js`.
+* **Execution modes:** `fast_screen` runs 3 rounds (Knowledge QA + Code Generation + Abstract Reasoning). `full` runs all 5 rounds. `run_count`/`execution_mode`/`temperature` are forwarded to the **queue** (`run_benchmark_queue_task`), which runs N passes per model (each own `test_runs` row + `run_number`/`run_group_id`) and batch-grades them. `speed_multi` is currently unimplemented in the runner (falls through to `full`). Do not rename these modes without updating `runner.py`, `api.py`, `models/requests.py`, and the frontend `_logic.js`.
 
 ---
 
@@ -429,6 +429,7 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
 - **Phase S – Multi-Run Score Averaging, High-Efficiency Execution & Auto-Categorization**: Implemented a full multi-run benchmarking pipeline:
   - **DB Schema** (`utils/db_utils.py`): Extended `test_runs` with `run_number`, `run_group_id`, `execution_mode`, `temperature`; extended `models` with `category`, `avg_total_score`, `avg_tps`, `score_stddev`, `runs_count`. Replaced hard-delete with `prune_old_runs(model_id, max_keep=5)` retention window.
   - **Execution Modes** (`services/benchmark/runner.py`): `fast_screen` selects 3 core rounds (~3–4 mins); `full` runs all 5 rounds. Dynamic VRAM cooldown: 5s for models < 11 GB VRAM, 10s otherwise.
+  - **Multi-Pass Queue**: `run_benchmark_queue_task(models, judge_model_id, server, execution_mode, run_count, temperature)` runs up to N passes per model (each with its own `test_runs` row and a shared `run_group_id`), then batch-grades all passes with the Judge once. Use the Benchmarks tab **Mode** dropdown + **Run Count** + **🚀 Run Automated Queue Benchmark** for overnight multi-run benchmarking. `speed_multi` mode and single-path `run_count` remain unimplemented (see `docs/MultiRunPhaseS.md`).
   - **Aggregation Engine** (`services/benchmark/aggregation.py`): `calculate_and_store_model_aggregates()` computes $\mu$, $\sigma$, avg TPS, run count; auto-triggered by the AI Judge after grading. `classify_model()` assigns one of 5 categories based on speed and score thresholds from `category.md`.
   - **API** (`services/benchmark/api.py`, `app/main.py`): `execution_mode` + `temperature` params passed through to the runner; new `POST /api/benchmarks/aggregate` endpoint for manual recalculation. `GET /api/benchmarks` now returns `avg_score`, `score_stddev`, `category_label`, and `runs_count`.
   - **Frontend** (`benchmark-tab/`): Score column shows `★ μ ± σ` chip + `🔄 N runs` badge. Toolbar has category filter pills (`⚡ Speed`, `🧠 Reasoning`, `🔋 VRAM`, `⚖️ Balanced`, `🎯 Specialized`). Model details modal displays statistical summary card and historical runs list.

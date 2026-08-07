@@ -98,7 +98,8 @@ export async function runBenchmark(ctx) {
       body: JSON.stringify({
         judge_model_id: ctx.selectedJudgeModelId || ctx.activeModelId,
         server: ctx.selectedBenchmarkServer || 'primary',
-        execution_mode: ctx.executionMode || 'full'
+        execution_mode: ctx.executionMode || 'full',
+        run_count: ctx.runCount || 1
       })
     });
     const data = await res.json();
@@ -166,7 +167,9 @@ export async function runQueueBenchmark(ctx) {
       body: JSON.stringify({
         models: ctx.benchmarkQueue,
         judge_model_id: ctx.selectedJudgeModelId,
-        server: ctx.selectedBenchmarkServer || 'primary'
+        server: ctx.selectedBenchmarkServer || 'primary',
+        execution_mode: ctx.executionMode || 'full',
+        run_count: ctx.runCount || 1
       })
     });
     const data = await res.json();

@@ -42,6 +42,7 @@ export class BenchmarkTab extends LitElement {
     // Category & Mode state
     categoryFilter: { type: String },
     executionMode: { type: String },
+    runCount: { type: Number },
   };
 
   static styles = benchmarkStyles;
@@ -91,6 +92,7 @@ export class BenchmarkTab extends LitElement {
     // Category & Mode
     this.categoryFilter = 'all';
     this.executionMode = 'full';
+    this.runCount = 1;
   }
 
   connectedCallback() {

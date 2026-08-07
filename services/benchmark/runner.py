@@ -351,7 +351,9 @@ async def run_benchmark_task(
         _benchmark_progress["current_round"] = "Finished"
 
 
-async def run_benchmark_queue_task(models: list, judge_model_id: str, server: str = "primary"):
+async def run_benchmark_queue_task(models: list, judge_model_id: str, server: str = "primary",
+                          execution_mode: str = "full", run_count: int = 1,
+                          temperature: float = 0.7):
     import json
     from services.judge import (
         judge_benchmark, get_gold_key, get_llm_server_url
@@ -422,14 +424,11 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                 log_benchmark_error(f"Model: {model_id}, Timeout loading model")
                 continue
 
-            # 3. Create run_id and prep DB row (insert test_runs BEFORE VRAM
-            #    capture so per-run VRAM storage works)
-            run_id = str(uuid.uuid4())
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
-            raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
+            # 3. Normalize identifiers + set model status to 'testing' (once per model).
             norm_model_id = _clean_model_id(model_id)
             display_name = os.path.basename(model_id)
+            out_dir = "/app/benchmark_results" if os.path.exists("/app") else "/home/nui/llmaCPP/benchmark_results"
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
             try:
                 conn = get_db_conn()
@@ -442,130 +441,168 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                     notes = ?
                 """, (norm_model_id, display_name, get_quantization_from_name(model_id),
                       f"Queue run initiated at {timestamp}", f"Queue run initiated at {timestamp}"))
-
-                cursor.execute("SELECT run_id FROM test_runs WHERE model_id = ?", (norm_model_id,))
-                for old_run in cursor.fetchall():
-                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run["run_id"],))
-
-                cursor.execute("""
-                INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server)
-                VALUES (?, ?, ?, ?, ?)
-                """, (run_id, norm_model_id, timestamp, raw_output_path, server))
                 conn.commit()
                 conn.close()
-                model_id = norm_model_id
             except Exception as db_err:
                 traceback.format_exc()
                 log_benchmark_error(f"Model: {model_id}, Queue DB Error: {db_err}")
                 continue
+            model_id = norm_model_id
 
-            # Capture VRAM after confirming the model is loaded and idle.
-            # The test_runs row now exists, so per-run VRAM is stored correctly.
-            log_benchmark(f"Queue: Waiting for server to be idle before capturing VRAM...")
-            await wait_for_idle_trigger(server=server)
-            await asyncio.sleep(2)
-            vram_gb = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
-            if vram_gb is not None:
-                log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB (run_id={run_id})")
-
-            prompts = {
+            # Select prompt subset based on execution mode.
+            all_prompts = {
                 "Round 1: Knowledge QA": "What is the full formal name of Bangkok, Thailand? Please include the Thai script and official English translation.",
                 "Round 2: Technical Reasoning / Domain Knowledge": "Explain how llama.cpp handles KV cache allocation dynamically during continuous batching on consumer GPUs. Compare paged attention vs. static buffers, and discuss VRAM fragmentation risks.",
                 "Round 3: Code Generation": "Write a complete, highly optimized Python script using asyncio and aiohttp to concurrently scrape metadata from 50 URLs. Include a custom token bucket rate limiter, proper connection pooling, exponential backoff for 5xx errors, and clean handling of TaskGroup or gather exceptions.",
                 "Round 4: Abstract Reasoning": "A matrix is rotated 90 degrees clockwise, then reflected horizontally across its center vertical axis, and finally rotated 180 degrees counter-clockwise. Describe the final state of an element originally at position (i, j) in an N x N matrix relative to its initial coordinates, showing step-by-step mathematical transformations.",
                 "Round 5: Creative Writing": "Write a 500-word short story about a solo network engineer monitoring a globally distributed routing infrastructure in the year 2042 during an undocumented, silent anomaly. The style should be cyberpunk hard-boiled, told from a first-person perspective, emphasizing the psychological weight of isolation and technical minutiae."
             }
+            if execution_mode == "fast_screen":
+                prompts = {k: v for k, v in all_prompts.items()
+                           if k in ("Round 1: Knowledge QA", "Round 3: Code Generation", "Round 4: Abstract Reasoning")}
+            else:
+                prompts = all_prompts
 
-            rounds_list = []
+            passes = max(run_count or 1, 1)
+            run_group_id = str(uuid.uuid4())
+            model_too_slow = False
+            cooldown = 5
 
-            async with httpx.AsyncClient(timeout=3600.0) as client:
-                too_slow = False
-                for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
-                    _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
-                    _benchmark_progress["rounds_completed"] = r_idx - 1
+            for run_pass in range(1, passes + 1):
+                run_id = str(uuid.uuid4())
+                run_ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                raw_output_path = os.path.join(out_dir, f"benchmark_{run_id}.json")
 
-                    preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
-                    log_benchmark(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
-                    payload = {
-                        "model": preset_id,
-                        "messages": [{"role": "user", "content": prompt_text}],
-                        "temperature": 0.7,
-                        "stream": False,
-                        "max_tokens": RETRY_MAX_TOKENS_RAMP[0]  # 4096 baseline
-                    }
-                    start_time = time.time()
-                    content = ""
-                    tokens_predicted = 0
-                    speed_tps = 0.0
-                    duration = 0.0
+                # Insert a test_runs row per pass (before VRAM capture).
+                try:
+                    conn = get_db_conn()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                    INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server, run_number, run_group_id, execution_mode, temperature)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (run_id, model_id, run_ts, raw_output_path, server, run_pass, run_group_id, execution_mode, temperature))
+                    conn.commit()
+                    conn.close()
+                except Exception as db_err:
+                    traceback.format_exc()
+                    log_benchmark_error(f"Model: {model_id}, Queue pass {run_pass} DB Error: {db_err}")
+                    model_too_slow = True
+                    break
 
-                    def _parse_response(response):
-                        nonlocal content, tokens_predicted, speed_tps, duration
-                        if response.status_code == 200:
-                            res_data = response.json()
-                            choice = res_data.get("choices", [{}])[0]
-                            content = choice.get("message", {}).get("content", "")
-                            usage = res_data.get("usage", {})
-                            tokens_predicted = usage.get("completion_tokens", 0)
-                            timings = res_data.get("timings", {})
-                            speed_tps = timings.get("predicted_per_second", 0)
-                            if tokens_predicted == 0 and content:
-                                tokens_predicted = len(content) // 4
-                            if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
-                                speed_tps = tokens_predicted / duration
-                        else:
-                            log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
+                _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)} run {run_pass}/{passes}: Initializing..."
+                log_benchmark(f"Queue: Pass {run_pass}/{passes} for {model_id} (run_id={run_id}, mode={execution_mode})")
 
-                    has_server_error = False
-                    try:
-                        response = await client.post(api_url, json=payload)
-                        _parse_response(response)
-                        if response.status_code != 200:
-                            content = ""
-                            has_server_error = True
-                    except Exception as round_err:
-                        traceback.format_exc()
-                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
+                # Capture VRAM after confirming the model is loaded and idle.
+                await wait_for_idle_trigger(server=server)
+                await asyncio.sleep(2)
+                vram_gb = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
+                if vram_gb is not None:
+                    cooldown = 5 if vram_gb < 11.0 else 10
+                    log_benchmark(f"Queue: Captured VRAM for {model_id}: {vram_gb} GB (run_id={run_id}, inter-pass cooldown={cooldown}s)")
+                rounds_list = []
+
+                async with httpx.AsyncClient(timeout=3600.0) as client:
+                    too_slow = False
+                    for r_idx, (round_name, prompt_text) in enumerate(prompts.items(), 1):
+                        _benchmark_progress["current_round"] = f"Model {idx+1}/{len(models)}: {round_name}"
+                        _benchmark_progress["rounds_completed"] = r_idx - 1
+
+                        preset_id = await _get_preset_id_for_model(model_id, server_url=server_url)
+                        log_benchmark(f"Executing {round_name} on {model_id} (preset: {preset_id})...")
+                        payload = {
+                            "model": preset_id,
+                            "messages": [{"role": "user", "content": prompt_text}],
+                            "temperature": temperature,
+                            "stream": False,
+                            "max_tokens": RETRY_MAX_TOKENS_RAMP[0]  # 4096 baseline
+                        }
+                        start_time = time.time()
                         content = ""
-                        has_server_error = True
+                        tokens_predicted = 0
+                        speed_tps = 0.0
+                        duration = 0.0
 
-                    # Retry on empty (not on server errors) with stepped token budget
-                    retry_count = 0
-                    max_retries = RETRY_MAX_ATTEMPTS
-                    while not content and retry_count < max_retries and not has_server_error:
-                        retry_count += 1
-                        next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
-                        log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
-                        await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                        def _parse_response(response):
+                            nonlocal content, tokens_predicted, speed_tps, duration
+                            if response.status_code == 200:
+                                res_data = response.json()
+                                choice = res_data.get("choices", [{}])[0]
+                                content = choice.get("message", {}).get("content", "")
+                                usage = res_data.get("usage", {})
+                                tokens_predicted = usage.get("completion_tokens", 0)
+                                timings = res_data.get("timings", {})
+                                speed_tps = timings.get("predicted_per_second", 0)
+                                if tokens_predicted == 0 and content:
+                                    tokens_predicted = len(content) // 4
+                                if speed_tps == 0 and duration > 0 and tokens_predicted > 0:
+                                    speed_tps = tokens_predicted / duration
+                            else:
+                                log_benchmark(f"HTTP error {response.status_code} in {round_name}: {response.text[:200]}")
+
+                        has_server_error = False
                         try:
-                            start_time = time.time()
-                            payload["max_tokens"] = next_budget
                             response = await client.post(api_url, json=payload)
                             _parse_response(response)
-                            if not content and response.status_code == 200 and tokens_predicted > 0:
-                                log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
-                        except Exception as retry_err:
+                            if response.status_code != 200:
+                                content = ""
+                                has_server_error = True
+                        except Exception as round_err:
                             traceback.format_exc()
-                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Error: {round_err}")
+                            content = ""
+                            has_server_error = True
 
-                    if not content and has_server_error:
-                        log_benchmark(f"{round_name}: Server error — no retries")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "error": "Server error (non-200 response), no content"
-                        })
-                    elif not content and retry_count >= max_retries:
-                        log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "error": f"Empty response after {max_retries} retries"
-                        })
-                    elif content:
-                        duration = time.time() - start_time
-                        log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
-                        # Abort if model is too slow for practical use
-                        if speed_tps < 10 and speed_tps > 0:
-                            log_benchmark(f"Speed {speed_tps:.2f} t/s is below 10 t/s — {model_id} is too slow, aborting benchmark")
+                        # Retry on empty (not on server errors) with stepped token budget
+                        retry_count = 0
+                        max_retries = RETRY_MAX_ATTEMPTS
+                        while not content and retry_count < max_retries and not has_server_error:
+                            retry_count += 1
+                            next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
+                            log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
+                            await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                            try:
+                                start_time = time.time()
+                                payload["max_tokens"] = next_budget
+                                response = await client.post(api_url, json=payload)
+                                _parse_response(response)
+                                if not content and response.status_code == 200 and tokens_predicted > 0:
+                                    log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
+                            except Exception as retry_err:
+                                traceback.format_exc()
+                                log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+
+                        if not content and has_server_error:
+                            log_benchmark(f"{round_name}: Server error — no retries")
+                            rounds_list.append({
+                                "round_name": get_gold_key(round_name) or round_name,
+                                "error": "Server error (non-200 response), no content"
+                            })
+                        elif not content and retry_count >= max_retries:
+                            log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                            rounds_list.append({
+                                "round_name": get_gold_key(round_name) or round_name,
+                                "error": f"Empty response after {max_retries} retries"
+                            })
+                        elif content:
+                            duration = time.time() - start_time
+                            log_benchmark(f"Completed {round_name} in {duration:.2f}s | {tokens_predicted} tokens | {speed_tps:.2f} t/s")
+                            # Abort if model is too slow for practical use
+                            if speed_tps < 10 and speed_tps > 0:
+                                log_benchmark(f"Speed {speed_tps:.2f} t/s is below 10 t/s — {model_id} is too slow, aborting benchmark")
+                                rounds_list.append({
+                                    "round_name": get_gold_key(round_name) or round_name,
+                                    "prompt": prompt_text,
+                                    "response": content,
+                                    "metrics": {
+                                        "duration_seconds": round(duration, 2),
+                                        "tokens_generated": tokens_predicted,
+                                        "tokens_per_second": round(speed_tps, 2)
+                                    },
+                                    "error": f"Aborted: speed {speed_tps:.2f} t/s below minimum 10 t/s"
+                                })
+                                too_slow = True
+                                broadcast_notification(f"⛔ {model_id} too slow ({speed_tps:.2f} t/s) — benchmark aborted")
+                                break
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
                                 "prompt": prompt_text,
@@ -574,66 +611,53 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                                     "duration_seconds": round(duration, 2),
                                     "tokens_generated": tokens_predicted,
                                     "tokens_per_second": round(speed_tps, 2)
-                                },
-                                "error": f"Aborted: speed {speed_tps:.2f} t/s below minimum 10 t/s"
+                                }
                             })
-                            too_slow = True
-                            broadcast_notification(f"⛔ {model_id} too slow ({speed_tps:.2f} t/s) — benchmark aborted")
+
+                        _benchmark_progress["rounds_completed"] = r_idx
+                        if too_slow:
                             break
-                        rounds_list.append({
-                            "round_name": get_gold_key(round_name) or round_name,
-                            "prompt": prompt_text,
-                            "response": content,
-                            "metrics": {
-                                "duration_seconds": round(duration, 2),
-                                "tokens_generated": tokens_predicted,
-                                "tokens_per_second": round(speed_tps, 2)
-                            }
-                        })
+                        if r_idx < len(prompts):
+                            log_benchmark(f"Cooling down {cooldown} seconds to prevent VRAM locks...")
+                            await asyncio.sleep(cooldown)
 
-                    _benchmark_progress["rounds_completed"] = r_idx
-                    if too_slow:
-                        break
-                    if r_idx < len(prompts):
-                        log_benchmark("Cooling down for 10 seconds to prevent VRAM locks...")
-                        await asyncio.sleep(10)
+                # Finalize this pass: post-context VRAM, save raw JSON, collect for grading.
+                log_benchmark(f"Queue: Capturing VRAM after context allocation for {model_id}...")
+                await wait_for_idle_trigger(server=server)
+                await asyncio.sleep(3)
+                post_vram = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
+                if post_vram is not None:
+                    log_benchmark(f"Queue: Captured VRAM after context allocation for {model_id}: {post_vram} GB (run_id={run_id})")
 
-            # Capture VRAM AFTER the rounds have run (same as the standalone
-            # task): KV/context cache allocated, so per-run VRAM is real.
-            log_benchmark(f"Queue: Capturing VRAM after context allocation for {model_id}...")
-            await wait_for_idle_trigger(server=server)
-            await asyncio.sleep(3)
-            post_vram = await capture_and_store_vram(model_id, status="good", server=server, run_id=run_id)
-            if post_vram is not None:
-                log_benchmark(f"Queue: Captured VRAM after context allocation for {model_id}: {post_vram} GB (run_id={run_id})")
+                results = {
+                    "model_id": model_id,
+                    "model_name": os.path.basename(model_id),
+                    "timestamp": run_ts,
+                    "rounds": rounds_list
+                }
+                os.makedirs(out_dir, exist_ok=True)
+                with open(raw_output_path, "w", encoding="utf-8") as f:
+                    json.dump(results, f, indent=4, ensure_ascii=False)
+                log_benchmark("Saved raw test results.")
 
-            # Save raw JSON results
-            results = {
-                "model_id": model_id,
-                "model_name": os.path.basename(model_id),
-                "timestamp": timestamp,
-                "rounds": rounds_list
-            }
-            os.makedirs(out_dir, exist_ok=True)
-            with open(raw_output_path, "w", encoding="utf-8") as f:
-                json.dump(results, f, indent=4, ensure_ascii=False)
-            log_benchmark("Saved raw test results.")
+                if too_slow:
+                    log_benchmark(f"Skipping AI Judge - {model_id} too slow")
+                    broadcast_notification(f"Skipping judge - {model_id} too slow ({round(speed_tps, 2)} t/s)")
+                    await _store_low_speed_abort(model_id, run_id, speed_tps, rounds_list)
+                    model_too_slow = True
+                    break
 
-            if too_slow:
-                log_benchmark(f"Skipping AI Judge — {model_id} was aborted due to low speed")
-                broadcast_notification(f"⛔ Benchmark aborted for {model_id} — too slow ({round(speed_tps, 2)} t/s)")
-                await _store_low_speed_abort(model_id, run_id, speed_tps, rounds_list)
+                benchmark_results.append({
+                    "model_id": model_id,
+                    "run_id": run_id,
+                    "raw_output_path": raw_output_path,
+                    "display_name": display_name
+                })
+                _benchmark_progress["queue_completed"].append(model_id)
+                broadcast_notification(f"OK {model_id} run {run_pass}/{passes} complete (awaiting grading)")
+
+            if model_too_slow:
                 continue
-
-            # Collect benchmark result for batch grading after all models finish
-            benchmark_results.append({
-                "model_id": model_id,
-                "run_id": run_id,
-                "raw_output_path": raw_output_path,
-                "display_name": display_name
-            })
-            _benchmark_progress["queue_completed"].append(model_id)
-            broadcast_notification(f"✅ Benchmark complete for {model_id} (awaiting grading)")
 
             # 10s cooldown between models
             if idx < len(models) - 1:

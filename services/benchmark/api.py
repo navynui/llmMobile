@@ -98,7 +98,15 @@ async def run_benchmark_queue(req: BenchmarkQueueRequest, background_tasks: Back
     async with get_benchmark_lock():
         await _check_and_set_running()
         try:
-            background_tasks.add_task(run_benchmark_queue_task, req.models, req.judge_model_id, req.server)
+            background_tasks.add_task(
+                run_benchmark_queue_task,
+                req.models,
+                req.judge_model_id,
+                req.server,
+                req.execution_mode or "full",
+                req.run_count or 1,
+                req.temperature if req.temperature is not None else 0.7,
+            )
             return {
                 "status": "success",
                 "message": "Automated benchmark queue initiated successfully in the background.",

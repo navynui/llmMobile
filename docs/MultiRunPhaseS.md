@@ -224,3 +224,14 @@ def classify_model(avg_speed_tps: float, avg_reasoning: float, avg_code: float, 
 - [x] **Step 4:** Update `services/benchmark/reader.py` to return multi-run averages, stddev, category, and run counts.
 - [x] **Step 5:** Modify frontend `benchmark-tab` components (`_templates.js`, `_logic.js`, `_styles.js`) and `benchmark-bubble-chart.js`.
 - [x] **Step 6:** Run `npm run build` & Docker rebuild, and execute verification test.
+
+---
+
+## ⚠️ Remaining Work / TODO (run types not yet fully implemented)
+
+The following benchmark run types are defined in the schema/request models and exposed in the **Benchmarks tab** UI, but are **not** fully implemented in the backend yet:
+
+- [ ] **`speed_multi` execution mode** — Selectable in the UI, but `run_benchmark_task()` and the queue have no dedicated branch for it; it currently falls through to the same round set as `full`. Needs a dedicated branch (e.g. 1 qualitative pass + repeated back-to-back TPS measurements without re-grading text) in `services/benchmark/runner.py`.
+- [ ] **`full_multi` (N-pass loop) on the **single-run** path** — `run_benchmark_task()` accepts `run_count` but does not loop over it, so the "Start 5-Round Benchmark" button runs a single pass regardless of Run Count.
+- [x] **Multi-pass queue** — The **queue** path (`run_benchmark_queue_task()`) now honors `run_count`, `execution_mode`, and `temperature`: it runs N passes per model, each with its own `test_runs` row (`run_number`, `run_group_id`, execution mode, temp), and grades all passes together. ❗ Use **🚀 Run Automated Queue Benchmark** for overnight multi-run benchmarking.
+- [ ] **`speed_multi` in the queue** — same as above; needs the dedicated branch before it can be driven through the queue.

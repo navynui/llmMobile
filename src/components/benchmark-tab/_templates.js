@@ -162,6 +162,36 @@ export function renderBenchmarksView(ctx) {
             <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'secondary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'secondary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'secondary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'secondary'; fetchActiveModelId(ctx); }}">Secondary (GTX 1060)</button>
           </div>
 
+          <!-- Execution Mode & Run Count -->
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-top: 4px;">
+            <div style="display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px;">
+              <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">⚙️ Execution Mode:</label>
+              <select
+                class="select-input"
+                style="width: 100%; background: #0c101b; border: 1px solid var(--border-color); font-size: 0.82rem; padding: 8px;"
+                .value="${ctx.executionMode || 'full'}"
+                @change="${e => ctx.executionMode = e.target.value}"
+              >
+                <option value="full">Full Benchmark — all 5 rounds</option>
+                <option value="fast_screen">Fast Screen — 3 core rounds (~3–4 min)</option>
+                <option value="speed_multi">Speed Multi-Pass — speed focus</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 4px; width: 120px;">
+              <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">🔁 Run Count:</label>
+              <input
+                type="number"
+                class="text-input"
+                min="1"
+                max="10"
+                style="background: #0c101b; border: 1px solid var(--border-color); font-size: 0.82rem; padding: 8px; width: 100%; box-sizing: border-box;"
+                .value="${ctx.runCount || 1}"
+                @change="${e => ctx.runCount = Math.max(1, parseInt(e.target.value) || 1)}"
+              >
+            </div>
+            <span style="font-size: 0.7rem; color: var(--text-secondary); font-style: italic; width: 100%;">Fast Screen trims to Knowledge QA + Code Gen + Abstract Reasoning. Run Count > 1 is passed to the API (multi-pass loop not yet implemented in the runner).</span>
+          </div>
+
           <!-- Action Triggers -->
           <div style="display: flex; gap: 10px; margin-top: 4px; flex-wrap: wrap;">
             <button
