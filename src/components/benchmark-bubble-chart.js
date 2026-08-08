@@ -141,8 +141,34 @@ export class BenchmarkBubbleChart extends LitElement {
 
   _updateChart() {
     if (!this.chart) return;
+    // Re-fit the y range to the new data's ±stddev extents so whiskers always
+    // stay inside the plotting area (not clamped at the chart edge).
+    const { min: yMin, max: yMax } = this._computeScoreBounds();
+    this.chart.options.scales.y.min = yMin;
+    this.chart.options.scales.y.max = yMax;
     this.chart.data = this._buildChartData();
     this.chart.update('none');
+  }
+
+  // Derive y-axis bounds from every model's score ± score_stddev extent so the
+  // error bars fully fit inside the chart area. Includes a small padding so the
+  // whisker caps never touch the top/bottom gridlines.
+  _computeScoreBounds() {
+    const extents = [];
+    (this.benchmarks || []).forEach(b => {
+      if (b.score == null) return;
+      const dev = b.score_stddev || 0;
+      extents.push(b.score - dev, b.score + dev);
+    });
+    if (!extents.length) return { min: 0, max: 25 };
+
+    let yMin = Math.min(...extents);
+    let yMax = Math.max(...extents);
+    // Pad by at least 2 points (or 8% of the range) so caps never touch edges.
+    const pad = Math.max(2, (yMax - yMin) * 0.08);
+    yMin = Math.max(0, Math.floor(yMin - pad));
+    yMax = Math.ceil(yMax + pad);
+    return { min: yMin, max: yMax };
   }
 
   _legendPlugin() {
@@ -286,6 +312,9 @@ export class BenchmarkBubbleChart extends LitElement {
   }
 
   _chartOptions() {
+    // Fixed min/max derived from score ± stddev extents so error bars render
+    // fully inside the plot area instead of being pushed off the edges.
+    const { min: yMin, max: yMax } = this._computeScoreBounds();
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -307,6 +336,8 @@ export class BenchmarkBubbleChart extends LitElement {
           },
         },
         y: {
+          min: yMin,
+          max: yMax,
           title: {
             display: true,
             text: 'Overall Score',
