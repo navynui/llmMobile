@@ -146,6 +146,7 @@ export function renderBenchmarksView(ctx) {
               .value="${ctx.selectedJudgeModelId}"
               @change="${e => ctx.selectedJudgeModelId = e.target.value}"
             >
+              ${!ctx.selectedJudgeModelId ? html`<option value="">— Select Judge LLM —</option>` : ''}
               ${ctx.activeModelId ? html`<option value="${ctx.activeModelId}">(Recommended) Loaded Active Model: ${ctx.activeModelId.split('/').pop()}</option>` : ''}
               ${ctx.benchmarks.filter(b => b.is_ready && b.model !== ctx.activeModelId).map(b => html`
                 <option value="${b.model}">${b.model}</option>
