@@ -121,63 +121,99 @@ def consolidate_database():
         for clean_id, dups in grouped.items():
             model_ids = [r['model_id'] for r in dups]
             placeholders = ",".join(["?"] * len(model_ids))
-            
-            # Get all runs for all duplicate model_ids
-            cursor.execute(f"SELECT * FROM test_runs WHERE model_id IN ({placeholders})", model_ids)
+
+            # Re-assign ALL runs (including those from duplicate model_id variants like
+            # "model.gguf" vs "model") to the canonical clean_id — never delete them here.
+            # prune_old_runs() below enforces the 5-run retention window instead.
+            cursor.execute(
+                f"UPDATE test_runs SET model_id = ? WHERE model_id IN ({placeholders})",
+                [clean_id] + model_ids,
+            )
+
+            # Prune to the last 5 runs per (model, server) pair — inline, using the same
+            # cursor so this sees the UPDATE above without needing a commit first.
+            for server_val in ("primary", "secondary"):
+                cursor.execute("""
+                    SELECT run_id FROM test_runs
+                    WHERE model_id = ? AND server = ?
+                    ORDER BY timestamp DESC
+                    LIMIT -1 OFFSET 5
+                """, (clean_id, server_val))
+                old_run_ids = [r["run_id"] for r in cursor.fetchall()]
+                for rid in old_run_ids:
+                    cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (rid,))
+                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (rid,))
+
+            # Get all surviving runs to find the most recent one (for hallucination mapping)
+            cursor.execute(
+                "SELECT * FROM test_runs WHERE model_id = ? ORDER BY timestamp DESC",
+                (clean_id,),
+            )
             runs = [dict(row) for row in cursor.fetchall()]
-            
-            # Sort runs by timestamp descending to find the latest
-            runs.sort(key=lambda x: x['timestamp'], reverse=True)
-            
+
             if runs:
                 latest_run = runs[0]
-                older_runs = runs[1:]
-                
-                # Delete older runs and their scores
-                for old_run in older_runs:
-                    cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (old_run['run_id'],))
-                    cursor.execute("DELETE FROM test_runs WHERE run_id = ?", (old_run['run_id'],))
-                
-                # Update latest run's model_id to clean_id
-                cursor.execute("UPDATE test_runs SET model_id = ? WHERE run_id = ?", (clean_id, latest_run['run_id']))
-                
-                # Re-map hallucinations for the latest run's model to clean_id, delete others
-                latest_model_id = latest_run['model_id']
-                cursor.execute("SELECT round_name, description, severity FROM model_hallucinations WHERE model_id = ?", (latest_model_id,))
-                latest_halls = [dict(row) for row in cursor.fetchall()]
-                
-                cursor.execute(f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})", model_ids)
-                
-                for h in latest_halls:
-                    cursor.execute("""
-                        INSERT INTO model_hallucinations (model_id, round_name, description, severity)
-                        VALUES (?, ?, ?, ?)
-                    """, (clean_id, h['round_name'], h['description'], h['severity']))
+                latest_model_id = latest_run['model_id']  # already clean_id after UPDATE
+
+                # Re-map hallucinations: merge from all duplicate variants → clean_id
+                cursor.execute(
+                    f"SELECT round_name, description, severity FROM model_hallucinations "
+                    f"WHERE model_id IN ({placeholders})",
+                    model_ids,
+                )
+                existing_halls = [dict(row) for row in cursor.fetchall()]
+
+                cursor.execute(
+                    f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})",
+                    model_ids,
+                )
+
+                for h in existing_halls:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO model_hallucinations "
+                        "(model_id, round_name, description, severity) VALUES (?, ?, ?, ?)",
+                        (clean_id, h['round_name'], h['description'], h['severity']),
+                    )
             else:
-                # No runs. Just delete all hallucinations
-                cursor.execute(f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})", model_ids)
-                
+                # No runs at all — clear hallucinations
+                cursor.execute(
+                    f"DELETE FROM model_hallucinations WHERE model_id IN ({placeholders})",
+                    model_ids,
+                )
+
             # Update rounds table if anyone is using it
             cursor.execute(f"DELETE FROM rounds WHERE model_id IN ({placeholders})", model_ids)
-            
-            # Keep the "best" duplicate model record
+
+            # Keep the model row from the duplicate that matches the latest run's original id,
+            # falling back to the first duplicate if no match.
             best_dup = dups[0]
             if runs:
+                latest_orig_id = runs[0].get('model_id', clean_id)
                 for d in dups:
-                    if d['model_id'] == latest_run['model_id']:
+                    if d['model_id'] == latest_orig_id:
                         best_dup = d
                         break
-                        
-            # Delete duplicate model rows
+
+            # Delete all duplicate model rows, then re-insert a single consolidated row
             cursor.execute(f"DELETE FROM models WHERE model_id IN ({placeholders})", model_ids)
-            
-            # Insert consolidated model row
-            cursor.execute("""
-                INSERT INTO models (model_id, name, quantization, vram_fit, status, notes, vram_gb)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (clean_id, best_dup['name'], best_dup['quantization'], best_dup['vram_fit'],
-                  best_dup.get('status', 'testing'), best_dup.get('notes', ''),
-                  best_dup.get('vram_gb', None)))
+
+            cursor.execute(
+                """
+                INSERT INTO models (model_id, name, quantization, vram_fit, status, notes, vram_gb,
+                                    category, avg_total_score, avg_tps, score_stddev, runs_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    clean_id, best_dup['name'], best_dup['quantization'], best_dup['vram_fit'],
+                    best_dup.get('status', 'testing'), best_dup.get('notes', ''),
+                    best_dup.get('vram_gb', None),
+                    best_dup.get('category', 'unclassified'),
+                    best_dup.get('avg_total_score', None),
+                    best_dup.get('avg_tps', None),
+                    best_dup.get('score_stddev', None),
+                    best_dup.get('runs_count', 0),
+                ),
+            )
             
         conn.commit()
         conn.execute("PRAGMA foreign_keys = ON;")

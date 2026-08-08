@@ -2,7 +2,7 @@
 
 > This document outlines coding standards, structural rules, and critical invariants for AI coding assistants working in the `llmMobile` repository.
 >
-> **Status:** All planned development phases (A–S) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs with multi-run statistical aggregation and automated model categorization.
+> **Status:** All planned development phases (A–S + Phase T recovery tooling) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs with multi-run statistical aggregation, automated model categorization, and host-side benchmark-data recovery scripts.
 
 ---
 
@@ -135,7 +135,7 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
 
 * **`src/components/benchmark-tab.js`** + **`benchmark-tab/`**:
   - `_styles.js`, `_logic.js` (queue building, status polling, SSE, bubble-click handlers), `_templates.js` (table, runner, progress, log, details modal)
-  - Composes `<benchmark-bubble-chart>` (kept whole at 291 lines)
+  - Composes `<benchmark-bubble-chart>` (used whole, ~416 lines — Chart.js bubble + ±stddev error-bar plugin)
 
 * **`src/components/chat-tab.js`** + **`chat-tab/`**:
   - `_styles.js`, `_logic.js` (barrel re-export), `_tools.js` (TOOL_DEFINITIONS, TOOL_ICONS constants), `_formatting.js` (markdown/math rendering, thinking parsing, prompt extraction), `_api.js` (server-aware API routing, sendMessage streaming, model status polling, vision check, image handling, message state), `_templates.js` (messages, input, composer, thinking box, tool call indicators, per-prompt 🎨 buttons, server selector pills with loaded model name, 🛠️ Tools toggle)
@@ -159,7 +159,17 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
 **Standalone child components (kept whole, no sub-folder):**
 * `src/components/server-status-card.js` — health display & start/stop/restart controls
 * `src/components/server-logs.js` — live log viewer with container selector & auto-scroll
-* `src/components/benchmark-bubble-chart.js` — D3/Canvas bubble chart for benchmark results
+* `src/components/benchmark-bubble-chart.js` — Chart.js bubble chart (VRAM vs score) with white `±stddev` error bars for multi-run models
+
+### 3. Ops & Recovery Scripts (`scripts/`)
+
+Host-side tooling to repair benchmark data without re-running benchmarks. Run from the repo root (`python3 scripts/...`), not inside the container — they talk to llama-server at `localhost:8080` and share the host SQLite DB.
+
+* **`scripts/restore_benchmark_runs.py`** — Re-inserts `test_runs` rows for runs whose raw JSON still exists in `benchmark_results/`. Honors the 5-run/`max_keep` retention window; dry-run by default (`--apply` writes).
+* **`scripts/regrade_restored_runs.py`** — Re-runs the AI-Judge pipeline (`judge_benchmark()`) on runs missing `round_scores` so `score_stddev` comes back without re-benchmarking. Resumable (skips already-scored runs); `--redo` re-grades runs whose rounds recorded `Grading failed`; `--only-model`/`--limit` for smoke tests.
+* **`scripts/regrade.sh`** — Convenience wrapper: pins the judge model (`nvidia-nemotron-labs-3-elastic-12b-a2b.i1-q5_k_m`) and `--server-url http://localhost:8080`, forwards extra args.
+
+> ⚠️ **Host judge-call gotcha:** the judge pipeline's internal preset lookup defaults to the container hostname `llm-server`, which does not resolve on the host. Always pass the **exact resolved preset id** (what `ensure_judge_model()` returns, e.g. `NVIDIA-…Q5_K_M.gguf`) as the judge model so the host-side calls to `llm-server` at `localhost:8080` are accepted — a raw lowercase id yields `400 Bad Request` on every round.
 
 ---
 
@@ -432,7 +442,15 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
   - **Multi-Pass Queue**: `run_benchmark_queue_task(models, judge_model_id, server, execution_mode, run_count, temperature)` runs up to N passes per model (each with its own `test_runs` row and a shared `run_group_id`), then batch-grades all passes with the Judge once. Use the Benchmarks tab **Mode** dropdown + **Run Count** + **🚀 Run Automated Queue Benchmark** for overnight multi-run benchmarking. `speed_multi` mode and single-path `run_count` remain unimplemented (see `docs/MultiRunPhaseS.md`).
   - **Aggregation Engine** (`services/benchmark/aggregation.py`): `calculate_and_store_model_aggregates()` computes $\mu$, $\sigma$, avg TPS, run count; auto-triggered by the AI Judge after grading. `classify_model()` assigns one of 5 categories based on speed and score thresholds from `category.md`.
   - **API** (`services/benchmark/api.py`, `app/main.py`): `execution_mode` + `temperature` params passed through to the runner; new `POST /api/benchmarks/aggregate` endpoint for manual recalculation. `GET /api/benchmarks` now returns `avg_score`, `score_stddev`, `category_label`, and `runs_count`.
-  - **Frontend** (`benchmark-tab/`): Score column shows `★ μ ± σ` chip + `🔄 N runs` badge. Toolbar has category filter pills (`⚡ Speed`, `🧠 Reasoning`, `🔋 VRAM`, `⚖️ Balanced`, `🎯 Specialized`). Model details modal displays statistical summary card and historical runs list.
+  - **Frontend** (`benchmark-tab/`): Score column shows `★ μ ± σ` chip + `🔄 N runs` badge. Toolbar has category filter pills (`⚡ Speed`, `🧠 Reasoning`, `🔋 VRAM`, `⚖️ Balanced`, `🎯 Specialized`). Model details modal displays statistical summary card and historical runs list. Bubble chart (`benchmark-bubble-chart.js`) draws white `±stddev` error bars for multi-run models (`score_stddev > 0`).
+
+### Benchmark Data Recovery & Score Visualization (Phase T)
+- **Phase T – Run-Recovery Scripts & Bubble-Chart Error Bars**: Where Phase S defined the stats pipeline, Phase T provides a way to **recover** that stat data when it has been lost:
+  - **`scripts/restore_benchmark_runs.py`** — Re-inserts `test_runs` rows from `benchmark_results/*.json`, respecting the 5-run retention window; dry-run default (`--apply` writes); deterministic server/execution-mode inference.
+  - **`scripts/regrade_restored_runs.py`** — Re-runs the Judge over restored runs to regenerate `round_scores` from saved responses (no re-benchmarking, no new model inference). Resumable (skips scored), `--redo` for failed grades, `--only-model`/`--limit`/`--server-url`/`--judge-model` options.
+  - **`scripts/regrade.sh`** — Convenience wrapper: pins `nvidia-nemotron-labs-3-elastic-12b-a2b.i1-q5_k_m` + `http://localhost:8080`, forwards extra args.
+  - **Host-safe judge resolution** — `ensure_judge_model()` returns and passes the exact resolved preset id into `grade_one()`, avoiding the container-hostname preset lookup 400s seen when running from the host.
+  - **`consolidate_database()` hardening** (`utils/db_utils.py`) — duplicate-model consolidation now re-assigns **all** runs (including `.gguf` variants) to the clean id, prunes to the 5-run window, preserves aggregate columns, and merges hallucinations instead of hard-deleting surviving history.
 
 ---
 

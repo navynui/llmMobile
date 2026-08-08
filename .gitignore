@@ -27,3 +27,8 @@ __pycache__
 
 # Environment variables
 .env
+
+# Local SQLite dev copies (real DB lives in /home/nui/llmaCPP/)
+*.db
+*.db-shm
+*.db-wal

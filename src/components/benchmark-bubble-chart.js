@@ -135,7 +135,7 @@ export class BenchmarkBubbleChart extends LitElement {
       type: 'scatter',
       data: this._buildChartData(),
       options: this._chartOptions(),
-      plugins: [this._legendPlugin()],
+      plugins: [this._legendPlugin(), this._errorBarPlugin()],
     });
   }
 
@@ -150,6 +150,61 @@ export class BenchmarkBubbleChart extends LitElement {
       id: 'customLegend',
       afterDraw: () => {
         // Rendered via Lit template instead
+      },
+    };
+  }
+
+  // White ±stddev whiskers, only for models that have multi-run data
+  // (score_stddev > 0). Drawn after the bubbles so the bars stay visible.
+  _errorBarPlugin() {
+    return {
+      id: 'errorBars',
+      afterDatasetsDraw: (chart) => {
+        const { ctx, chartArea } = chart;
+        const ds = chart.data.datasets[0];
+        const meta = chart.getDatasetMeta(0);
+        if (!ds || !meta || !meta.data?.length) return;
+
+        const yScale = chart.scales.y;
+        const capLen = 5;
+        const bars = [];
+
+        meta.data.forEach((el, i) => {
+          const d = ds.data[i];
+          if (!d || !(d.score_stddev > 0) || d.y == null) return;
+          const x = el.x;
+          const yTop = Math.max(chartArea.top, yScale.getPixelForValue(d.y + d.score_stddev));
+          const yBot = Math.min(chartArea.bottom, yScale.getPixelForValue(d.y - d.score_stddev));
+          if (yBot - yTop < 1) return; // degenerate/zero-length → skip
+          bars.push({ x, yTop, yBot });
+        });
+
+        if (!bars.length) return;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'butt';
+
+        // vertical whiskers
+        ctx.beginPath();
+        bars.forEach((b) => {
+          ctx.moveTo(b.x, b.yTop);
+          ctx.lineTo(b.x, b.yBot);
+        });
+        ctx.stroke();
+
+        // end caps for the classic error-bar look
+        ctx.beginPath();
+        bars.forEach((b) => {
+          ctx.moveTo(b.x - capLen, b.yTop);
+          ctx.lineTo(b.x + capLen, b.yTop);
+          ctx.moveTo(b.x - capLen, b.yBot);
+          ctx.lineTo(b.x + capLen, b.yBot);
+        });
+        ctx.stroke();
+
+        ctx.restore();
       },
     };
   }
@@ -183,6 +238,8 @@ export class BenchmarkBubbleChart extends LitElement {
           quant: b.quant,
           tokens_sec: b.tokens_sec ?? 0,
           score: b.score ?? 0,
+          score_stddev: b.score_stddev ?? 0,
+          runs_count: b.runs_count ?? 1,
           status: b.status || 'testing',
           vram_gb: b.vram_gb,
           vram_total_gb: b.vram_total_gb || (b.server === 'secondary' ? 6 : 16),
@@ -299,6 +356,9 @@ export class BenchmarkBubbleChart extends LitElement {
               if (d.score !== null && d.score !== undefined) {
                 lines.push(`Score: ${d.score}`);
               }
+              if (d.score_stddev > 0) {
+                lines.push(`± StdDev: ${d.score_stddev} (${d.runs_count} runs)`);
+              }
               if (d.tokens_sec !== null && d.tokens_sec !== undefined) {
                 lines.push(`Speed: ${d.tokens_sec} t/s`);
               }
@@ -334,7 +394,7 @@ export class BenchmarkBubbleChart extends LitElement {
     return html`
       <div class="card">
         <h3>📊 VRAM vs Score — Model Comparison</h3>
-        <h4>Bubble size: VRAM utilization · Color: inference speed · Border: solid=primary, dashed=secondary</h4>
+        <h4>Bubble size: VRAM utilization · Color: inference speed · Border: solid=primary, dashed=secondary · White bar: score ± stddev (multi-run)</h4>
         <div class="legend">
           <div class="legend-item">
             <div class="legend-dot" style="background: #14b8a6;"></div>
