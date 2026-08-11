@@ -71,7 +71,14 @@ def _container_info(name: str) -> dict:
         if not container:
             return {"status": "not_found", "image": None, "uptime": None}
         status = container.status
-        image  = container.image.tags[0] if container.image.tags else container.image.id
+        # container.image is lazily fetched from the daemon and can raise
+        # (e.g. ImageNotFound) when the image was removed after the container
+        # was created (rebuild + prune). Fall back to the stored Config.Image
+        # reference so we still report the container's real status.
+        try:
+            image = container.image.tags[0] if container.image.tags else container.image.id
+        except Exception:
+            image = (container.attrs.get("Config", {}) or {}).get("Image") or "unknown"
         started_str = container.attrs.get("State", {}).get("StartedAt", "")
         uptime = None
         if status == "running" and started_str:
