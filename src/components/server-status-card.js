@@ -152,6 +152,29 @@ ${buttonStyles}
   gap: 12px;
 }
 
+/* App Manager grid – 2 cols wide, 1 col narrow */
+.app-manager-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.app-manager-row {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.app-manager-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
 .server-row {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -165,6 +188,9 @@ ${buttonStyles}
 .server-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
 @media (max-width: 600px) {
+  .app-manager-grid {
+    grid-template-columns: 1fr;
+  }
   .server-row {
     grid-template-columns: 1fr;
     gap: 8px;
@@ -224,6 +250,11 @@ ${buttonStyles}
   _handleUnloadKokoro() {
     this.dispatchEvent(new CustomEvent('unload-kokoro', { bubbles: true, composed: true }));
   }
+  _dispatchAppAction(appName, action) {
+    this.dispatchEvent(
+      new CustomEvent('app-action', { detail: { app: appName, action }, bubbles: true, composed: true })
+    );
+  }
 
   render() {
     const stats = this.stats || {};
@@ -231,6 +262,7 @@ ${buttonStyles}
     const managerStatus = status.manager || {};
     const comfyuiStatus = status.comfyui || {};
     const kokoroStatus = status.kokoro || {};
+    const anythingllmStatus = status.anythingllm || {};
     const servers = Array.isArray(this.servers) ? this.servers : (status.servers || []);
 
     return html`
@@ -273,33 +305,86 @@ ${buttonStyles}
 
         <div class="card" style="margin-top: 16px;">
           <div class="card-title">App Manager</div>
-          <div class="server-meta-grid">
-            <div>
+          <div class="app-manager-grid">
+
+            <!-- llm-mobile (this app) -->
+            <div class="app-manager-row">
               <div><strong>llm-mobile</strong></div>
               <div class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</div>
-              <div>Image: ${managerStatus.image || 'N/A'}</div>
-              ${managerStatus.status === 'running' ? html`<div>Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="server-meta">Image: ${managerStatus.image || 'N/A'}</div>
+              ${managerStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="app-manager-actions">
+                ${managerStatus.status === 'running'
+                  ? html`
+                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('llm-mobile', 'stop')}">Stop</button>
+                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('llm-mobile', 'restart')}">⟳ Restart</button>
+                  `
+                  : html`
+                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('llm-mobile', 'start')}">Start</button>
+                  `
+                }
+              </div>
             </div>
-            <div>
+
+            <!-- anythingllm -->
+            <div class="app-manager-row">
+              <div><strong>anythingllm</strong></div>
+              <div class="status-badge ${statusClass(anythingllmStatus.status)}">● ${anythingllmStatus.status || 'Unknown'}</div>
+              <div class="server-meta">Image: ${anythingllmStatus.image || 'N/A'}</div>
+              ${anythingllmStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${anythingllmStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="app-manager-actions">
+                ${anythingllmStatus.status === 'running'
+                  ? html`
+                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'stop')}">Stop</button>
+                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'restart')}">⟳ Restart</button>
+                  `
+                  : html`
+                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'start')}">Start</button>
+                  `
+                }
+              </div>
+            </div>
+
+            <!-- comfyui -->
+            <div class="app-manager-row">
               <div><strong>comfyui</strong></div>
               <div class="status-badge ${statusClass(comfyuiStatus.status)}">● ${comfyuiStatus.status || 'Unknown'}</div>
-              <div>Image: ${comfyuiStatus.image || 'N/A'}</div>
-              ${comfyuiStatus.status === 'running' ? html`<div>Uptime: ${comfyuiStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="server-meta">Image: ${comfyuiStatus.image || 'N/A'}</div>
+              ${comfyuiStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${comfyuiStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="app-manager-actions">
+                ${comfyuiStatus.status === 'running'
+                  ? html`
+                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('comfyui', 'stop')}">Stop</button>
+                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('comfyui', 'restart')}">⟳ Restart</button>
+                    <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="font-size:0.8rem;">🧹 Free VRAM</button>
+                  `
+                  : html`
+                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('comfyui', 'start')}">Start</button>
+                  `
+                }
+              </div>
             </div>
-            <div>
+
+            <!-- kokoro-tts -->
+            <div class="app-manager-row">
               <div><strong>kokoro-tts</strong></div>
               <div class="status-badge ${statusClass(kokoroStatus.status)}">● ${kokoroStatus.status || 'Unknown'}</div>
-              <div>Image: ${kokoroStatus.image || 'N/A'}</div>
-              ${kokoroStatus.status === 'running' ? html`<div>Uptime: ${kokoroStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="server-meta">Image: ${kokoroStatus.image || 'N/A'}</div>
+              ${kokoroStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${kokoroStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="app-manager-actions">
+                ${kokoroStatus.status === 'running'
+                  ? html`
+                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('kokoro-tts', 'stop')}">Stop</button>
+                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('kokoro-tts', 'restart')}">⟳ Restart</button>
+                    <button class="btn btn-secondary" @click="${this._handleUnloadKokoro}" ?disabled="${this.actionPending}" style="font-size:0.8rem;">❄️ Unload Model</button>
+                  `
+                  : html`
+                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('kokoro-tts', 'start')}">Start</button>
+                  `
+                }
+              </div>
             </div>
-          </div>
-          <div style="display: flex; gap: 8px; margin-top: 12px;">
-            <button class="btn btn-secondary" @click="${this._handleFreeComfy}" ?disabled="${this.actionPending}" style="flex: 1; justify-content: center; padding: 10px 8px; border-color: rgba(255, 159, 64, 0.3); background: rgba(255, 159, 64, 0.04); color: var(--text-primary);">
-              🧹 Free ComfyUI
-            </button>
-            <button class="btn btn-secondary" @click="${this._handleUnloadKokoro}" ?disabled="${this.actionPending}" style="flex: 1; justify-content: center; padding: 10px 8px; border-color: rgba(99, 102, 241, 0.3); background: rgba(99, 102, 241, 0.04); color: var(--text-primary);">
-              ❄️ Unload Kokoro Model
-            </button>
+
           </div>
         </div>
 

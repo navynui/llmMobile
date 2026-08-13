@@ -55,6 +55,7 @@ export class ServerTab extends LitElement {
       servers: [
         { name: 'llama-server', container: 'llm-server', label: 'Primary (llama-server)', status: 'stopped', image: null, uptime: null },
         { name: 'llama-server-mini', container: 'llm-server-mini', label: 'Secondary (llama-server-mini)', status: 'stopped', image: null, uptime: null },
+        { name: 'llm-embedder', container: 'llm-embedder', label: 'Embedder (llm-embedder)', status: 'stopped', image: null, uptime: null },
       ],
     };
     this.models = [];
@@ -126,6 +127,7 @@ export class ServerTab extends LitElement {
   async executeDeleteModel(filename) { return logic.executeDeleteModel(this, filename); }
   async handleFreeComfyUI() { return logic.handleFreeComfyUI(this); }
   async handleUnloadKokoro() { return logic.handleUnloadKokoro(this); }
+  async handleAppAction(appName, action) { return logic.handleAppAction(this, appName, action); }
   // Mini (modelg.ini) handlers
   async fetchModelsMiniList() { return logic.fetchModelsMiniList(this); }
   async fetchActiveMiniModel() { return logic.fetchActiveMiniModel(this); }

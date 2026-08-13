@@ -26,6 +26,7 @@ from models.requests import (
 from services.docker_svc import (
     get_status, get_system_stats, start_llm, stop_llm,
     start_llm_server, stop_llm_server, restart_llm_server,
+    start_app_container, stop_app_container, restart_app_container,
     _start_mqtt_listener, start_mqtt_watchdog, get_logs, get_server_slots_status,
     unload_kokoro_models
 )
@@ -141,6 +142,18 @@ def route_stop_llm_server(name: str):
 @app.post("/servers/{name}/restart")
 def route_restart_llm_server(name: str):
     return restart_llm_server(name)
+
+@app.post("/api/apps/{name}/start")
+def route_start_app_container(name: str):
+    return start_app_container(name)
+
+@app.post("/api/apps/{name}/stop")
+def route_stop_app_container(name: str):
+    return stop_app_container(name)
+
+@app.post("/api/apps/{name}/restart")
+def route_restart_app_container(name: str):
+    return restart_app_container(name)
 
 # ───────────────────────────────────────────────
 # REST endpoints – model management

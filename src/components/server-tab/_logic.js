@@ -572,3 +572,31 @@ export async function executeDeleteModelMini(ctx, filename) {
     console.error(err);
   }
 }
+
+export async function handleAppAction(ctx, appName, action) {
+  if (!appName) return;
+  if (action !== 'start' && action !== 'stop' && action !== 'restart') return;
+
+  ctx.actionPending = true;
+
+  const labels = {
+    start:   `Starting ${appName}...`,
+    stop:    `Stopping ${appName}...`,
+    restart: `Restarting ${appName}...`,
+  };
+  ctx.showStatus(labels[action]);
+
+  try {
+    const res = await fetch(`/api/apps/${encodeURIComponent(appName)}/${action}`, { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      ctx.showStatus(data.detail || `Failed to ${action} ${appName}`, true);
+      return;
+    }
+    ctx.showStatus(data.detail || `Success: ${action} ${appName}`);
+  } catch (e) {
+    ctx.showStatus(`Error ${action}ing ${appName}: ${e.message}`, true);
+  } finally {
+    ctx.actionPending = false;
+  }
+}

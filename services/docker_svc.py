@@ -49,6 +49,7 @@ def set_docker_client(client):
 _MANAGED_LLM_SERVERS = [
     {"name": "llama-server",      "container": "llm-server",      "label": "Primary (llama-server)"},
     {"name": "llama-server-mini", "container": "llm-server-mini", "label": "Secondary (llama-server-mini)"},
+    {"name": "llm-embedder",      "container": "llm-embedder",    "label": "Embedder (llm-embedder)"},
 ]
 
 def _llm_server_by_name(name: str) -> dict | None:
@@ -131,6 +132,7 @@ def get_status():
         "servers": servers,
         "comfyui": _container_info("comfyui"),
         "kokoro": _container_info("kokoro-tts"),
+        "anythingllm": _container_info("anythingllm"),
     }
 
 
@@ -200,6 +202,60 @@ def restart_llm_server(name: str):
         "stop": stop_result,
         "start": start_result,
     }
+
+# ── App container management (non-LLM services) ─────────────────────────────
+
+_MANAGED_APP_CONTAINERS = {
+    "anythingllm": "anythingllm",
+    "llm-mobile":  "llm-mobile",
+    "comfyui":     "comfyui",
+    "kokoro-tts":  "kokoro-tts",
+}
+
+def start_app_container(name: str):
+    container_name = _MANAGED_APP_CONTAINERS.get(name)
+    if not container_name:
+        raise HTTPException(status_code=404, detail=f"Unknown app container '{name}'.")
+    if not _docker_client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized.")
+    try:
+        c = _docker_client.containers.get(container_name)
+        c.start()
+        return {"detail": f"Started {container_name}"}
+    except _docker_module.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def stop_app_container(name: str):
+    container_name = _MANAGED_APP_CONTAINERS.get(name)
+    if not container_name:
+        raise HTTPException(status_code=404, detail=f"Unknown app container '{name}'.")
+    if not _docker_client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized.")
+    try:
+        c = _docker_client.containers.get(container_name)
+        c.stop(timeout=10)
+        return {"detail": f"Stopped {container_name}"}
+    except _docker_module.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def restart_app_container(name: str):
+    container_name = _MANAGED_APP_CONTAINERS.get(name)
+    if not container_name:
+        raise HTTPException(status_code=404, detail=f"Unknown app container '{name}'.")
+    if not _docker_client:
+        raise HTTPException(status_code=500, detail="Docker client not initialized.")
+    try:
+        c = _docker_client.containers.get(container_name)
+        c.restart(timeout=10)
+        return {"detail": f"Restarted {container_name}"}
+    except _docker_module.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def _on_mqtt_message(client, userdata, msg):
     global last_mqtt_update_time

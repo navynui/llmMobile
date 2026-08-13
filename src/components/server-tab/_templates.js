@@ -11,6 +11,7 @@ export function renderServerTab(ctx) {
         .actionPending="${ctx.actionPending}"
         .slotInfo="${ctx.slotInfo}"
         @server-action="${(e) => ctx.handleServerAction(e.detail.server, e.detail.action)}"
+        @app-action="${(e) => ctx.handleAppAction(e.detail.app, e.detail.action)}"
         @free-comfy="${() => ctx.handleFreeComfyUI()}"
         @unload-kokoro="${() => ctx.handleUnloadKokoro()}"
       >
