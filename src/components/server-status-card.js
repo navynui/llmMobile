@@ -309,8 +309,10 @@ ${buttonStyles}
 
             <!-- llm-mobile (this app) -->
             <div class="app-manager-row">
-              <div><strong>llm-mobile</strong></div>
-              <div class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong>llm-mobile</strong>
+                <span class="status-badge ${statusClass(managerStatus.status)}">● ${managerStatus.status || 'Unknown'}</span>
+              </div>
               <div class="server-meta">Image: ${managerStatus.image || 'N/A'}</div>
               ${managerStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${managerStatus.uptime || 'N/A'}</div>` : ''}
               <div class="app-manager-actions">
@@ -328,8 +330,10 @@ ${buttonStyles}
 
             <!-- anythingllm -->
             <div class="app-manager-row">
-              <div><strong>anythingllm</strong></div>
-              <div class="status-badge ${statusClass(anythingllmStatus.status)}">● ${anythingllmStatus.status || 'Unknown'}</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong>anythingllm</strong>
+                <span class="status-badge ${statusClass(anythingllmStatus.status)}">● ${anythingllmStatus.status || 'Unknown'}</span>
+              </div>
               <div class="server-meta">Image: ${anythingllmStatus.image || 'N/A'}</div>
               ${anythingllmStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${anythingllmStatus.uptime || 'N/A'}</div>` : ''}
               <div class="app-manager-actions">
@@ -347,8 +351,10 @@ ${buttonStyles}
 
             <!-- comfyui -->
             <div class="app-manager-row">
-              <div><strong>comfyui</strong></div>
-              <div class="status-badge ${statusClass(comfyuiStatus.status)}">● ${comfyuiStatus.status || 'Unknown'}</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong>comfyui</strong>
+                <span class="status-badge ${statusClass(comfyuiStatus.status)}">● ${comfyuiStatus.status || 'Unknown'}</span>
+              </div>
               <div class="server-meta">Image: ${comfyuiStatus.image || 'N/A'}</div>
               ${comfyuiStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${comfyuiStatus.uptime || 'N/A'}</div>` : ''}
               <div class="app-manager-actions">
@@ -367,8 +373,10 @@ ${buttonStyles}
 
             <!-- kokoro-tts -->
             <div class="app-manager-row">
-              <div><strong>kokoro-tts</strong></div>
-              <div class="status-badge ${statusClass(kokoroStatus.status)}">● ${kokoroStatus.status || 'Unknown'}</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong>kokoro-tts</strong>
+                <span class="status-badge ${statusClass(kokoroStatus.status)}">● ${kokoroStatus.status || 'Unknown'}</span>
+              </div>
               <div class="server-meta">Image: ${kokoroStatus.image || 'N/A'}</div>
               ${kokoroStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${kokoroStatus.uptime || 'N/A'}</div>` : ''}
               <div class="app-manager-actions">
