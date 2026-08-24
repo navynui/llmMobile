@@ -76,12 +76,15 @@ async def _store_low_speed_abort(model_id: str, run_id: str, speed_tps: float, r
         log_benchmark_error(f"Failed to store low-speed abort info for {model_id}: {db_err}")
 
 
-# ── Token-budget ramp for empty-response retries ───────────────────────────────
-# Initial attempt + 3 retries, each step widens the output budget so the model
-# has room to finish (esp. during long-form reasoning, code generation, or
-# creative writing rounds). 4096 (baseline) → 6144 → 8192 → 12288.
-RETRY_MAX_TOKENS_RAMP = (4096, 6144, 8192, 12288)
-RETRY_MAX_ATTEMPTS = len(RETRY_MAX_TOKENS_RAMP) - 1  # = 3
+# ── Token-budget hybrid retry ────────────────────────────────────────────────
+# Baseline 4096; legacy ramp (4096→6144→8192→12288) replaced by hybrid:
+# - think-overflow (empty content + reasoning present) → salvage reasoning as answer, no ramp
+# - truncation (finish_reason=="length") → single ramp to 6144
+# - unknown empty → one same-budget retry then salvage if reasoning appears
+RETRY_BASE_MAX_TOKENS = 4096
+RETRY_RAMP_MAX_TOKENS = 6144
+RETRY_MAX_TOKENS_RAMP = (4096, 6144, 8192, 12288)  # legacy, kept for compat
+RETRY_MAX_ATTEMPTS = 1  # hybrid: at most one retry
 RETRY_PAUSE_SECONDS = 5
 
 # ── Server-aware helpers ──────────────────────────────────────────────────
@@ -172,16 +175,31 @@ async def run_benchmark_task(
 
                 start_time = time.time()
                 content = ""
+                reasoning_content = ""
+                finish_reason = ""
                 tokens_predicted = 0
                 speed_tps = 0.0
                 duration = 0.0
 
                 def _parse_response(response):
-                    nonlocal content, tokens_predicted, speed_tps, duration
+                    nonlocal content, reasoning_content, finish_reason, tokens_predicted, speed_tps, duration
                     if response.status_code == 200:
                         res_data = response.json()
                         choice = res_data.get("choices", [{}])[0]
-                        content = choice.get("message", {}).get("content", "")
+                        msg = choice.get("message", {}) or {}
+                        content = msg.get("content", "") or ""
+                        # capture reasoning/thinking if exposed as separate field
+                        rc = msg.get("reasoning_content") or msg.get("reasoning") or msg.get("thought") or ""
+                        if rc and isinstance(rc, str) and rc.strip():
+                            reasoning_content = rc.strip()
+                        else:
+                            # fallback: extract <think>...</think> if content embeds it but content is empty
+                            m = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
+                            if m:
+                                reasoning_content = m.group(1).strip()
+                            else:
+                                reasoning_content = ""
+                        finish_reason = choice.get("finish_reason") or res_data.get("finish_reason") or ""
                         usage = res_data.get("usage", {})
                         tokens_predicted = usage.get("completion_tokens", 0)
                         timings = res_data.get("timings", {})
@@ -208,24 +226,50 @@ async def run_benchmark_task(
                     content = ""
                     has_server_error = True
 
-                # Retry on empty (not on server errors) with stepped token budget
-                retry_count = 0
-                max_retries = RETRY_MAX_ATTEMPTS
-                while not content and retry_count < max_retries and not has_server_error:
-                    retry_count += 1
-                    next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
-                    log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
-                    await asyncio.sleep(RETRY_PAUSE_SECONDS)
-                    try:
-                        start_time = time.time()
-                        payload["max_tokens"] = next_budget
-                        response = await client.post(api_url, json=payload)
-                        _parse_response(response)
-                        if not content and response.status_code == 200 and tokens_predicted > 0:
-                            log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
-                    except Exception as retry_err:
-                        traceback.format_exc()
-                        log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                # Hybrid retry: salvage thinking vs single ramp for truncation
+                if not content and not has_server_error:
+                    if reasoning_content and reasoning_content.strip():
+                        salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                        if salvaged:
+                            content = salvaged
+                            if tokens_predicted == 0:
+                                tokens_predicted = len(salvaged) // 4
+                            log_benchmark(f"{round_name}: Empty content but reasoning present ({len(salvaged)} chars) — salvaging thinking as answer (think-overflow), no ramp")
+                    elif finish_reason == "length":
+                        log_benchmark(f"{round_name}: Empty response (finish_reason=length) — retry once with {RETRY_RAMP_MAX_TOKENS}...")
+                        await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                        try:
+                            start_time = time.time()
+                            payload["max_tokens"] = RETRY_RAMP_MAX_TOKENS
+                            response = await client.post(api_url, json=payload)
+                            _parse_response(response)
+                            if not content and reasoning_content and reasoning_content.strip():
+                                salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                                if salvaged:
+                                    content = salvaged
+                                    if tokens_predicted == 0:
+                                        tokens_predicted = len(salvaged) // 4
+                                    log_benchmark(f"{round_name}: Ramp retry salvaged reasoning ({len(salvaged)} chars)")
+                        except Exception as retry_err:
+                            traceback.format_exc()
+                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                    else:
+                        log_benchmark(f"{round_name}: Empty response, retry once same budget {RETRY_BASE_MAX_TOKENS}...")
+                        await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                        try:
+                            start_time = time.time()
+                            response = await client.post(api_url, json=payload)
+                            _parse_response(response)
+                            if not content and reasoning_content and reasoning_content.strip():
+                                salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                                if salvaged:
+                                    content = salvaged
+                                    if tokens_predicted == 0:
+                                        tokens_predicted = len(salvaged) // 4
+                                    log_benchmark(f"{round_name}: Same-budget retry salvaged reasoning ({len(salvaged)} chars)")
+                        except Exception as retry_err:
+                            traceback.format_exc()
+                            log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
 
                 # Determine final outcome
                 if not content and has_server_error:
@@ -234,11 +278,11 @@ async def run_benchmark_task(
                         "round_name": get_gold_key(round_name) or round_name,
                         "error": "Server error (non-200 response), no content"
                     })
-                elif not content and retry_count >= max_retries:
-                    log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                elif not content:
+                    log_benchmark(f"{round_name}: Empty after hybrid retry — no reasoning to salvage")
                     rounds_list.append({
                         "round_name": get_gold_key(round_name) or round_name,
-                        "error": f"Empty response after {max_retries} retries"
+                        "error": "Empty response after hybrid retry (no reasoning to salvage)"
                     })
                 elif content:
                     duration = time.time() - start_time
@@ -518,16 +562,29 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                         }
                         start_time = time.time()
                         content = ""
+                        reasoning_content = ""
+                        finish_reason = ""
                         tokens_predicted = 0
                         speed_tps = 0.0
                         duration = 0.0
 
                         def _parse_response(response):
-                            nonlocal content, tokens_predicted, speed_tps, duration
+                            nonlocal content, reasoning_content, finish_reason, tokens_predicted, speed_tps, duration
                             if response.status_code == 200:
                                 res_data = response.json()
                                 choice = res_data.get("choices", [{}])[0]
-                                content = choice.get("message", {}).get("content", "")
+                                msg = choice.get("message", {}) or {}
+                                content = msg.get("content", "") or ""
+                                rc = msg.get("reasoning_content") or msg.get("reasoning") or msg.get("thought") or ""
+                                if rc and isinstance(rc, str) and rc.strip():
+                                    reasoning_content = rc.strip()
+                                else:
+                                    m = re.search(r'<think>(.*?)</think>', content, re.DOTALL)
+                                    if m:
+                                        reasoning_content = m.group(1).strip()
+                                    else:
+                                        reasoning_content = ""
+                                finish_reason = choice.get("finish_reason") or res_data.get("finish_reason") or ""
                                 usage = res_data.get("usage", {})
                                 tokens_predicted = usage.get("completion_tokens", 0)
                                 timings = res_data.get("timings", {})
@@ -552,24 +609,50 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                             content = ""
                             has_server_error = True
 
-                        # Retry on empty (not on server errors) with stepped token budget
-                        retry_count = 0
-                        max_retries = RETRY_MAX_ATTEMPTS
-                        while not content and retry_count < max_retries and not has_server_error:
-                            retry_count += 1
-                            next_budget = RETRY_MAX_TOKENS_RAMP[retry_count]
-                            log_benchmark(f"{round_name}: Empty response, retry {retry_count}/{max_retries} — bumping max_tokens to {next_budget}...")
-                            await asyncio.sleep(RETRY_PAUSE_SECONDS)
-                            try:
-                                start_time = time.time()
-                                payload["max_tokens"] = next_budget
-                                response = await client.post(api_url, json=payload)
-                                _parse_response(response)
-                                if not content and response.status_code == 200 and tokens_predicted > 0:
-                                    log_benchmark(f"{round_name}: Retry {retry_count} succeeded")
-                            except Exception as retry_err:
-                                traceback.format_exc()
-                                log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                        # Hybrid retry: salvage thinking vs single ramp for truncation
+                        if not content and not has_server_error:
+                            if reasoning_content and reasoning_content.strip():
+                                salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                                if salvaged:
+                                    content = salvaged
+                                    if tokens_predicted == 0:
+                                        tokens_predicted = len(salvaged) // 4
+                                    log_benchmark(f"{round_name}: Empty content but reasoning present ({len(salvaged)} chars) — salvaging thinking as answer (think-overflow), no ramp")
+                            elif finish_reason == "length":
+                                log_benchmark(f"{round_name}: Empty response (finish_reason=length) — retry once with {RETRY_RAMP_MAX_TOKENS}...")
+                                await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                                try:
+                                    start_time = time.time()
+                                    payload["max_tokens"] = RETRY_RAMP_MAX_TOKENS
+                                    response = await client.post(api_url, json=payload)
+                                    _parse_response(response)
+                                    if not content and reasoning_content and reasoning_content.strip():
+                                        salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                                        if salvaged:
+                                            content = salvaged
+                                            if tokens_predicted == 0:
+                                                tokens_predicted = len(salvaged) // 4
+                                            log_benchmark(f"{round_name}: Ramp retry salvaged reasoning ({len(salvaged)} chars)")
+                                except Exception as retry_err:
+                                    traceback.format_exc()
+                                    log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
+                            else:
+                                log_benchmark(f"{round_name}: Empty response, retry once same budget {RETRY_BASE_MAX_TOKENS}...")
+                                await asyncio.sleep(RETRY_PAUSE_SECONDS)
+                                try:
+                                    start_time = time.time()
+                                    response = await client.post(api_url, json=payload)
+                                    _parse_response(response)
+                                    if not content and reasoning_content and reasoning_content.strip():
+                                        salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
+                                        if salvaged:
+                                            content = salvaged
+                                            if tokens_predicted == 0:
+                                                tokens_predicted = len(salvaged) // 4
+                                            log_benchmark(f"{round_name}: Same-budget retry salvaged reasoning ({len(salvaged)} chars)")
+                                except Exception as retry_err:
+                                    traceback.format_exc()
+                                    log_benchmark_error(f"Model: {model_id}, Round: {round_name}, Retry error: {retry_err}")
 
                         if not content and has_server_error:
                             log_benchmark(f"{round_name}: Server error — no retries")
@@ -577,11 +660,11 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                                 "round_name": get_gold_key(round_name) or round_name,
                                 "error": "Server error (non-200 response), no content"
                             })
-                        elif not content and retry_count >= max_retries:
-                            log_benchmark(f"{round_name}: Exhausted all retries — empty response persisted")
+                        elif not content:
+                            log_benchmark(f"{round_name}: Empty after hybrid retry — no reasoning to salvage")
                             rounds_list.append({
                                 "round_name": get_gold_key(round_name) or round_name,
-                                "error": f"Empty response after {max_retries} retries"
+                                "error": "Empty response after hybrid retry (no reasoning to salvage)"
                             })
                         elif content:
                             duration = time.time() - start_time
