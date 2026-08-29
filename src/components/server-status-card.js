@@ -262,7 +262,6 @@ ${buttonStyles}
     const managerStatus = status.manager || {};
     const comfyuiStatus = status.comfyui || {};
     const kokoroStatus = status.kokoro || {};
-    const anythingllmStatus = status.anythingllm || {};
     const servers = Array.isArray(this.servers) ? this.servers : (status.servers || []);
 
     return html`
@@ -323,27 +322,6 @@ ${buttonStyles}
                   `
                   : html`
                     <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('llm-mobile', 'start')}">Start</button>
-                  `
-                }
-              </div>
-            </div>
-
-            <!-- anythingllm -->
-            <div class="app-manager-row">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                <strong>anythingllm</strong>
-                <span class="status-badge ${statusClass(anythingllmStatus.status)}">● ${anythingllmStatus.status || 'Unknown'}</span>
-              </div>
-              <div class="server-meta">Image: ${anythingllmStatus.image || 'N/A'}</div>
-              ${anythingllmStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${anythingllmStatus.uptime || 'N/A'}</div>` : ''}
-              <div class="app-manager-actions">
-                ${anythingllmStatus.status === 'running'
-                  ? html`
-                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'stop')}">Stop</button>
-                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'restart')}">⟳ Restart</button>
-                  `
-                  : html`
-                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('anythingllm', 'start')}">Start</button>
                   `
                 }
               </div>

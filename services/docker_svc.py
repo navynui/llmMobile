@@ -49,7 +49,6 @@ def set_docker_client(client):
 _MANAGED_LLM_SERVERS = [
     {"name": "llama-server",      "container": "llm-server",      "label": "Primary (llama-server)"},
     {"name": "llama-server-mini", "container": "llm-server-mini", "label": "Secondary (llama-server-mini)"},
-    {"name": "llm-embedder",      "container": "llm-embedder",    "label": "Embedder (llm-embedder)"},
 ]
 
 def _llm_server_by_name(name: str) -> dict | None:
@@ -132,7 +131,6 @@ def get_status():
         "servers": servers,
         "comfyui": _container_info("comfyui"),
         "kokoro": _container_info("kokoro-tts"),
-        "anythingllm": _container_info("anythingllm"),
     }
 
 
@@ -206,7 +204,6 @@ def restart_llm_server(name: str):
 # ── App container management (non-LLM services) ─────────────────────────────
 
 _MANAGED_APP_CONTAINERS = {
-    "anythingllm": "anythingllm",
     "llm-mobile":  "llm-mobile",
     "comfyui":     "comfyui",
     "kokoro-tts":  "kokoro-tts",
