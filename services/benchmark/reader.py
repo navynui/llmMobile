@@ -93,6 +93,57 @@ def _read_ini_models(ini_path: str) -> set:
     return filenames
 
 
+def _get_ini_model_names(ini_path: str) -> set:
+    """Return set of lowercased model identifiers listed in the given INI.
+    Includes section headers (without [*]), base names, filenames (.gguf),
+    and model = ... target paths.
+    Does not require the file to exist on disk.
+    """
+    names = set()
+    if not os.path.exists(ini_path):
+        return names
+    try:
+        with open(ini_path) as f:
+            current_sec = None
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(";") or line.startswith("#"):
+                    continue
+                m = re.match(r'^\[(.+?)\]$', line)
+                if m:
+                    sec = m.group(1).strip()
+                    if sec == "*":
+                        current_sec = None
+                        continue
+                    current_sec = sec
+                    base = sec[:-5] if sec.lower().endswith(".gguf") else sec
+                    names.add(sec.lower())
+                    names.add(base.lower())
+                    names.add(f"{base.lower()}.gguf")
+                elif current_sec and line.startswith("model"):
+                    parts = line.split("=", 1)
+                    if len(parts) == 2:
+                        mpath = os.path.basename(parts[1].strip())
+                        mbase = mpath[:-5] if mpath.lower().endswith(".gguf") else mpath
+                        names.add(mpath.lower())
+                        names.add(mbase.lower())
+                        names.add(f"{mbase.lower()}.gguf")
+    except Exception as e:
+        print(f"[Benchmarks API] Failed to parse model names from {ini_path}: {e}")
+    return names
+
+
+def _matches_ini_names(model_name: str, model_id: str, ini_names: set) -> bool:
+    """Check if model_name or model_id matches any name in the ini_names set."""
+    candidates = {
+        model_name.lower(),
+        model_name.lower()[:-5] if model_name.lower().endswith(".gguf") else model_name.lower(),
+        model_id.lower(),
+        model_id.lower()[:-5] if model_id.lower().endswith(".gguf") else model_id.lower(),
+    }
+    return bool(candidates & ini_names)
+
+
 def _db_lookup_model(filename: str) -> tuple:
     """Return (status, vram_gb) from models table, or (None, None)."""
     try:
@@ -135,7 +186,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         # Gather model filenames from both INI files
         primary_ready = _read_ini_models(MODES_INI_PATH)
         secondary_ready = _read_ini_models(MINI_MODELS_INI)
-        all_ready = primary_ready | secondary_ready
+        primary_ini_models = _get_ini_model_names(MODES_INI_PATH)
+        secondary_ini_models = _get_ini_model_names(MINI_MODELS_INI)
 
         # Build capabilities lookup (mmproj / mtp) from both INI files
         cap_lookup = _build_capabilities_lookup()
@@ -176,7 +228,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         from .aggregation import CATEGORY_LABELS
 
         benchmarks = []
-        tested_names_lower = set()
+        primary_tested_names = set()
+        secondary_tested_names = set()
 
         for r in rows:
             avg_tps = r["avg_tps"] or r["agg_avg_tps"] or 0.0
@@ -184,22 +237,51 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
             hallucinated = r["hallucination_count"] > 0
             model_name = r["name"]
             name_low = model_name.lower()
-            tested_names_lower.add(name_low)
-            if name_low.endswith(".gguf"):
-                tested_names_lower.add(name_low[:-5])
-            else:
-                tested_names_lower.add(name_low + ".gguf")
-            tested_names_lower.add(r["model_id"].lower())
-            is_model_ready = (name_low in all_ready) or (r["model_id"].lower() in all_ready)
-
+            model_id_low = r["model_id"].lower()
             bench_server = r["server"] or "primary"
+
+            in_primary = _matches_ini_names(model_name, r["model_id"], primary_ini_models)
+            in_secondary = _matches_ini_names(model_name, r["model_id"], secondary_ini_models)
+
+            if bench_server == "secondary":
+                secondary_tested_names.add(name_low)
+                secondary_tested_names.add(model_id_low)
+                if name_low.endswith(".gguf"):
+                    secondary_tested_names.add(name_low[:-5])
+                else:
+                    secondary_tested_names.add(name_low + ".gguf")
+                is_model_ready = (name_low in secondary_ready) or (model_id_low in secondary_ready)
+                in_models_ini = False
+                in_modelg_ini = in_secondary
+            else:
+                primary_tested_names.add(name_low)
+                primary_tested_names.add(model_id_low)
+                if name_low.endswith(".gguf"):
+                    primary_tested_names.add(name_low[:-5])
+                else:
+                    primary_tested_names.add(name_low + ".gguf")
+                is_model_ready = (name_low in primary_ready) or (model_id_low in primary_ready)
+                in_models_ini = in_primary
+                in_modelg_ini = False
+
             if not show_all:
                 if avg_tps < 20.0 or hallucinated or total_score < 50:
                     if not is_model_ready:
                         continue
 
             if bench_server == "secondary":
-                effective_vram = r["run_vram_gb"]
+                # Prefer per-run VRAM (server-scoped). Fall back to models.vram_gb
+                # ONLY if it is plausibly a GTX reading (≤ 6 GB). A value > 6 GB
+                # would mean it was captured on the primary P100 and would be
+                # misleading when shown against the 6 GB secondary total.
+                run_vram = r["run_vram_gb"]
+                model_vram = r["model_vram_gb"]
+                if run_vram is not None:
+                    effective_vram = run_vram
+                elif model_vram is not None and model_vram <= 6.0:
+                    effective_vram = model_vram
+                else:
+                    effective_vram = None
             else:
                 effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
             vram_total = 16.0 if bench_server == "primary" else 6.0
@@ -233,27 +315,26 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 "status": r["status"] if (r and r["status"]) else "testing",
                 "is_ready": is_model_ready,
                 "is_tested": True,
+                "in_models_ini": in_models_ini,
+                "in_modelg_ini": in_modelg_ini,
                 "has_mmproj": caps.get("has_mmproj", False),
                 "has_mtp": caps.get("has_mtp", False),
             })
 
         # Append untested models from both INI files
-        # Build base set of already-tested names from SQL results (must remain
-        # shared across both INI scans to avoid showing a tested model as untested)
-        ini_tested_base = set(tested_names_lower)
-
         for ini_path, default_server in [(MODES_INI_PATH, "primary"), (MINI_MODELS_INI, "secondary")]:
             if not os.path.exists(ini_path):
                 continue
+            tested_set = primary_tested_names if default_server == "primary" else secondary_tested_names
             try:
                 with open(ini_path) as f:
                     for line in f:
                         line = line.strip()
-                        if not line or line.startswith(";"):
+                        if not line or line.startswith(";") or line.startswith("#"):
                             continue
                         m = re.match(r'^\[(.+?)\]$', line)
                         if m:
-                            raw_name = m.group(1)
+                            raw_name = m.group(1).strip()
                             if raw_name == "*":
                                 continue
                             if raw_name.lower().endswith(".gguf"):
@@ -261,12 +342,11 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                             else:
                                 base_name = raw_name
                             filename = base_name + ".gguf"
-                            # Skip only if already benchmarked (SQL results), not if
-                            # the other INI already listed it — we want dual entries.
-                            if filename.lower() not in ini_tested_base:
+                            if filename.lower() not in tested_set and base_name.lower() not in tested_set:
                                 db_status, db_vram = _db_lookup_model(filename)
                                 vram_total = 16.0 if default_server == "primary" else 6.0
                                 caps = cap_lookup.get(filename.lower(), {})
+                                file_ready = os.path.exists(os.path.join(MODELS_DIR, filename))
                                 benchmarks.append({
                                     "model_id": filename,
                                     "model": filename,
@@ -275,16 +355,30 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                                     "quant": get_quantization_from_name(filename),
                                     "tokens_sec": None,
                                     "score": None,
+                                    "avg_score": None,
+                                    "score_stddev": 0.0,
+                                    "runs_count": 0,
+                                    "category": "unclassified",
+                                    "category_label": "❓ Unclassified",
                                     "vram_gb": db_vram,
                                     "vram_total_gb": vram_total,
                                     "status": db_status or "testing",
-                                    "is_ready": True,
+                                    "is_ready": file_ready,
                                     "is_tested": False,
+                                    "in_models_ini": (default_server == "primary"),
+                                    "in_modelg_ini": (default_server == "secondary"),
                                     "has_mmproj": caps.get("has_mmproj", False),
                                     "has_mtp": caps.get("has_mtp", False),
                                 })
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
+
+        if server:
+            s_low = server.lower()
+            if s_low == "primary":
+                benchmarks = [b for b in benchmarks if b.get("in_models_ini")]
+            elif s_low == "secondary":
+                benchmarks = [b for b in benchmarks if b.get("in_modelg_ini")]
 
         return {"benchmarks": benchmarks}
     except Exception as e:
@@ -362,7 +456,13 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
 
         cat_key = model_row["category"] or "unclassified"
         if server == "secondary":
-            effective_vram = run_vram_gb
+            # Only fall back to models.vram_gb if it's plausibly a GTX reading (≤ 6 GB).
+            if run_vram_gb is not None:
+                effective_vram = run_vram_gb
+            elif model_row and model_row["vram_gb"] is not None and model_row["vram_gb"] <= 6.0:
+                effective_vram = model_row["vram_gb"]
+            else:
+                effective_vram = None
         else:
             effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
         total_gpu = 6.0 if server == "secondary" else 16.0

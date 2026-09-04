@@ -6,7 +6,7 @@ import subprocess
 from fastapi import HTTPException
 
 MODELS_DIR = "/models"
-if not os.path.exists(MODELS_DIR):
+if not os.path.exists(MODELS_DIR) or (os.path.exists("/home/nui/llmaCPP/models") and not os.listdir(MODELS_DIR)):
     MODELS_DIR = "/home/nui/llmaCPP/models"
     os.makedirs(MODELS_DIR, exist_ok=True)
 

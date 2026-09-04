@@ -5,7 +5,7 @@ import httpx
 from fastapi import HTTPException
 from typing import Optional
 
-from utils.common import MODES_INI_PATH, MODELS_DIR
+from utils.common import MODES_INI_PATH, MODELS_DIR, MODELG_INI_PATH
 from models.requests import ModelActionRequest, ModelsIniRequest
 
 async def _get_preset_id_for_model(model_id: str, server_url: str = None) -> str:
@@ -285,7 +285,7 @@ async def get_vision_capabilities_mini():
 
 
 # ── llama-server-mini / modelg.ini ─────────────────────────────────────────
-MINI_MODELS_INI = "/models/modelg.ini"
+MINI_MODELS_INI = MODELG_INI_PATH
 
 def _list_models_from_ini(ini_path: str) -> list:
     """Parse a models INI file and return a list of model dicts."""

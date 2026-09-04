@@ -29,7 +29,7 @@ def test_static_routes(mock_docker):
     client = TestClient(app)
     resp = client.get("/manifest.json")
     assert resp.status_code == 200
-    assert resp.json()["name"] == "LLM Server Manager Mobile"
+    assert resp.json()["name"] == "LLM Mobile Manager"
 
 def test_status_endpoint(mock_docker):
     from app.main import app
@@ -83,3 +83,29 @@ def test_logs_endpoint(mock_docker):
     resp = client.get("/api/logs")
     assert resp.status_code == 200
     assert "logs" in resp.json()
+
+def test_benchmarks_ini_filtering(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    # Default (all)
+    resp = client.get("/api/benchmarks?show_all=true")
+    assert resp.status_code == 200
+    benchmarks = resp.json()["benchmarks"]
+    assert len(benchmarks) > 0
+    # Every returned benchmark should contain in_models_ini and in_modelg_ini flags
+    for b in benchmarks:
+        assert "in_models_ini" in b
+        assert "in_modelg_ini" in b
+
+    # Server = primary filter
+    resp_p = client.get("/api/benchmarks?show_all=true&server=primary")
+    assert resp_p.status_code == 200
+    for b in resp_p.json()["benchmarks"]:
+        assert b["in_models_ini"] is True
+
+    # Server = secondary filter
+    resp_s = client.get("/api/benchmarks?show_all=true&server=secondary")
+    assert resp_s.status_code == 200
+    for b in resp_s.json()["benchmarks"]:
+        assert b["in_modelg_ini"] is True
+

@@ -273,8 +273,18 @@ export function handleSort(ctx, field) {
 export function getFilteredAndSortedBenchmarks(ctx) {
   let list = [...ctx.benchmarks];
 
-  if (ctx.platformFilter && ctx.platformFilter !== 'all') {
-    list = list.filter(b => b.server === ctx.platformFilter);
+  const filter = (ctx.platformFilter || 'all').toLowerCase();
+  if (filter === 'primary') {
+    list = list.filter(b => b.in_models_ini ?? (b.server === 'primary'));
+  } else if (filter === 'secondary') {
+    list = list.filter(b => b.in_modelg_ini ?? (b.server === 'secondary'));
+  } else {
+    // 'all' (default): show models from both ini files
+    if (ctx.showOfflineModels) {
+      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || !b.is_ready);
+    } else {
+      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')));
+    }
   }
 
   if (ctx.categoryFilter && ctx.categoryFilter !== 'all') {
