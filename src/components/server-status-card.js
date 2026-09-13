@@ -261,6 +261,7 @@ ${buttonStyles}
     const status = this.status || {};
     const managerStatus = status.manager || {};
     const comfyuiStatus = status.comfyui || {};
+    const okfGraphStatus = status.okf_graph || status['okf-graph'] || status.okfGraph || {};
     const kokoroStatus = status.kokoro || {};
     const servers = Array.isArray(this.servers) ? this.servers : (status.servers || []);
 
@@ -344,6 +345,27 @@ ${buttonStyles}
                   `
                   : html`
                     <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('comfyui', 'start')}">Start</button>
+                  `
+                }
+              </div>
+            </div>
+
+            <!-- okf-graph -->
+            <div class="app-manager-row">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                <strong>okf-graph</strong>
+                <span class="status-badge ${statusClass(okfGraphStatus.status)}">● ${okfGraphStatus.status || 'Unknown'}</span>
+              </div>
+              <div class="server-meta">Image: ${okfGraphStatus.image || 'N/A'}</div>
+              ${okfGraphStatus.status === 'running' ? html`<div class="server-meta">Uptime: ${okfGraphStatus.uptime || 'N/A'}</div>` : ''}
+              <div class="app-manager-actions">
+                ${okfGraphStatus.status === 'running'
+                  ? html`
+                    <button class="btn btn-danger" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('okf-graph', 'stop')}">Stop</button>
+                    <button class="btn btn-secondary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('okf-graph', 'restart')}">⟳ Restart</button>
+                  `
+                  : html`
+                    <button class="btn btn-primary" ?disabled="${this.actionPending}" @click="${() => this._dispatchAppAction('okf-graph', 'start')}">Start</button>
                   `
                 }
               </div>

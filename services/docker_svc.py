@@ -130,6 +130,7 @@ def get_status():
         "server": primary_info or {"status": "not_found", "image": None, "uptime": None},
         "servers": servers,
         "comfyui": _container_info("comfyui"),
+        "okf_graph": _container_info("okf-graph"),
         "kokoro": _container_info("kokoro-tts"),
     }
 
@@ -206,6 +207,7 @@ def restart_llm_server(name: str):
 _MANAGED_APP_CONTAINERS = {
     "llm-mobile":  "llm-mobile",
     "comfyui":     "comfyui",
+    "okf-graph":   "okf-graph",
     "kokoro-tts":  "kokoro-tts",
 }
 

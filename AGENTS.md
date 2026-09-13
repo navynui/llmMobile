@@ -2,7 +2,7 @@
 
 > This document outlines coding standards, structural rules, and critical invariants for AI coding assistants working in the `llmMobile` repository.
 >
-> **Status:** All planned development phases (A–S + Phase T recovery tooling) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs with multi-run statistical aggregation, automated model categorization, and host-side benchmark-data recovery scripts.
+> **Status:** All planned development phases (A–S + Phase T recovery tooling + Phase U okf-graph App Manager control) are complete. The repository is fully modular, test-covered, and supports dual independent inference servers on separate GPUs with multi-run statistical aggregation, automated model categorization, host-side benchmark-data recovery scripts, and App Manager docker control for okf-graph.
 
 ---
 
@@ -89,7 +89,7 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 
 **Single-file services (intentionally kept whole):**
 
-* **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval, self-healing MQTT telemetry listener (reconnect + stale-data watchdog).
+* **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini` + App Manager containers `llm-mobile`/`comfyui`/`okf-graph`/`kokoro-tts` via `_MANAGED_APP_CONTAINERS` + `get_status()` → `okf_graph`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval, self-healing MQTT telemetry listener (reconnect + stale-data watchdog).
 * **`llm_lifecycle.py`**: LLM idle-unload watchdog — unloads the loaded model from each llama-server after `LLM_IDLE_UNLOAD_SECONDS` (default 600s) of no inference activity to free VRAM per GPU; guarded against benchmarks and active ComfyUI generation. Mirrors the ComfyUI idle-watchdog pattern.
 * **`model_svc.py`**: Model scanning, loading, INI management (`models.ini` + `modelg.ini`), weight deletion — supports both primary and mini servers.
 * **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports both primary (`/api/chat/completions`) and mini (`/api/chat-mini/completions`) servers.
@@ -157,7 +157,7 @@ A modular Single Page Application (SPA) utilizing **Lit (Reactive Web Components
   - `_styles.js`, `_logic.js` (workflow param mapping, aspect-ratio presets, queue submit), `_templates.js`
 
 **Standalone child components (kept whole, no sub-folder):**
-* `src/components/server-status-card.js` — health display & start/stop/restart controls
+* `src/components/server-status-card.js` — health display & start/stop/restart controls (LLM servers + App Manager grid: `llm-mobile` / `comfyui` / `okf-graph` / `kokoro-tts`; okf-graph below comfyui, mirroring its Start/Stop/Restart UI)
 * `src/components/server-logs.js` — live log viewer with container selector & auto-scroll
 * `src/components/benchmark-bubble-chart.js` — Chart.js bubble chart (VRAM vs score) with white `±stddev` error bars for multi-run models
 
@@ -451,6 +451,9 @@ All phases have been completed, resulting in a fully modular, test-covered codeb
   - **`scripts/regrade.sh`** — Convenience wrapper: pins `nvidia-nemotron-labs-3-elastic-12b-a2b.i1-q5_k_m` + `http://localhost:8080`, forwards extra args.
   - **Host-safe judge resolution** — `ensure_judge_model()` returns and passes the exact resolved preset id into `grade_one()`, avoiding the container-hostname preset lookup 400s seen when running from the host.
   - **`consolidate_database()` hardening** (`utils/db_utils.py`) — duplicate-model consolidation now re-assigns **all** runs (including `.gguf` variants) to the clean id, prunes to the 5-run window, preserves aggregate columns, and merges hallucinations instead of hard-deleting surviving history.
+
+### App Manager — okf-graph Control (Phase U)
+- **Phase U – okf-graph Docker Control**: Added `okf-graph` (`nginx:alpine`, container `okf-graph`) to the Server-tab **App Manager** grid below `comfyui`. Backend: `services/docker_svc.py` (`_MANAGED_APP_CONTAINERS["okf-graph"]`, `get_status()` → `okf_graph`) exposes `POST /api/apps/okf-graph/{start|stop|restart}` via the existing app-container helpers. Frontend: `src/components/server-status-card.js` (`okfGraphStatus = status.okf_graph`) renders Start/Stop/Restart below comfyui. No idle watchdog — simple docker start/stop/restart like the other App Manager tiles.
 
 ---
 

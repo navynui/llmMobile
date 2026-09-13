@@ -103,7 +103,7 @@ llmMobile/
 ├── app/
 │   └── main.py                   # Thin FastAPI router — delegates all logic to services/
 ├── services/                     # Backend service layer (modular business logic)
-│   ├── docker_svc.py             # Container lifecycle & MQTT system stats
+│   ├── docker_svc.py             # Container lifecycle (llm-server/llm-server-mini + app containers: llm-mobile/comfyui/okf-graph/kokoro-tts) & MQTT system stats (okf_graph in /status)
 │   ├── model_svc.py              # Model loading, scanning, INI management (primary + mini)
 │   ├── chat_svc.py               # Streaming chat orchestration (primary + mini)
 │   ├── sse_svc.py                # Server-Sent Event management
@@ -234,7 +234,7 @@ Mobile portal at `http://localhost:8000`.
 ### Server Management
 | Endpoint | Method | Description |
 |---|---|---|
-| `/status` | `GET` | Retrieves state of both `llama-server` instances and `llm-mobile` |
+| `/status` | `GET` | Retrieves state of both `llama-server` instances and app containers (`llm-mobile`, `comfyui`, `okf-graph`, `kokoro-tts`) |
 | `/system_stats` | `GET` | System telemetry (CPU/GPU/RAM/VRAM via MQTT) |
 | `/servers/{name}/start` | `POST` | Start a managed server by name |
 | `/servers/{name}/stop` | `POST` | Stop a managed server by name |
@@ -299,6 +299,7 @@ Mobile portal at `http://localhost:8000`.
 | `/api/comfyui/status` | `GET` | ComfyUI container + HTTP readiness (`off`/`starting`/`ready`), idle seconds, auto-stop countdown |
 | `/api/comfyui/start` | `POST` | Start the ComfyUI container on demand |
 | `/api/comfyui/stop` | `POST` | Stop the ComfyUI container |
+| `/api/apps/{name}/start\|stop\|restart` | `POST` | App Manager — docker control for `llm-mobile`, `comfyui`, `okf-graph` (nginx), `kokoro-tts` (via `_MANAGED_APP_CONTAINERS` in `docker_svc.py`) |
 
 ### MCP Server (for LLM Agent Access)
 | Tool Name | Description | Safety Guardrails |
@@ -388,3 +389,6 @@ This repository implements the complete roadmap for the `llmMobile` project:
   - **Host-safe judge calls**: the wrapper passes the **exact resolved preset id** (e.g. `NVIDIA-…Q5_K_M.gguf`) into the judge pipeline instead of the lowercased user-facing id, so `localhost:8080` accepts every request (the in-pipeline default container hostname `llm-server` is not reachable from the host).
   - **Bubble-chart error bars** (`src/components/benchmark-bubble-chart.js`, Chart.js): white `±score_stddev` whiskers with end caps drawn only when `score_stddev > 0`; tooltips show `± StdDev (N runs)`.
   - **`consolidate_database()` hardening** (`utils/db_utils.py`): duplicate-model merging now re-assigns **all** runs (including `.gguf` variants) to the clean id before applying the 5-run retention window, preserves aggregate fields (`category`, `avg_*`, `score_stddev`, `runs_count`), and merges hallucinations across variants — no hard deletes of surviving history.
+
+### App Manager — okf-graph Control (Phase U)
+- **Phase U – okf-graph Docker Control**: Added `okf-graph` (`nginx:alpine`, container `okf-graph`) to the Server-tab **App Manager** grid below `comfyui`. Backend: `services/docker_svc.py` exposes `okf-graph` via `_MANAGED_APP_CONTAINERS` (`POST /api/apps/okf-graph/{start|stop|restart}`) and `get_status()` returns `okf_graph` (`_container_info("okf-graph")`) alongside `comfyui`/`kokoro`. Frontend: `src/components/server-status-card.js` renders an `okf-graph` card (status badge, image, uptime) with Start/Stop/Restart, mirroring `comfyui` without the Free-VRAM button. Polled via existing `/status`.
