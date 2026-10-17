@@ -32,8 +32,17 @@ _SERVER_URLS = {
     "llama-server-mini": "http://llm-server-mini:8080",
 }
 
+
+def _get_server_url(server: str) -> str | None:
+    if server == "strata":
+        from utils.common import get_strata_url
+        return get_strata_url()
+    return _SERVER_URLS.get(server)
+
+
+_SERVER_NAMES = ("llama-server", "llama-server-mini", "strata")
 _state_lock = threading.Lock()
-_last_activity: dict[str, float] = {name: time.time() for name in _SERVER_URLS}
+_last_activity: dict[str, float] = {name: time.time() for name in _SERVER_NAMES}
 _watchdog_task: asyncio.Task | None = None
 
 
@@ -51,17 +60,20 @@ def get_idle_seconds(server: str) -> float:
 
 
 def _server_key_from_url(server_url: str) -> str:
-    return "llama-server-mini" if "mini" in server_url else "llama-server"
+    if "strata" in server_url or ":8090" in server_url:
+        return "strata"
+    return "llama-server-mini" if "mini" in server_url or ":8081" in server_url else "llama-server"
 
 
 async def _unload_loaded_model(server: str, preset_id: str) -> bool:
-    """Unload a model from one llama-server via its /models/unload endpoint."""
-    url = _SERVER_URLS.get(server)
+    """Unload a model from an inference server (llama-server or strata)."""
+    url = _get_server_url(server)
     if not url:
         return False
+    endpoint = f"{url}/v1/unload" if server == "strata" else f"{url}/models/unload"
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            resp = await c.post(f"{url}/models/unload", json={"model": preset_id})
+            resp = await c.post(endpoint, json={"model": preset_id})
         return resp.status_code == 200
     except Exception as e:
         print(f"[LLM Idle] Unload failed for {server} '{preset_id}': {e}")
@@ -106,7 +118,7 @@ async def _llm_idle_watchdog_loop():
 
                 print(
                     f"[LLM Idle] {server} idle {LLM_IDLE_TIMEOUT_SECONDS}s — "
-                    f"unloading '{preset_id}' to free VRAM"
+                    f"unloading '{preset_id}' to free VRAM/RAM"
                 )
                 ok = await _unload_loaded_model(server, preset_id)
                 if ok:

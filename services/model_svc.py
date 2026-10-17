@@ -503,9 +503,11 @@ async def proxy_llm_strata_models():
 
 async def proxy_llm_strata_load(req: ModelActionRequest):
     from utils.common import get_strata_url
+    from services.llm_lifecycle import touch_activity
+    touch_activity("strata")
     try:
         async with httpx.AsyncClient() as c:
-            resp = await c.post(f"{get_strata_url()}/models/load", json={"model": req.model}, timeout=5)
+            resp = await c.post(f"{get_strata_url()}/v1/load", json={"model": req.model}, timeout=60)
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
@@ -513,6 +515,14 @@ async def proxy_llm_strata_load(req: ModelActionRequest):
     return {"status": "ok", "message": f"Model {req.model} selected for Strata"}
 
 async def proxy_llm_strata_unload(req: ModelActionRequest):
+    from utils.common import get_strata_url
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.post(f"{get_strata_url()}/v1/unload", json={"model": req.model}, timeout=10)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
     return {"status": "ok"}
 
 async def get_vision_capabilities_strata():

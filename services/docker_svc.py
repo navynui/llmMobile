@@ -428,12 +428,15 @@ async def get_server_slots_status() -> list[dict]:
                 loaded_model = None
                 if models_resp.status_code == 200:
                     models_data = models_resp.json()
+                    has_explicit_status = False
                     for m in models_data.get("data", []):
                         s = m.get("status")
+                        if s is not None:
+                            has_explicit_status = True
                         if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
                             loaded_model = m.get("id")
                             break
-                    if not loaded_model and models_data.get("data"):
+                    if not loaded_model and not has_explicit_status and models_data.get("data"):
                         loaded_model = models_data["data"][0].get("id")
 
                 slots_resp = None

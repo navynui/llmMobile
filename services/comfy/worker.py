@@ -206,7 +206,18 @@ async def swap_vram_for_generation(force_generate: bool = False):
                     
         if not unload_success:
             raise RuntimeError("Cannot free VRAM — unload request to llama.cpp failed.")
-            
+
+    # Unload Strata if loaded (it shares GPU 0 Tesla P100)
+    try:
+        from services.chat_svc import _get_loaded_strata_model
+        from services.model_svc import proxy_llm_strata_unload
+        loaded_strata = await _get_loaded_strata_model()
+        if loaded_strata and not force_generate:
+            print(f"[VRAM Swap] Unloading Strata model: {loaded_strata}")
+            await proxy_llm_strata_unload(ModelActionRequest(model=loaded_strata))
+    except Exception as e:
+        print(f"[VRAM Swap] Strata unload check/action failed: {e}")
+
     try:
         yield
     finally:
