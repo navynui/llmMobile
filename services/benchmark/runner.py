@@ -121,6 +121,36 @@ def _get_server_config(server: str = "primary") -> dict:
     }
 
 
+async def _free_shared_gpu_for_judge(server: str, server_url: str):
+    """Free GPU 0 before the Judge loads on the Primary server.
+
+    Strata and the Primary llama-server share the Tesla P100 (GPU 0). A Strata
+    benchmark leaves its ~15 GB model resident, so the Judge load (also on
+    GPU 0) fails with `cudaMalloc failed: out of memory`. Unload the Strata
+    model and wait for VRAM to drop before grading.
+    """
+    if server != "strata":
+        return
+    try:
+        loaded = await _get_loaded_strata_model()
+        if not loaded:
+            return
+        log_benchmark(f"Unloading Strata model '{loaded}' to free GPU 0 for the Judge...")
+        async with httpx.AsyncClient(timeout=30) as c:
+            await c.post(f"{server_url}/v1/unload", json={"model": loaded})
+        # Wait for the P100's VRAM to be released before loading the Judge.
+        from services.vram_svc import get_model_vram_gb
+        for _ in range(30):
+            vram = get_model_vram_gb(server="primary")
+            if vram is None or vram < 4.0:
+                break
+            await asyncio.sleep(2)
+        await asyncio.sleep(2)
+        log_benchmark("Strata model unloaded — GPU 0 freed for the Judge.")
+    except Exception as e:
+        log_benchmark_error(f"Failed to free GPU 0 before Judge load: {e}")
+
+
 # ── Benchmark execution tasks ──────────────────────────────────────────────────
 
 async def run_benchmark_task(
@@ -378,6 +408,7 @@ async def run_benchmark_task(
             log_benchmark("Starting AI Judge grading sequence...")
             _benchmark_progress["current_round"] = "AI Judge Grading..."
 
+            await _free_shared_gpu_for_judge(server, server_url)
             req = JudgeRequest(run_id=run_id, judge_model_id=judge_model_id)
             try:
                 await judge_benchmark(req)
@@ -771,6 +802,9 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
         if benchmark_results:
             log_benchmark(f"Batch grading {len(benchmark_results)} models with Judge: {judge_model_id}")
             broadcast_notification(f"📊 Batch grading {len(benchmark_results)} models...")
+
+            # Free GPU 0 (Strata shares it with the Primary Judge server).
+            await _free_shared_gpu_for_judge(server, server_url)
 
             # Load Judge model once
             preset_id = await _get_preset_id_for_model(judge_model_id)
