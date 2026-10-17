@@ -28,6 +28,7 @@ def get_model_vram_gb(server: str = "primary") -> Optional[float]:
     Reads from the appropriate GPU based on *server*:
       - "primary"   → Tesla P100  (16 GB), stats key vram_percent
       - "secondary" → GTX 1060     (6 GB), stats key vram_percent_gtx
+      - "strata"    → shares GPU 0 with Primary (Pascal CUDA12)
 
     Returns None if telemetry is missing or zero (model not loaded / idle).
     """
@@ -39,7 +40,8 @@ def get_model_vram_gb(server: str = "primary") -> Optional[float]:
             return None
         return round((vram_pct / 100) * VRAM_TOTAL_GB_GTX, 2)
 
-    # Primary server: prefer absolute value from nvidia-smi (memory.used in MB → GB).
+    # Primary and Strata both live on GPU 0 (Tesla P100). Prefer absolute value
+    # from nvidia-smi (memory.used in MB → GB).
     vram_used_gb = stats.get("vram_used_gb")
     if vram_used_gb is not None and vram_used_gb > 0:
         return round(vram_used_gb, 2)
@@ -154,7 +156,13 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: 
     """
     import httpx
 
-    base_url = "http://llm-server:8080" if server == "primary" else "http://llm-server-mini:8080"
+    if server == "strata":
+        from utils.common import get_strata_url
+        base_url = get_strata_url()
+    elif server == "secondary":
+        base_url = "http://llm-server-mini:8080"
+    else:
+        base_url = "http://llm-server:8080"
     start = time.time()
 
     while time.time() - start < timeout:
@@ -187,7 +195,7 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: 
         try:
             from services.docker_svc import get_logs as _get_logs
 
-            container_name = "llm-server-mini" if server == "secondary" else "llm-server"
+            container_name = "llm-server-mini" if server == "secondary" else "strata" if server == "strata" else "llm-server"
             logs_resp = await asyncio.get_event_loop().run_in_executor(
                 None, lambda: _get_logs(container_name, lines=100)
             )

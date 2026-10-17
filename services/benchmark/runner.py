@@ -15,9 +15,9 @@ from services.vram_svc import capture_and_store_vram, wait_for_idle_trigger
 from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_benchmark_log_if_needed
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
-from services.chat_svc import _get_loaded_model, _get_loaded_mini_model
+from services.chat_svc import _get_loaded_model, _get_loaded_mini_model, _get_loaded_strata_model
 from services.model_svc import _get_preset_id_for_model, MINI_SERVER_URL
-from utils.common import get_quantization_from_name
+from utils.common import get_quantization_from_name, get_strata_url
 from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
 from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
@@ -90,17 +90,34 @@ RETRY_PAUSE_SECONDS = 5
 # ── Server-aware helpers ──────────────────────────────────────────────────
 
 def _get_server_config(server: str = "primary") -> dict:
-    """Return URL and loaded-model helper for the given server."""
+    """Return URLs, load/unload endpoints, and loaded-model helper for the given server.
+
+    Strata uses different load/unload endpoints (`/v1/load`, `/v1/unload`) than
+    the llama-server instances (`/models/load`, `/models/unload`).
+    """
+    if server == "strata":
+        strata_url = get_strata_url()
+        return {
+            "server_url": strata_url,
+            "chat_url": f"{strata_url}/v1/chat/completions",
+            "get_loaded": _get_loaded_strata_model,
+            "load_url": f"{strata_url}/v1/load",
+            "unload_url": f"{strata_url}/v1/unload",
+        }
     if server == "secondary":
         return {
             "server_url": MINI_SERVER_URL,
             "chat_url": f"{MINI_SERVER_URL}/v1/chat/completions",
             "get_loaded": _get_loaded_mini_model,
+            "load_url": f"{MINI_SERVER_URL}/models/load",
+            "unload_url": f"{MINI_SERVER_URL}/models/unload",
         }
     return {
         "server_url": "http://llm-server:8080",
         "chat_url": "http://llm-server:8080/v1/chat/completions",
         "get_loaded": _get_loaded_model,
+        "load_url": "http://llm-server:8080/models/load",
+        "unload_url": "http://llm-server:8080/models/unload",
     }
 
 
@@ -409,7 +426,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
     server_url = cfg["server_url"]
     api_url = cfg["chat_url"]
     get_loaded_model_fn = cfg["get_loaded"]
-    load_model_url = f"{server_url}/models/load"
+    load_model_url = cfg["load_url"]
     mini_url = MINI_SERVER_URL
     _benchmark_progress["server"] = server
     _benchmark_progress["running"] = True

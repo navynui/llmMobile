@@ -15,14 +15,26 @@ from utils.bench_log import BENCHMARK_LOG_DIR, BENCHMARK_EXECUTION_LOG, _rotate_
 from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
 from services.chat_svc import _get_loaded_model
-from services.model_svc import _get_preset_id_for_model, _list_models_from_ini, MINI_MODELS_INI
+from services.model_svc import _get_preset_id_for_model, _list_models_from_ini, MINI_MODELS_INI, list_strata_models
 from utils.common import get_quantization_from_name
 
 # ── Server platform labels ─────────────────────────────────────────────────────
 _PLATFORM_LABELS = {
     "primary": "Tesla P100 (16GB)",
     "secondary": "GTX 1060 (6GB)",
+    "strata": "Strata (Pascal CUDA12)",
 }
+
+# Total VRAM (GB) per server. Strata shares GPU 0 with the Primary P100.
+_VRAM_TOTALS = {
+    "primary": 16.0,
+    "secondary": 6.0,
+    "strata": 16.0,
+}
+
+
+def _get_vram_total(server: str) -> float:
+    return _VRAM_TOTALS.get(server, 16.0)
 
 def _get_platform(server: str) -> str:
     return _PLATFORM_LABELS.get(server, "Tesla P100 (16GB)")
@@ -180,7 +192,7 @@ def _build_capabilities_lookup():
 
 # ── Query endpoints ─────────────────────────────────────────────────────────────
 
-def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict:
+async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict:
     """Return benchmark list (fulfills /api/benchmarks)."""
     try:
         # Gather model filenames from both INI files
@@ -230,6 +242,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
         benchmarks = []
         primary_tested_names = set()
         secondary_tested_names = set()
+        strata_tested_names = set()
 
         for r in rows:
             avg_tps = r["avg_tps"] or r["agg_avg_tps"] or 0.0
@@ -253,6 +266,20 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 is_model_ready = (name_low in secondary_ready) or (model_id_low in secondary_ready)
                 in_models_ini = False
                 in_modelg_ini = in_secondary
+                in_strata = False
+            elif bench_server == "strata":
+                strata_tested_names.add(name_low)
+                strata_tested_names.add(model_id_low)
+                strata_tested_names.add(_clean_model_id(r["model_id"]))
+                if name_low.endswith(".gguf"):
+                    strata_tested_names.add(name_low[:-5])
+                else:
+                    strata_tested_names.add(name_low + ".gguf")
+                # Strata models are served dynamically (no INI); mark ready when tested.
+                is_model_ready = True
+                in_models_ini = False
+                in_modelg_ini = False
+                in_strata = True
             else:
                 primary_tested_names.add(name_low)
                 primary_tested_names.add(model_id_low)
@@ -263,6 +290,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 is_model_ready = (name_low in primary_ready) or (model_id_low in primary_ready)
                 in_models_ini = in_primary
                 in_modelg_ini = False
+                in_strata = False
 
             if not show_all:
                 if avg_tps < 20.0 or hallucinated or total_score < 50:
@@ -284,7 +312,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                     effective_vram = None
             else:
                 effective_vram = r["run_vram_gb"] if r["run_vram_gb"] is not None else r["model_vram_gb"]
-            vram_total = 16.0 if bench_server == "primary" else 6.0
+            vram_total = _get_vram_total(bench_server)
 
             def _lookup_caps(key_low):
                 caps = cap_lookup.get(key_low) or {}
@@ -317,6 +345,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 "is_tested": True,
                 "in_models_ini": in_models_ini,
                 "in_modelg_ini": in_modelg_ini,
+                "in_strata": in_strata,
                 "has_mmproj": caps.get("has_mmproj", False),
                 "has_mtp": caps.get("has_mtp", False),
             })
@@ -344,7 +373,7 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                             filename = base_name + ".gguf"
                             if filename.lower() not in tested_set and base_name.lower() not in tested_set:
                                 db_status, db_vram = _db_lookup_model(filename)
-                                vram_total = 16.0 if default_server == "primary" else 6.0
+                                vram_total = _get_vram_total(default_server)
                                 caps = cap_lookup.get(filename.lower(), {})
                                 file_ready = os.path.exists(os.path.join(MODELS_DIR, filename))
                                 benchmarks.append({
@@ -367,11 +396,49 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                                     "is_tested": False,
                                     "in_models_ini": (default_server == "primary"),
                                     "in_modelg_ini": (default_server == "secondary"),
+                                    "in_strata": False,
                                     "has_mmproj": caps.get("has_mmproj", False),
                                     "has_mtp": caps.get("has_mtp", False),
                                 })
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
+
+        # Append untested models served by Strata (no INI — discovered dynamically).
+        try:
+            strata_models = await list_strata_models()
+            for sm in strata_models.get("models", []):
+                mid = sm.get("filename")
+                if not mid:
+                    continue
+                mid_low = mid.lower()
+                if mid_low in strata_tested_names or _clean_model_id(mid) in strata_tested_names:
+                    continue
+                benchmarks.append({
+                    "model_id": mid,
+                    "model": mid,
+                    "platform": _get_platform("strata"),
+                    "server": "strata",
+                    "quant": get_quantization_from_name(mid),
+                    "tokens_sec": None,
+                    "score": None,
+                    "avg_score": None,
+                    "score_stddev": 0.0,
+                    "runs_count": 0,
+                    "category": "unclassified",
+                    "category_label": "❓ Unclassified",
+                    "vram_gb": None,
+                    "vram_total_gb": _get_vram_total("strata"),
+                    "status": "testing",
+                    "is_ready": True,
+                    "is_tested": False,
+                    "in_models_ini": False,
+                    "in_modelg_ini": False,
+                    "in_strata": True,
+                    "has_mmproj": False,
+                    "has_mtp": False,
+                })
+        except Exception as e:
+            print(f"[Benchmarks API] Failed to append Strata models: {e}")
 
         if server:
             s_low = server.lower()
@@ -379,6 +446,8 @@ def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict
                 benchmarks = [b for b in benchmarks if b.get("in_models_ini")]
             elif s_low == "secondary":
                 benchmarks = [b for b in benchmarks if b.get("in_modelg_ini")]
+            elif s_low == "strata":
+                benchmarks = [b for b in benchmarks if b.get("in_strata")]
 
         return {"benchmarks": benchmarks}
     except Exception as e:
@@ -465,7 +534,7 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
                 effective_vram = None
         else:
             effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
-        total_gpu = 6.0 if server == "secondary" else 16.0
+        total_gpu = _get_vram_total(server)
 
         return {
             "model_id": model_row["model_id"],

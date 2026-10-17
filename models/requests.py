@@ -1,5 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
+
+_ALLOWED_SERVERS = ("primary", "secondary", "strata")
 
 class ModelsIniRequest(BaseModel):
     content: str
@@ -48,6 +50,13 @@ class BenchmarkRunRequest(BaseModel):
     run_count: Optional[int] = 1
     temperature: Optional[float] = 0.7
 
+    @field_validator("server")
+    @classmethod
+    def _validate_server(cls, v: str) -> str:
+        if v not in _ALLOWED_SERVERS:
+            raise ValueError(f"server must be one of {_ALLOWED_SERVERS}")
+        return v
+
 
 class BenchmarkQueueRequest(BaseModel):
     models: list[str]
@@ -56,6 +65,13 @@ class BenchmarkQueueRequest(BaseModel):
     execution_mode: Optional[str] = "full"
     run_count: Optional[int] = 1
     temperature: Optional[float] = 0.7
+
+    @field_validator("server")
+    @classmethod
+    def _validate_server(cls, v: str) -> str:
+        if v not in _ALLOWED_SERVERS:
+            raise ValueError(f"server must be one of {_ALLOWED_SERVERS}")
+        return v
 
 class TemperatureSweepRequest(BaseModel):
     judge_model_id: Optional[str] = None

@@ -64,13 +64,20 @@ export async function fetchBenchmarkStatus(ctx) {
 
 export async function fetchActiveModelId(ctx) {
   try {
-    const endpoint = ctx.selectedBenchmarkServer === 'secondary' ? '/api/llm-mini/models' : '/api/llm/models';
+    const endpoint = ctx.selectedBenchmarkServer === 'secondary' ? '/api/llm-mini/models'
+                   : ctx.selectedBenchmarkServer === 'strata' ? '/api/llm-strata/models'
+                   : '/api/llm/models';
     const res = await fetch(endpoint);
     if (res.ok) {
       const data = await res.json();
-      const loadedModel = data.data?.find(
+      let loadedModel = data.data?.find(
         m => m.status === 'loaded' || m.status?.value === 'loaded'
       );
+      // Strata does not always report an explicit per-model status; fall back to
+      // the first listed model so a Strata benchmark can still be started.
+      if (!loadedModel && ctx.selectedBenchmarkServer === 'strata' && data.data?.length) {
+        loadedModel = data.data[0];
+      }
       ctx.activeModelId = loadedModel ? loadedModel.id : '';
       if (ctx.activeModelId && !ctx.selectedJudgeModelId) {
         ctx.selectedJudgeModelId = ctx.activeModelId;
@@ -278,12 +285,14 @@ export function getFilteredAndSortedBenchmarks(ctx) {
     list = list.filter(b => b.in_models_ini ?? (b.server === 'primary'));
   } else if (filter === 'secondary') {
     list = list.filter(b => b.in_modelg_ini ?? (b.server === 'secondary'));
+  } else if (filter === 'strata') {
+    list = list.filter(b => b.in_strata ?? (b.server === 'strata'));
   } else {
-    // 'all' (default): show models from both ini files
+    // 'all' (default): show models from all configured server sources
     if (ctx.showOfflineModels) {
-      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || !b.is_ready);
+      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || (b.in_strata ?? (b.server === 'strata')) || !b.is_ready);
     } else {
-      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')));
+      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || (b.in_strata ?? (b.server === 'strata')));
     }
   }
 

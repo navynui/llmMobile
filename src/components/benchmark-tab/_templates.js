@@ -161,6 +161,7 @@ export function renderBenchmarksView(ctx) {
             <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 500;">Test Server:</span>
             <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'primary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'primary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'primary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'primary'; fetchActiveModelId(ctx); }}">Primary (Tesla P100)</button>
             <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'secondary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'secondary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'secondary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'secondary'; fetchActiveModelId(ctx); }}">Secondary (GTX 1060)</button>
+            <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.selectedBenchmarkServer === 'strata' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.selectedBenchmarkServer === 'strata' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.selectedBenchmarkServer === 'strata' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.selectedBenchmarkServer = 'strata'; fetchActiveModelId(ctx); }}">Strata (Pascal)</button>
           </div>
 
           <!-- Execution Mode & Run Count -->
@@ -296,6 +297,7 @@ export function renderBenchmarksView(ctx) {
           <button class="pill ${(ctx.platformFilter || 'all') === 'all' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'all'}">All</button>
           <button class="pill ${ctx.platformFilter === 'primary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'primary'}">Primary</button>
           <button class="pill ${ctx.platformFilter === 'secondary' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'secondary'}">Secondary</button>
+          <button class="pill ${ctx.platformFilter === 'strata' ? 'active' : ''}" @click="${() => ctx.platformFilter = 'strata'}">Strata</button>
           
           <span style="font-size: 0.72rem; color: var(--text-secondary); margin-left: 8px;">Category:</span>
           <button class="pill ${(ctx.categoryFilter || 'all') === 'all' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'all'}">All</button>
@@ -379,7 +381,7 @@ export function renderBenchmarksView(ctx) {
                             <span style="color: var(--text-muted); font-style: italic; font-size: 0.82rem;">${b.model}</span>
                           `}
                           ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.6rem; padding: 1px 5px;">⚖️ Judge</span>` : ''}
-                          ${b.server ? html`<span class="meta-badge" style="background: ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; color: ${b.server === 'secondary' ? '#fbbf24' : '#34d399'}; border: 1px solid ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.3)' : 'rgba(16, 185, 129, 0.3)'}; font-size: 0.6rem; padding: 1px 5px;">${b.server === 'secondary' ? '🟠 Secondary' : '🟢 Primary'}</span>` : ''}
+                          ${b.server ? html`<span class="meta-badge" style="background: ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.15)' : b.server === 'strata' ? 'rgba(96, 165, 250, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; color: ${b.server === 'secondary' ? '#fbbf24' : b.server === 'strata' ? '#60a5fa' : '#34d399'}; border: 1px solid ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.3)' : b.server === 'strata' ? 'rgba(96, 165, 250, 0.3)' : 'rgba(16, 185, 129, 0.3)'}; font-size: 0.6rem; padding: 1px 5px;">${b.server === 'secondary' ? '🟠 Secondary' : b.server === 'strata' ? '🔵 Strata' : '🟢 Primary'}</span>` : ''}
                           ${b.is_tested ? (b.status === 'aborted' ? html`<span class="meta-badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">⛔ Aborted</span>` : html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>`) : ''}
                           ${b.is_ready ?
                             html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">🟢 Ready</span>` :
