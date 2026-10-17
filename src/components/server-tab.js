@@ -55,7 +55,9 @@ export class ServerTab extends LitElement {
       servers: [
         { name: 'llama-server', container: 'llm-server', label: 'Primary (llama-server)', status: 'stopped', image: null, uptime: null },
         { name: 'llama-server-mini', container: 'llm-server-mini', label: 'Secondary (llama-server-mini)', status: 'stopped', image: null, uptime: null },
+        { name: 'strata', container: 'strata', label: 'Strata (strata)', status: 'stopped', image: null, uptime: null },
       ],
+
     };
     this.models = [];
     this.activeModel = '';

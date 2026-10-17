@@ -49,7 +49,9 @@ def set_docker_client(client):
 _MANAGED_LLM_SERVERS = [
     {"name": "llama-server",      "container": "llm-server",      "label": "Primary (llama-server)"},
     {"name": "llama-server-mini", "container": "llm-server-mini", "label": "Secondary (llama-server-mini)"},
+    {"name": "strata",            "container": "strata",          "label": "Strata (strata)"},
 ]
+
 
 def _llm_server_by_name(name: str) -> dict | None:
     for entry in _MANAGED_LLM_SERVERS:
@@ -182,18 +184,45 @@ def start_llm_server(name: str):
     entry = _llm_server_by_name(name)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown managed server '{name}'.")
+    if entry["name"] == "strata":
+        if not _docker_client:
+            raise HTTPException(status_code=500, detail="Docker client not initialized.")
+        try:
+            c = _docker_client.containers.get(entry["container"])
+            c.start()
+            return {"detail": f"Started {entry['container']}"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     return _start_llm_service(entry["name"], entry["container"])
 
 def stop_llm_server(name: str):
     entry = _llm_server_by_name(name)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown managed server '{name}'.")
+    if entry["name"] == "strata":
+        if not _docker_client:
+            raise HTTPException(status_code=500, detail="Docker client not initialized.")
+        try:
+            c = _docker_client.containers.get(entry["container"])
+            c.stop(timeout=10)
+            return {"detail": f"Stopped {entry['container']}"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     return _stop_llm_container(entry["container"])
 
 def restart_llm_server(name: str):
     entry = _llm_server_by_name(name)
     if not entry:
         raise HTTPException(status_code=404, detail=f"Unknown managed server '{name}'.")
+    if entry["name"] == "strata":
+        if not _docker_client:
+            raise HTTPException(status_code=500, detail="Docker client not initialized.")
+        try:
+            c = _docker_client.containers.get(entry["container"])
+            c.restart(timeout=10)
+            return {"detail": f"Restarted {entry['container']}"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
     stop_result = _stop_llm_container(entry["container"])
     start_result = _start_llm_service(entry["name"], entry["container"])
     return {
@@ -201,6 +230,7 @@ def restart_llm_server(name: str):
         "stop": stop_result,
         "start": start_result,
     }
+
 
 # ── App container management (non-LLM services) ─────────────────────────────
 
@@ -371,7 +401,16 @@ async def get_server_slots_status() -> list[dict]:
 
     results = []
     for entry in _MANAGED_LLM_SERVERS:
-        base_url = "http://llm-server:8080" if entry["name"] == "llama-server" else "http://llm-server-mini:8080"
+        if entry["name"] == "llama-server":
+            base_url = "http://llm-server:8080"
+        elif entry["name"] == "llama-server-mini":
+            base_url = "http://llm-server-mini:8080"
+        elif entry["name"] == "strata":
+            from utils.common import get_strata_url
+            base_url = get_strata_url()
+        else:
+            base_url = "http://llm-server:8080"
+
         container_name = entry["container"]
         info = {"name": entry["name"], "container": container_name, "label": entry["label"], "slots": [], "processing": False, "loaded_model": None, "error": None}
 
@@ -394,25 +433,30 @@ async def get_server_slots_status() -> list[dict]:
                         if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
                             loaded_model = m.get("id")
                             break
+                    if not loaded_model and models_data.get("data"):
+                        loaded_model = models_data["data"][0].get("id")
 
+                slots_resp = None
                 if loaded_model:
                     info["loaded_model"] = loaded_model
-                    # /slots requires ?model= query param with the loaded model name
                     slots_resp = await client.get(f"{base_url}/slots", params={"model": loaded_model})
-                    if slots_resp.status_code == 200:
-                        slots = slots_resp.json()
-                        info["slots"] = slots
-                        # A slot is processing if its state != 0 or is_processing is True
-                        info["processing"] = any(
-                            slot.get("state", 0) != 0 or slot.get("is_processing", False)
-                            for slot in slots
-                        )
-                    else:
-                        info["error"] = f"Slots endpoint returned {slots_resp.status_code}"
                 else:
-                    # No model loaded — no slots to check, server is idle
+                    slots_resp = await client.get(f"{base_url}/slots")
+
+                if slots_resp and slots_resp.status_code == 200:
+                    slots = slots_resp.json()
+                    info["slots"] = slots
+                    # A slot is processing if its state != 0 or is_processing is True
+                    info["processing"] = any(
+                        slot.get("state", 0) != 0 or slot.get("is_processing", False)
+                        for slot in slots
+                    )
+                elif slots_resp:
+                    info["error"] = f"Slots endpoint returned {slots_resp.status_code}"
+                else:
                     info["slots"] = []
                     info["processing"] = False
+
         except Exception as e:
             info["error"] = str(e)
 

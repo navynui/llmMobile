@@ -136,4 +136,16 @@ def test_strata_endpoints(mock_docker):
     resp_chat = client.post("/api/chat-strata/completions", json={"messages": [{"role": "user", "content": "hi"}]})
     assert resp_chat.status_code in (200, 400, 422, 502)
 
+    # Strata in /status
+    status_resp = client.get("/status")
+    assert status_resp.status_code == 200
+    servers = status_resp.json().get("servers", [])
+    assert any(s["name"] == "strata" for s in servers)
+
+    # Strata server control actions
+    assert client.post("/servers/strata/start").status_code == 200
+    assert client.post("/servers/strata/stop").status_code == 200
+    assert client.post("/servers/strata/restart").status_code == 200
+
+
 

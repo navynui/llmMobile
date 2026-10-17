@@ -182,12 +182,19 @@ export class ServerLogs extends LitElement {
                 LLM Server
               </button>
               <button 
+                class="logs-tab-btn ${this.logContainer === 'strata' ? 'active' : ''}" 
+                @click="${() => this._switchLogsTab('strata')}"
+              >
+                Strata
+              </button>
+              <button 
                 class="logs-tab-btn ${this.logContainer === 'llm-mobile' ? 'active' : ''}" 
                 @click="${() => this._switchLogsTab('llm-mobile')}"
               >
                 Manager
               </button>
             </div>
+
 
             <div style="display: flex; gap: 6px; align-items: center; font-size: 0.85rem;">
               <span>Lines:</span>
