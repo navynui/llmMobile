@@ -17,6 +17,7 @@ export function renderChat(ctx) {
         <span class="server-label" style="font-size: 0.75rem; color: var(--text-muted); font-weight: 500;">Chat Server:</span>
         <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'primary' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'primary' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'primary' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'primary'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); logic.fetchAvailableModels(ctx); }}">Primary</button>
         <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'mini' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'mini' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'mini' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'mini'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); logic.fetchAvailableModels(ctx); }}">Secondary</button>
+        <button style="padding: 4px 12px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.chatServer === 'strata' ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.chatServer === 'strata' ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.chatServer === 'strata' ? '#a5b4fc' : 'var(--text-secondary)'};" @click="${() => { ctx.chatServer = 'strata'; logic.checkVisionSupport(ctx); logic.checkModelStatus(ctx); logic.fetchAvailableModels(ctx); }}">Strata</button>
         <button style="padding: 4px 10px; font-size: 0.75rem; font-weight: 600; border-radius: var(--radius-full); cursor: pointer; border: 1px solid ${ctx.toolsEnabled ? 'var(--primary)' : 'rgba(255,255,255,0.1)'}; background: ${ctx.toolsEnabled ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)'}; color: ${ctx.toolsEnabled ? '#a5b4fc' : 'var(--text-secondary)'}; margin-left: 8px;" @click="${() => { ctx.toolsEnabled = !ctx.toolsEnabled; }}" title="Enable AI tools (web search, file operations)">
           🛠️ Tools ${ctx.toolsEnabled ? 'ON' : 'OFF'}
         </button>
@@ -25,10 +26,14 @@ export function renderChat(ctx) {
             @change="${(e) => logic.selectModel(ctx, e.target.value)}"
             ?disabled="${ctx.loadingModel}">
             <option value="">${ctx.loadingModel ? '⏳ Loading...' : '— Select model —'}</option>
+            ${!ctx.availableModels.some(m => m.filename === ctx.loadedModelName) && ctx.loadedModelName ? html`
+              <option value="${ctx.loadedModelName}" selected>${ctx.loadedModelName}</option>
+            ` : ''}
             ${ctx.availableModels.map(m => html`
               <option value="${m.filename}" ?selected="${m.filename === ctx.loadedModelName}">${m.filename}</option>
             `)}
           </select>
+
           ${ctx.loadedModelName ? html`<span style="color: #22c55e; font-size: 0.75rem;">●</span>` : ''}
           ${ctx.loadingModel ? html`<span style="color: #f59e0b; font-size: 0.75rem;">⏳</span>` : ''}
         </div>

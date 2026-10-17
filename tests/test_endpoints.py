@@ -19,7 +19,11 @@ def test_routes_exist(mock_docker):
         "/api/benchmarks/run", "/api/benchmarks/status", "/api/benchmarks/logs",
         "/api/benchmarks/outputs", "/api/benchmarks/judge",
         "/api/logs", "/manifest.json",
+        "/models-strata", "/models-strata/vision-capabilities",
+        "/api/llm-strata/models", "/api/llm-strata/models/load", "/api/llm-strata/models/unload",
+        "/api/chat-strata/completions",
     }
+
     actual_paths = {route.path for route in app.routes}
     for path in expected_paths:
         assert path in actual_paths, f"Route {path} is missing!"
@@ -108,4 +112,28 @@ def test_benchmarks_ini_filtering(mock_docker):
     assert resp_s.status_code == 200
     for b in resp_s.json()["benchmarks"]:
         assert b["in_modelg_ini"] is True
+
+def test_strata_endpoints(mock_docker):
+    from app.main import app
+    client = TestClient(app)
+    resp_models = client.get("/models-strata")
+    assert resp_models.status_code == 200
+    assert "models" in resp_models.json()
+
+    resp_llm_models = client.get("/api/llm-strata/models")
+    assert resp_llm_models.status_code == 200
+
+    resp_vision = client.get("/models-strata/vision-capabilities")
+    assert resp_vision.status_code == 200
+    assert "models" in resp_vision.json()
+
+    resp_load = client.post("/api/llm-strata/models/load", json={"model": "test"})
+    assert resp_load.status_code == 200
+
+    resp_unload = client.post("/api/llm-strata/models/unload", json={"model": "test"})
+    assert resp_unload.status_code == 200
+
+    resp_chat = client.post("/api/chat-strata/completions", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp_chat.status_code in (200, 400, 422, 502)
+
 

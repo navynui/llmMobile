@@ -29,14 +29,16 @@ The app supports **server-side tool/function-calling** when the Chat tab's 🛠�
 All tool orchestration happens in `services/tools/chat.py` → `chat_with_tools()`. Tool rounds use non-streaming requests; the **final** assistant response is always streamed token-by-token with full `reasoning_content` preservation.
 
 ### Multi-Server Architecture
-The app manages **two independent `llama-server` instances**:
+The app manages **two independent `llama-server` instances** plus the **Strata inference endpoint**:
 
-| Server | Container | Port | GPU | INI File |
+| Server | Container / Host | Port | GPU / Details | INI / Config |
 |---|---|---|---|---|
 | **Primary** | `llm-server` | 8080 | GPU 0 (Tesla P100) | `models.ini` |
 | **Secondary** | `llm-server-mini` | 8081 | GPU 1 (GTX 1060) | `modelg.ini` |
+| **Strata** | `strata` (`localhost:8090`) | 8090 | Pascal CUDA12 | Auto-detected (`/models`) |
 
-Both servers share the `/models` volume but maintain separate preset configs and can load different models simultaneously.
+Primary and Secondary share the `/models` volume with dedicated INI files, while Strata exposes port 8090 (`host.docker.internal:8090` / `localhost:8090`) accessible from the Chat tab.
+
 
 ### ComfyUI On-Demand Lifecycle
 ComfyUI (the `comfyui` container, port 8188) is managed on demand via the Docker SDK (`services/comfy/lifecycle.py`):
@@ -92,7 +94,8 @@ The backend is a **thin FastAPI router** (`app/main.py`) that delegates all busi
 * **`docker_svc.py`**: Container lifecycle (start/stop/restart for both `llama-server` and `llama-server-mini` + App Manager containers `llm-mobile`/`comfyui`/`okf-graph`/`kokoro-tts` via `_MANAGED_APP_CONTAINERS` + `get_status()` → `okf_graph`), system stats via MQTT (Tesla P100 + GTX 1060), log retrieval, self-healing MQTT telemetry listener (reconnect + stale-data watchdog).
 * **`llm_lifecycle.py`**: LLM idle-unload watchdog — unloads the loaded model from each llama-server after `LLM_IDLE_UNLOAD_SECONDS` (default 600s) of no inference activity to free VRAM per GPU; guarded against benchmarks and active ComfyUI generation. Mirrors the ComfyUI idle-watchdog pattern.
 * **`model_svc.py`**: Model scanning, loading, INI management (`models.ini` + `modelg.ini`), weight deletion — supports both primary and mini servers.
-* **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports both primary (`/api/chat/completions`) and mini (`/api/chat-mini/completions`) servers.
+* **`chat_svc.py`**: Multi-round LLM prompt orchestration, streaming responses — supports primary (`/api/chat/completions`), mini (`/api/chat-mini/completions`), and strata (`/api/chat-strata/completions`) servers.
+
 * **`sse_svc.py`**: Server-Sent Event subscription management.
 * **`gallery_svc.py`**: Image gallery CRUD, metadata extraction, file cleanup.
 * **`push_svc.py`**: Push notification dispatching.

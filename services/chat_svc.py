@@ -83,3 +83,45 @@ async def proxy_chat_mini(request: Request):
                 yield json.dumps({"error": {"message": str(e), "type": "proxy_error"}}).encode()
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+
+# ── strata ──────────────────────────────────────────────────────────────────
+
+async def _get_loaded_strata_model() -> Optional[str]:
+    try:
+        from utils.common import get_strata_url
+        async with httpx.AsyncClient() as c:
+            data = (await c.get(f"{get_strata_url()}/models", timeout=3)).json()
+            for m in data.get("data", []):
+                s = m.get("status")
+                if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
+                    return m.get("id")
+            models = data.get("data", [])
+            if models and "id" in models[0]:
+                return models[0]["id"]
+    except Exception:
+        pass
+    return None
+
+async def proxy_chat_strata(request: Request):
+    from utils.common import get_strata_url
+    body = await request.body()
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        data = {}
+    if not str(data.get("model", "")).strip():
+        data["model"] = await _get_loaded_strata_model() or "default"
+    body = json.dumps(data).encode()
+
+    async def _stream():
+        async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as c:
+            try:
+                async with c.stream("POST", f"{get_strata_url()}/v1/chat/completions",
+                                    content=body, headers={"Content-Type": "application/json"}) as r:
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+            except Exception as e:
+                yield json.dumps({"error": {"message": str(e), "type": "proxy_error"}}).encode()
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+

@@ -17,7 +17,15 @@ function _api(ctx, endpoint) {
       load: '/api/llm-mini/models/load',
       ini: '/models-mini',
     },
+    strata: {
+      chat_completions: '/api/chat-strata/completions',
+      models: '/api/llm-strata/models',
+      vision: '/models-strata/vision-capabilities',
+      load: '/api/llm-strata/models/load',
+      ini: '/models-strata',
+    },
   };
+
   const srv = ctx.chatServer || 'primary';
   return (apis[srv] || apis.primary)[endpoint];
 }

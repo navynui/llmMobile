@@ -37,8 +37,11 @@ from services.model_svc import (
     list_mini_models, delete_model_from_mini, get_models_mini_ini, save_models_mini_ini,
     proxy_llm_mini_models, proxy_llm_mini_load, proxy_llm_mini_unload,
     scan_mini_and_register,
+    list_strata_models, proxy_llm_strata_models, proxy_llm_strata_load, proxy_llm_strata_unload,
+    get_vision_capabilities_strata,
 )
-from services.chat_svc import proxy_chat, proxy_chat_mini
+from services.chat_svc import proxy_chat, proxy_chat_mini, proxy_chat_strata
+
 from services.tools import chat_with_tools
 from services.sse_svc import stream_status, startup as sse_startup, broadcast_notification
 from services.comfy.worker import queue_worker
@@ -248,6 +251,39 @@ async def route_proxy_chat_mini(request: Request):
     if "tools" in data:
         return await chat_with_tools(request, "http://llm-server-mini:8080")
     return await proxy_chat_mini(request)
+
+@app.get("/models-strata")
+async def route_list_strata_models():
+    return await list_strata_models()
+
+@app.get("/models-strata/vision-capabilities")
+async def route_get_vision_capabilities_strata():
+    return await get_vision_capabilities_strata()
+
+@app.get("/api/llm-strata/models")
+async def route_proxy_llm_strata_models():
+    return await proxy_llm_strata_models()
+
+@app.post("/api/llm-strata/models/load")
+async def route_proxy_llm_strata_load(req: ModelActionRequest):
+    return await proxy_llm_strata_load(req)
+
+@app.post("/api/llm-strata/models/unload")
+async def route_proxy_llm_strata_unload(req: ModelActionRequest):
+    return await proxy_llm_strata_unload(req)
+
+@app.post("/api/chat-strata/completions")
+async def route_proxy_chat_strata(request: Request):
+    from utils.common import get_strata_url
+    body = await request.body()
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        data = {}
+    if "tools" in data:
+        return await chat_with_tools(request, get_strata_url())
+    return await proxy_chat_strata(request)
+
 
 # ───────────────────────────────────────────────
 # SSE – /events/status

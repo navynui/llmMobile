@@ -468,3 +468,81 @@ async def scan_mini_and_register():
                 continue
             added_count += 1
     return {"detail": f"Scan complete. Added {added_count} models to modelg.ini."}
+
+# ── strata ──────────────────────────────────────────────────────────────────
+
+async def list_strata_models():
+    from utils.common import get_strata_url
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(f"{get_strata_url()}/models", timeout=3)
+            if resp.status_code == 200:
+                data = resp.json()
+                models = []
+                for m in data.get("data", []):
+                    mid = m.get("id", "")
+                    if mid:
+                        models.append({
+                            "filename": mid,
+                            "is_default": True,
+                            "has_mmproj": False,
+                            "has_mtp": False
+                        })
+                return {"models": models}
+    except Exception:
+        pass
+    return {"models": []}
+
+async def proxy_llm_strata_models():
+    from utils.common import get_strata_url
+    async with httpx.AsyncClient() as c:
+        try:
+            return (await c.get(f"{get_strata_url()}/models", timeout=5)).json()
+        except Exception:
+            return {"data": []}
+
+async def proxy_llm_strata_load(req: ModelActionRequest):
+    from utils.common import get_strata_url
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.post(f"{get_strata_url()}/models/load", json={"model": req.model}, timeout=5)
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception:
+        pass
+    return {"status": "ok", "message": f"Model {req.model} selected for Strata"}
+
+async def proxy_llm_strata_unload(req: ModelActionRequest):
+    return {"status": "ok"}
+
+async def get_vision_capabilities_strata():
+    from utils.common import get_strata_url
+    try:
+        async with httpx.AsyncClient() as c:
+            resp = await c.get(f"{get_strata_url()}/models", timeout=3)
+            data = resp.json() if resp.status_code == 200 else {}
+    except Exception:
+        data = {}
+
+    strata_vision = False
+    try:
+        async with httpx.AsyncClient() as c:
+            p_resp = await c.get(f"{get_strata_url()}/props", timeout=3)
+            if p_resp.status_code == 200:
+                p_data = p_resp.json()
+                strata_vision = bool(p_data.get("modalities", {}).get("vision", False))
+    except Exception:
+        pass
+
+    models_metadata = {}
+    for m in data.get("data", []):
+        mid = m.get("id") or str(m.get("model_id", ""))
+        mid_lower = mid.lower()
+        has_vision = strata_vision or any(x in mid_lower for x in ["mmproj", "clip_l", "llava", "moondream", "vision"])
+        models_metadata[mid] = {
+            "model_id": mid,
+            "vision_capable": has_vision,
+            "has_mmproj": False
+        }
+    return {"models": models_metadata}
+

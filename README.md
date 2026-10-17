@@ -270,6 +270,7 @@ Mobile portal at `http://localhost:8000`.
 |---|---|---|
 | `/api/chat/completions` | `POST` | Stream chat from primary server (supports `tools` param for tool calling) |
 | `/api/chat-mini/completions` | `POST` | Stream chat from secondary server (supports `tools` param for tool calling) |
+| `/api/chat-strata/completions` | `POST` | Stream chat from Strata server (supports `tools` param for tool calling) |
 
 > **Tool calling:** When the request body includes a `tools` array, the backend switches to server-side orchestration mode. Tool rounds use non-streaming requests for proper tool-call detection; the *final* assistant response is always streamed token-by-token with full `reasoning_content` preservation.
 
@@ -278,6 +279,8 @@ Mobile portal at `http://localhost:8000`.
 |---|---|---|
 | `/models/vision-capabilities` | `GET` | mmproj/vision detection on primary server |
 | `/models-mini/vision-capabilities` | `GET` | mmproj/vision detection on secondary server |
+| `/models-strata/vision-capabilities` | `GET` | mmproj/vision detection on Strata server |
+
 
 ### Benchmarks
 | Endpoint | Method | Description |

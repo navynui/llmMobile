@@ -60,6 +60,22 @@ LLM_COMPOSE_DIR = os.environ.get("LLM_COMPOSE_DIR", "/llm-server")
 COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "host.docker.internal:8188")
 COMFY_CLIENT_ID = "llm-mobile"
 
+STRATA_HOST = os.environ.get("STRATA_HOST")
+if not STRATA_HOST:
+    STRATA_HOST = "host.docker.internal:8090" if os.path.exists("/.dockerenv") else "localhost:8090"
+STRATA_URL = os.environ.get("STRATA_URL", f"http://{STRATA_HOST}")
+
+def get_strata_url() -> str:
+    if os.environ.get("STRATA_URL"):
+        return os.environ.get("STRATA_URL")
+    host = os.environ.get("STRATA_HOST")
+    if not host:
+        host = "host.docker.internal:8090" if os.path.exists("/.dockerenv") else "localhost:8090"
+    if not host.startswith("http://") and not host.startswith("https://"):
+        return f"http://{host}"
+    return host
+
+
 NODE_PROMPT_TEXT = "57:27"
 NODE_RESOLUTION = "57:13"
 NODE_KSAMPLER = "57:3"
