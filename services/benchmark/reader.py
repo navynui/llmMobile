@@ -180,13 +180,15 @@ def _build_capabilities_lookup():
         for m in _list_models_from_ini(ini_path):
             key = m["filename"].lower()
             if key not in lookup:
-                lookup[key] = {"has_mmproj": m.get("has_mmproj", False), "has_mtp": m.get("has_mtp", False)}
+                lookup[key] = {"has_mmproj": m.get("has_mmproj", False), "has_mtp": m.get("has_mtp", False), "has_dflash": m.get("has_dflash", False)}
             else:
                 # Merge — prefer True if either is True
                 if m.get("has_mmproj"):
                     lookup[key]["has_mmproj"] = True
                 if m.get("has_mtp"):
                     lookup[key]["has_mtp"] = True
+                if m.get("has_dflash"):
+                    lookup[key]["has_dflash"] = True
     return lookup
 
 
@@ -348,6 +350,7 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                 "in_strata": in_strata,
                 "has_mmproj": caps.get("has_mmproj", False),
                 "has_mtp": caps.get("has_mtp", False),
+                "has_dflash": caps.get("has_dflash", False),
             })
 
         # Append untested models from both INI files
@@ -399,6 +402,7 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                                     "in_strata": False,
                                     "has_mmproj": caps.get("has_mmproj", False),
                                     "has_mtp": caps.get("has_mtp", False),
+                                    "has_dflash": caps.get("has_dflash", False),
                                 })
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
@@ -436,6 +440,7 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                     "in_strata": True,
                     "has_mmproj": False,
                     "has_mtp": False,
+                    "has_dflash": False,
                 })
         except Exception as e:
             print(f"[Benchmarks API] Failed to append Strata models: {e}")

@@ -401,6 +401,7 @@ export function renderBenchmarksView(ctx) {
                             ${renderVramChip(b)}
                             ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
                             ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
+                            ${b.has_dflash ? html`<span class="bench-chip" style="background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🚀 DFLASH</span>` : ''}
                           </div>
                         ` : html`
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
@@ -410,6 +411,7 @@ export function renderBenchmarksView(ctx) {
                             ${renderVramChip(b)}
                             ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
                             ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
+                            ${b.has_dflash ? html`<span class="bench-chip" style="background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🚀 DFLASH</span>` : ''}
                           </div>
                         `}
                       </div>
