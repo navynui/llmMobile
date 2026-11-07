@@ -245,26 +245,31 @@ async def _reload_llama_model(model: str):
 
 
 async def _post_queue_cleanup(loaded_model: str):
-    """Free ComfyUI VRAM immediately, then wait before reloading llama.cpp model."""
+    """Keep ComfyUI warm during the cooldown, then free VRAM and restore the LLM.
+
+    Freeing immediately after generation forced a cold model reload for any
+    follow-up prompt. Waiting first means back-to-back prompts reuse the loaded
+    weights; if a new generation arrives, this task is cancelled mid-sleep and
+    the models stay resident.
+    """
     from utils.common import COMFY_IDLE_COOLDOWN_SECONDS
 
-    # Free ComfyUI VRAM immediately
+    if COMFY_IDLE_COOLDOWN_SECONDS > 0:
+        print(
+            f"[VRAM Swap] Keeping ComfyUI warm for "
+            f"{COMFY_IDLE_COOLDOWN_SECONDS}s before restoring the LLM..."
+        )
+        try:
+            await asyncio.sleep(COMFY_IDLE_COOLDOWN_SECONDS)
+        except asyncio.CancelledError:
+            print("[VRAM Swap] Cooldown cancelled — keeping ComfyUI models warm.")
+            raise
+
     freed = await _free_comfy_cache()
     if freed:
-        print(f"[VRAM Swap] ComfyUI VRAM freed after generation.")
+        print("[VRAM Swap] ComfyUI VRAM freed after cooldown.")
     else:
-        print(f"[VRAM Swap] Warning: Failed to free ComfyUI VRAM.")
-
-    if COMFY_IDLE_COOLDOWN_SECONDS <= 0:
-        await _reload_llama_model(loaded_model)
-        return
-
-    print(f"[VRAM Swap] Waiting {COMFY_IDLE_COOLDOWN_SECONDS}s before reloading llama.cpp model...")
-    try:
-        await asyncio.sleep(COMFY_IDLE_COOLDOWN_SECONDS)
-    except asyncio.CancelledError:
-        print("[VRAM Swap] Cooldown cancelled — new generation request arrived.")
-        raise
+        print("[VRAM Swap] Warning: Failed to free ComfyUI VRAM.")
 
     await _reload_llama_model(loaded_model)
 
@@ -395,7 +400,7 @@ async def queue_worker(send_push_fn=None):
         set_queue_running(False)
         return
 
-    # After the generation loop finishes: free ComfyUI and schedule cooldown reload
+    # After the generation loop finishes: keep ComfyUI warm, then restore the LLM
     if loaded_model and not force_gen:
         print(f"[Queue Worker] Generation done. Starting cooldown cleanup for {loaded_model}")
         set_queue_running(False)

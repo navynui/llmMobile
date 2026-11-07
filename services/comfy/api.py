@@ -46,7 +46,7 @@ def _make_sub_items(selected_workflows: list[str], req: GenerateRequest) -> list
         sub_items.append({
             "workflow": wf,
             "num_images": 1,
-            "seed": None,
+            "seed": req.seed,
         })
     return sub_items
 
