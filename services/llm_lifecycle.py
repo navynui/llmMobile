@@ -23,6 +23,7 @@ import httpx
 from services.docker_svc import get_server_slots_status
 from services.benchmark.state import get_benchmark_running
 from services.comfy.queue_state import is_queue_running, get_gen_queue
+from utils.common import get_strata_headers
 
 LLM_IDLE_TIMEOUT_SECONDS = int(os.environ.get("LLM_IDLE_UNLOAD_SECONDS", "600"))
 WATCHDOG_INTERVAL = 30.0
@@ -73,7 +74,11 @@ async def _unload_loaded_model(server: str, preset_id: str) -> bool:
     endpoint = f"{url}/v1/unload" if server == "strata" else f"{url}/models/unload"
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            resp = await c.post(endpoint, json={"model": preset_id})
+            resp = await c.post(
+                endpoint,
+                json={"model": preset_id},
+                headers=get_strata_headers() if server == "strata" else None,
+            )
         return resp.status_code == 200
     except Exception as e:
         print(f"[LLM Idle] Unload failed for {server} '{preset_id}': {e}")

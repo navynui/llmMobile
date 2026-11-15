@@ -37,7 +37,7 @@ The app manages **two independent `llama-server` instances** plus the **Strata i
 | **Secondary** | `llm-server-mini` | 8081 | GPU 1 (GTX 1060) | `modelg.ini` |
 | **Strata** | `strata` (`localhost:8090`) | 8090 | Pascal CUDA12 | Auto-detected (`/models`) |
 
-Primary and Secondary share the `/models` volume with dedicated INI files, while Strata exposes port 8090 (`host.docker.internal:8090` / `localhost:8090`) accessible from the Chat tab.
+Primary and Secondary share the `/models` volume with dedicated INI files, while Strata exposes port 8090 (`host.docker.internal:8090` / `localhost:8090`) accessible from the Chat tab. Strata v0.2.x gates `/models`, `/v1/load`, `/v1/unload`, `/v1/chat/completions`, `/props` and `/slots` behind an API key: set `STRATA_API_KEY` or `STRATA_API_KEY_FILE` (the llmaCPP compose mounts Strata's state dir at `/run/strata-state`). All Strata calls send `Authorization: Bearer <key>` via `utils.common.get_strata_headers()`.
 
 
 ### ComfyUI On-Demand Lifecycle

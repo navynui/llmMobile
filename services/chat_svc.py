@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from typing import Optional
 
 from services.model_svc import _get_preset_id_for_model
+from utils.common import get_strata_headers
 
 async def _get_loaded_model() -> Optional[str]:
     try:
@@ -90,7 +91,7 @@ async def _get_loaded_strata_model() -> Optional[str]:
     try:
         from utils.common import get_strata_url
         async with httpx.AsyncClient() as c:
-            data = (await c.get(f"{get_strata_url()}/models", timeout=3)).json()
+            data = (await c.get(f"{get_strata_url()}/models", timeout=3, headers=get_strata_headers())).json()
             for m in data.get("data", []):
                 s = m.get("status")
                 if s == "loaded" or (isinstance(s, dict) and s.get("value") == "loaded"):
@@ -104,7 +105,7 @@ async def _get_strata_default_model() -> Optional[str]:
     try:
         from utils.common import get_strata_url
         async with httpx.AsyncClient() as c:
-            data = (await c.get(f"{get_strata_url()}/models", timeout=3)).json()
+            data = (await c.get(f"{get_strata_url()}/models", timeout=3, headers=get_strata_headers())).json()
             models = data.get("data", [])
             if models and "id" in models[0]:
                 return models[0]["id"]
@@ -130,7 +131,7 @@ async def proxy_chat_strata(request: Request):
         async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=10.0)) as c:
             try:
                 async with c.stream("POST", f"{get_strata_url()}/v1/chat/completions",
-                                    content=body, headers={"Content-Type": "application/json"}) as r:
+                                    content=body, headers=get_strata_headers({"Content-Type": "application/json"})) as r:
                     async for chunk in r.aiter_bytes():
                         yield chunk
             except Exception as e:

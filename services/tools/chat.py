@@ -18,9 +18,17 @@ from fastapi.responses import StreamingResponse
 
 from .executor import execute_tool_call
 from .registry import TOOL_DEFINITIONS
+from utils.common import get_strata_headers, is_strata_url
 
 MAX_TOOL_ITERATIONS = 10
 TRUNCATE_TOOL_RESULT_CHARS = 4096
+
+
+def _chat_headers(server_url: str) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if is_strata_url(server_url):
+        headers.update(get_strata_headers())
+    return headers
 
 
 async def _llama_chat_completion(
@@ -51,7 +59,7 @@ async def _llama_chat_completion(
         resp = await c.post(
             f"{server_url}/v1/chat/completions",
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers=_chat_headers(server_url),
         )
         resp.raise_for_status()
         if stream:
@@ -84,7 +92,7 @@ async def _stream_final_response(
                 "POST",
                 f"{server_url}/v1/chat/completions",
                 json=body,
-                headers={"Content-Type": "application/json"},
+                headers=_chat_headers(server_url),
             ) as resp:
                 async for chunk in resp.aiter_bytes():
                     yield chunk
@@ -107,18 +115,25 @@ async def chat_with_tools(request: Request, server_url: str) -> StreamingRespons
 
     raw_model = data.get("model", "") or ""
     is_mini = "mini" in server_url
+    is_strata = is_strata_url(server_url)
 
     if not str(raw_model).strip():
         # Ask the server what's currently loaded
-        if is_mini:
+        if is_strata:
+            from services.chat_svc import _get_loaded_strata_model
+            loaded = await _get_loaded_strata_model()
+        elif is_mini:
             from services.chat_svc import _get_loaded_mini_model
             loaded = await _get_loaded_mini_model()
         else:
             from services.chat_svc import _get_loaded_model
             loaded = await _get_loaded_model()
         data["model"] = loaded or "default"
+    elif is_strata:
+        # Strata ids are already the exact model names; do not add .gguf.
+        data["model"] = raw_model
     else:
-        resolved = await _get_preset_id_for_model(raw_model)
+        resolved = await _get_preset_id_for_model(raw_model, server_url=server_url)
         data["model"] = resolved or raw_model
 
     # Pull tools out so we don't pass them blindly on every iteration
@@ -305,7 +320,7 @@ async def _passthrough_stream(body: bytes, server_url: str):
                 "POST",
                 f"{server_url}/v1/chat/completions",
                 content=body,
-                headers={"Content-Type": "application/json"},
+                headers=_chat_headers(server_url),
             ) as r:
                 async for chunk in r.aiter_bytes():
                     yield chunk

@@ -156,9 +156,11 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: 
     """
     import httpx
 
+    headers = None
     if server == "strata":
-        from utils.common import get_strata_url
+        from utils.common import get_strata_headers, get_strata_url
         base_url = get_strata_url()
+        headers = get_strata_headers()
     elif server == "secondary":
         base_url = "http://llm-server-mini:8080"
     else:
@@ -169,7 +171,7 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: 
         # Primary method: check /slots API (newer llama.cpp router mode)
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                models_resp = await client.get(f"{base_url}/models")
+                models_resp = await client.get(f"{base_url}/models", headers=headers)
                 models_data = models_resp.json()
                 loaded_model = None
                 for m in models_data.get("data", []):
@@ -180,7 +182,7 @@ async def wait_for_idle_trigger(log_client=None, timeout: float = 30.0, server: 
 
                 if loaded_model:
                     slots_resp = await client.get(
-                        f"{base_url}/slots", params={"model": loaded_model}
+                        f"{base_url}/slots", params={"model": loaded_model}, headers=headers
                     )
                     slots = slots_resp.json()
                     all_idle = all(

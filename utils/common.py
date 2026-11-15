@@ -76,6 +76,30 @@ def get_strata_url() -> str:
     return host
 
 
+def get_strata_api_key() -> str:
+    key = (os.environ.get("STRATA_API_KEY") or "").strip()
+    if key:
+        return key
+    path = os.environ.get("STRATA_API_KEY_FILE", "/run/secrets/strata_api_key")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def get_strata_headers(extra: dict | None = None) -> dict:
+    headers = dict(extra or {})
+    key = get_strata_api_key()
+    if key:
+        headers.setdefault("Authorization", f"Bearer {key}")
+    return headers
+
+
+def is_strata_url(url: str) -> bool:
+    return "strata" in (url or "") or ":8090" in (url or "")
+
+
 NODE_PROMPT_TEXT = "57:27"
 NODE_RESOLUTION = "57:13"
 NODE_KSAMPLER = "57:3"

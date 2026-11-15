@@ -167,7 +167,7 @@ def test_unload_loaded_model_routes_endpoints():
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
 
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, headers=None):
             post_calls.append((url, json))
             mock_resp = AsyncMock()
             mock_resp.status_code = 200

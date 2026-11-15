@@ -5,7 +5,7 @@ import httpx
 from fastapi import HTTPException
 from typing import Optional
 
-from utils.common import MODES_INI_PATH, MODELS_DIR, MODELG_INI_PATH
+from utils.common import MODES_INI_PATH, MODELS_DIR, MODELG_INI_PATH, get_strata_headers, is_strata_url
 from models.requests import ModelActionRequest, ModelsIniRequest
 
 async def _get_preset_id_for_model(model_id: str, server_url: str = None) -> str:
@@ -13,9 +13,14 @@ async def _get_preset_id_for_model(model_id: str, server_url: str = None) -> str
         return model_id
     if server_url is None:
         server_url = "http://llm-server:8080"
+    strata = is_strata_url(server_url)
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.get(f"{server_url}/models", timeout=3)
+            res = await client.get(
+                f"{server_url}/models",
+                timeout=3,
+                headers=get_strata_headers() if strata else None,
+            )
             if res.status_code == 200:
                 presets = [m["id"] for m in res.json().get("data", [])]
                 # Search for a case-insensitive match (with or without extension)
@@ -26,6 +31,9 @@ async def _get_preset_id_for_model(model_id: str, server_url: str = None) -> str
                         return preset
     except Exception as e:
         print(f"[Preset Matching] Failed to fetch active models: {e}")
+    # Strata model ids have no .gguf suffix and must be passed through unchanged.
+    if strata:
+        return model_id
     # Fallback:
     if model_id.lower() == "default":
         return "default"
@@ -483,7 +491,7 @@ async def list_strata_models():
     from utils.common import get_strata_url
     try:
         async with httpx.AsyncClient() as c:
-            resp = await c.get(f"{get_strata_url()}/models", timeout=3)
+            resp = await c.get(f"{get_strata_url()}/models", timeout=3, headers=get_strata_headers())
             if resp.status_code == 200:
                 data = resp.json()
                 models = []
@@ -505,7 +513,7 @@ async def proxy_llm_strata_models():
     from utils.common import get_strata_url
     async with httpx.AsyncClient() as c:
         try:
-            return (await c.get(f"{get_strata_url()}/models", timeout=5)).json()
+            return (await c.get(f"{get_strata_url()}/models", timeout=5, headers=get_strata_headers())).json()
         except Exception:
             return {"data": []}
 
@@ -515,7 +523,7 @@ async def proxy_llm_strata_load(req: ModelActionRequest):
     touch_activity("strata")
     try:
         async with httpx.AsyncClient() as c:
-            resp = await c.post(f"{get_strata_url()}/v1/load", json={"model": req.model}, timeout=60)
+            resp = await c.post(f"{get_strata_url()}/v1/load", json={"model": req.model}, headers=get_strata_headers(), timeout=60)
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
@@ -526,7 +534,7 @@ async def proxy_llm_strata_unload(req: ModelActionRequest):
     from utils.common import get_strata_url
     try:
         async with httpx.AsyncClient() as c:
-            resp = await c.post(f"{get_strata_url()}/v1/unload", json={"model": req.model}, timeout=10)
+            resp = await c.post(f"{get_strata_url()}/v1/unload", json={"model": req.model}, headers=get_strata_headers(), timeout=10)
             if resp.status_code == 200:
                 return resp.json()
     except Exception:
@@ -537,7 +545,7 @@ async def get_vision_capabilities_strata():
     from utils.common import get_strata_url
     try:
         async with httpx.AsyncClient() as c:
-            resp = await c.get(f"{get_strata_url()}/models", timeout=3)
+            resp = await c.get(f"{get_strata_url()}/models", timeout=3, headers=get_strata_headers())
             data = resp.json() if resp.status_code == 200 else {}
     except Exception:
         data = {}
@@ -545,7 +553,7 @@ async def get_vision_capabilities_strata():
     strata_vision = False
     try:
         async with httpx.AsyncClient() as c:
-            p_resp = await c.get(f"{get_strata_url()}/props", timeout=3)
+            p_resp = await c.get(f"{get_strata_url()}/props", timeout=3, headers=get_strata_headers())
             if p_resp.status_code == 200:
                 p_data = p_resp.json()
                 strata_vision = bool(p_data.get("modalities", {}).get("vision", False))

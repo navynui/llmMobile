@@ -17,7 +17,7 @@ from utils.common import MODES_INI_PATH, MODELS_DIR
 from models.requests import JudgeRequest, BenchmarkRunRequest, BenchmarkQueueRequest
 from services.chat_svc import _get_loaded_model, _get_loaded_mini_model, _get_loaded_strata_model
 from services.model_svc import _get_preset_id_for_model, MINI_SERVER_URL
-from utils.common import get_quantization_from_name, get_strata_url
+from utils.common import get_quantization_from_name, get_strata_headers, get_strata_url
 from services.sse_svc import broadcast_notification
 from .state import _benchmark_progress, _benchmark_lock, _benchmark_running, set_benchmark_running, get_benchmark_lock, get_benchmark_running
 from .logging import log_benchmark, log_benchmark_error, log_benchmark_progress
@@ -103,6 +103,7 @@ def _get_server_config(server: str = "primary") -> dict:
             "get_loaded": _get_loaded_strata_model,
             "load_url": f"{strata_url}/v1/load",
             "unload_url": f"{strata_url}/v1/unload",
+            "headers": get_strata_headers(),
         }
     if server == "secondary":
         return {
@@ -137,7 +138,7 @@ async def _free_shared_gpu_for_judge(server: str, server_url: str):
             return
         log_benchmark(f"Unloading Strata model '{loaded}' to free GPU 0 for the Judge...")
         async with httpx.AsyncClient(timeout=30) as c:
-            await c.post(f"{server_url}/v1/unload", json={"model": loaded})
+            await c.post(f"{server_url}/v1/unload", json={"model": loaded}, headers=get_strata_headers())
         # Wait for the P100's VRAM to be released before loading the Judge.
         from services.vram_svc import get_model_vram_gb
         for _ in range(30):
@@ -262,7 +263,7 @@ async def run_benchmark_task(
 
                 has_server_error = False
                 try:
-                    response = await client.post(api_url, json=payload)
+                    response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                     _parse_response(response)
                     if response.status_code != 200:
                         content = ""
@@ -288,7 +289,7 @@ async def run_benchmark_task(
                         try:
                             start_time = time.time()
                             payload["max_tokens"] = RETRY_RAMP_MAX_TOKENS
-                            response = await client.post(api_url, json=payload)
+                            response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                             _parse_response(response)
                             if not content and reasoning_content and reasoning_content.strip():
                                 salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
@@ -305,7 +306,7 @@ async def run_benchmark_task(
                         await asyncio.sleep(RETRY_PAUSE_SECONDS)
                         try:
                             start_time = time.time()
-                            response = await client.post(api_url, json=payload)
+                            response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                             _parse_response(response)
                             if not content and reasoning_content and reasoning_content.strip():
                                 salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
@@ -482,7 +483,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
             log_benchmark(f"Queue: Requesting server to load test model: {model_id} (preset: {preset_id})")
             async with httpx.AsyncClient() as client:
                 try:
-                    load_res = await client.post(load_model_url, json={"model": preset_id}, timeout=30)
+                    load_res = await client.post(load_model_url, json={"model": preset_id}, headers=cfg.get("headers"), timeout=30)
                     if load_res.status_code != 200:
                         try:
                             res_json = load_res.json()
@@ -646,7 +647,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
 
                         has_server_error = False
                         try:
-                            response = await client.post(api_url, json=payload)
+                            response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                             _parse_response(response)
                             if response.status_code != 200:
                                 content = ""
@@ -672,7 +673,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                                 try:
                                     start_time = time.time()
                                     payload["max_tokens"] = RETRY_RAMP_MAX_TOKENS
-                                    response = await client.post(api_url, json=payload)
+                                    response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                                     _parse_response(response)
                                     if not content and reasoning_content and reasoning_content.strip():
                                         salvaged = re.sub(r'</?think>', '', reasoning_content).strip()
@@ -689,7 +690,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                                 await asyncio.sleep(RETRY_PAUSE_SECONDS)
                                 try:
                                     start_time = time.time()
-                                    response = await client.post(api_url, json=payload)
+                                    response = await client.post(api_url, json=payload, headers=cfg.get("headers"))
                                     _parse_response(response)
                                     if not content and reasoning_content and reasoning_content.strip():
                                         salvaged = re.sub(r'</?think>', '', reasoning_content).strip()

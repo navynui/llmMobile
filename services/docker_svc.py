@@ -401,13 +401,15 @@ async def get_server_slots_status() -> list[dict]:
 
     results = []
     for entry in _MANAGED_LLM_SERVERS:
+        headers = None
         if entry["name"] == "llama-server":
             base_url = "http://llm-server:8080"
         elif entry["name"] == "llama-server-mini":
             base_url = "http://llm-server-mini:8080"
         elif entry["name"] == "strata":
-            from utils.common import get_strata_url
+            from utils.common import get_strata_headers, get_strata_url
             base_url = get_strata_url()
+            headers = get_strata_headers()
         else:
             base_url = "http://llm-server:8080"
 
@@ -424,7 +426,7 @@ async def get_server_slots_status() -> list[dict]:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 # First find the loaded model (needed for /slots query param)
-                models_resp = await client.get(f"{base_url}/models")
+                models_resp = await client.get(f"{base_url}/models", headers=headers)
                 loaded_model = None
                 if models_resp.status_code == 200:
                     models_data = models_resp.json()
@@ -442,9 +444,9 @@ async def get_server_slots_status() -> list[dict]:
                 slots_resp = None
                 if loaded_model:
                     info["loaded_model"] = loaded_model
-                    slots_resp = await client.get(f"{base_url}/slots", params={"model": loaded_model})
+                    slots_resp = await client.get(f"{base_url}/slots", params={"model": loaded_model}, headers=headers)
                 else:
-                    slots_resp = await client.get(f"{base_url}/slots")
+                    slots_resp = await client.get(f"{base_url}/slots", headers=headers)
 
                 if slots_resp and slots_resp.status_code == 200:
                     slots = slots_resp.json()
