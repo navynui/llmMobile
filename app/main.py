@@ -226,8 +226,8 @@ async def route_proxy_llm_mini_unload(req: ModelActionRequest):
     return await proxy_llm_mini_unload(req)
 
 @app.post("/api/models-mini/scan_and_register")
-def route_scan_mini_and_register():
-    return scan_mini_and_register()
+async def route_scan_mini_and_register():
+    return await scan_mini_and_register()
 
 
 @app.post("/api/chat/completions")

@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import math
 import time
 import uuid
 import asyncio
@@ -42,118 +43,108 @@ def _get_platform(server: str) -> str:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _read_ini_models(ini_path: str) -> set:
-    """Return set of lowercased model filenames found in the given INI.
+def _parse_ini_sections(ini_path: str) -> list:
+    """Parse an INI into sections plus the files they reference (model/md/mmproj).
 
-    Checks both the section header name AND each section's `model = ...` line
-    so that presets with logical aliases (e.g. MTP wrappers) are still marked
-    as ready even if no file matching the section name exists on disk.
+    Preset blocks often use a logical section name that does not match a file on
+    disk, e.g.::
+
+        [gemma-4-E4B-it-dspark.gguf]
+        model = /models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
+        md = /models/gemma-4-E4B-it-dspark-Q8_0.gguf
+
+    Readiness must therefore be derived from the referenced files, not from the
+    section header.
     """
-    filenames = set()
+    sections = []
     if not os.path.exists(ini_path):
-        return filenames
+        return sections
+    current = None
     try:
         with open(ini_path) as f:
-            current_section = None
             for line in f:
-                line = line.strip()
-                if not line or line.startswith(";"):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(";") or stripped.startswith("#"):
                     continue
-                # Section header
-                m = re.match(r'^\[(.+?)\]$', line)
-                if m:
-                    raw_name = m.group(1)
-                    if raw_name == "*":
-                        current_section = None
-                        continue
-                    current_section = raw_name
-                    if raw_name.lower().endswith(".gguf"):
-                        section_base = raw_name[:-5]
-                    else:
-                        section_base = raw_name
-                    filename = section_base + ".gguf"
-                    if os.path.exists(os.path.join(MODELS_DIR, filename)):
-                        # Exact match: section header = filename on disk
-                        filenames.add(filename.lower())
-                        filenames.add(section_base.lower())
-                # model= path inside a section — check if the target file exists
-                elif current_section and line.startswith("model"):
-                    eq_idx = line.find("=")
-                    if eq_idx != -1:
-                        model_path = line[eq_idx + 1:].strip()
-                        model_basename = os.path.basename(model_path)
-                        if model_basename.lower().endswith(".gguf"):
-                            model_base = model_basename[:-5]
-                        else:
-                            model_base = model_basename
-                        model_filename = model_base + ".gguf"
-                        if os.path.exists(os.path.join(MODELS_DIR, model_filename)):
-                            filenames.add(model_filename.lower())
-                            filenames.add(model_base.lower())
-                            # Also add the section name so presets stored in DB
-                            # by their logical (section) name are found as ready.
-                            if current_section:
-                                cs = current_section
-                                if cs.lower().endswith(".gguf"):
-                                    cs_base = cs[:-5]
-                                else:
-                                    cs_base = cs
-                                filenames.add(cs.lower())
-                                filenames.add(cs_base.lower())
+                header = re.match(r'^\[(.+?)\]$', stripped)
+                if header:
+                    if current is not None:
+                        sections.append(current)
+                    sec_name = header.group(1).strip()
+                    current = None if sec_name == "*" else {
+                        "section": sec_name, "model": None, "md": None, "mmproj": None,
+                    }
+                    continue
+                if current is None or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                key = key.strip().lower()
+                value = value.strip().strip('"').strip("'")
+                if key in ("model", "md", "mmproj") and value:
+                    current[key] = value
+        if current is not None:
+            sections.append(current)
     except Exception as e:
-        print(f"[Benchmarks API] Failed to parse {ini_path}: {e}")
-    return filenames
+        print(f"[Benchmarks API] Failed to parse sections from {ini_path}: {e}")
+    return sections
 
 
-def _get_ini_model_names(ini_path: str) -> set:
-    """Return set of lowercased model identifiers listed in the given INI.
-    Includes section headers (without [*]), base names, filenames (.gguf),
-    and model = ... target paths.
-    Does not require the file to exist on disk.
+def _section_is_ready(section: dict) -> bool:
+    """True when every file referenced by a preset section exists under MODELS_DIR."""
+    refs = [section.get("model"), section.get("md"), section.get("mmproj")]
+    if not any(refs):
+        return False
+    for ref in refs:
+        if not ref:
+            continue
+        filename = os.path.basename(ref)
+        if not os.path.exists(os.path.join(MODELS_DIR, filename)):
+            return False
+    return True
+
+
+def _build_block_index(ini_path: str) -> dict:
+    """Map lowercased block identifiers -> block metadata for one INI file.
+
+    A benchmark entry is identified by its INI *block* (section header), not by
+    the ``model=`` / ``md=`` files it references. Each block is indexed under
+    its section name, base name, and ``<base>.gguf`` so DB model ids can be
+    matched to it. The referenced ``model=`` file supplies display metadata
+    (quantization) even when the section uses a logical preset alias.
     """
-    names = set()
-    if not os.path.exists(ini_path):
-        return names
-    try:
-        with open(ini_path) as f:
-            current_sec = None
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith(";") or line.startswith("#"):
-                    continue
-                m = re.match(r'^\[(.+?)\]$', line)
-                if m:
-                    sec = m.group(1).strip()
-                    if sec == "*":
-                        current_sec = None
-                        continue
-                    current_sec = sec
-                    base = sec[:-5] if sec.lower().endswith(".gguf") else sec
-                    names.add(sec.lower())
-                    names.add(base.lower())
-                    names.add(f"{base.lower()}.gguf")
-                elif current_sec and line.startswith("model"):
-                    parts = line.split("=", 1)
-                    if len(parts) == 2:
-                        mpath = os.path.basename(parts[1].strip())
-                        mbase = mpath[:-5] if mpath.lower().endswith(".gguf") else mpath
-                        names.add(mpath.lower())
-                        names.add(mbase.lower())
-                        names.add(f"{mbase.lower()}.gguf")
-    except Exception as e:
-        print(f"[Benchmarks API] Failed to parse model names from {ini_path}: {e}")
-    return names
+    index = {}
+    for sec in _parse_ini_sections(ini_path):
+        raw_name = sec["section"]
+        base_name = raw_name[:-5] if raw_name.lower().endswith(".gguf") else raw_name
+        filename = base_name + ".gguf"
+        model_ref = sec.get("model")
+        quant_source = os.path.basename(model_ref) if model_ref else filename
+        info = {
+            "filename": filename,
+            "base_name": base_name,
+            "section": raw_name,
+            "model": model_ref,
+            "md": sec.get("md"),
+            "mmproj": sec.get("mmproj"),
+            "is_ready": _section_is_ready(sec),
+            "quant": get_quantization_from_name(quant_source),
+        }
+        for key in {raw_name.lower(), base_name.lower(), filename.lower()}:
+            index[key] = info
+    return index
 
 
-def _matches_ini_names(model_name: str, model_id: str, ini_names: set) -> bool:
-    """Check if model_name or model_id matches any name in the ini_names set."""
-    candidates = {
-        model_name.lower(),
-        model_name.lower()[:-5] if model_name.lower().endswith(".gguf") else model_name.lower(),
-        model_id.lower(),
-        model_id.lower()[:-5] if model_id.lower().endswith(".gguf") else model_id.lower(),
-    }
-    return bool(candidates & ini_names)
+def _lookup_block(block_index: dict, *names) -> Optional[dict]:
+    """Find a block by any of the supplied model names / ids (case-insensitive)."""
+    for name in names:
+        if not name:
+            continue
+        key = name.lower()
+        for candidate in (key, key[:-5] if key.endswith(".gguf") else key):
+            block = block_index.get(candidate)
+            if block:
+                return block
+    return None
 
 
 def _db_lookup_model(filename: str) -> tuple:
@@ -173,14 +164,14 @@ def _db_lookup_model(filename: str) -> tuple:
 
 
 def _build_capabilities_lookup():
-    """Build a dict mapping lowercase model filename -> {has_mmproj, has_mtp}
-    by scanning both primary and secondary INI files."""
+    """Build a dict mapping lowercase model filename -> capability flags
+    (mmproj / MTP / DFLASH / DSPARK) by scanning both primary and secondary INI files."""
     lookup = {}
     for ini_path in [MODES_INI_PATH, MINI_MODELS_INI]:
         for m in _list_models_from_ini(ini_path):
             key = m["filename"].lower()
             if key not in lookup:
-                lookup[key] = {"has_mmproj": m.get("has_mmproj", False), "has_mtp": m.get("has_mtp", False), "has_dflash": m.get("has_dflash", False)}
+                lookup[key] = {"has_mmproj": m.get("has_mmproj", False), "has_mtp": m.get("has_mtp", False), "has_dflash": m.get("has_dflash", False), "has_dspark": m.get("has_dspark", False)}
             else:
                 # Merge — prefer True if either is True
                 if m.get("has_mmproj"):
@@ -189,6 +180,8 @@ def _build_capabilities_lookup():
                     lookup[key]["has_mtp"] = True
                 if m.get("has_dflash"):
                     lookup[key]["has_dflash"] = True
+                if m.get("has_dspark"):
+                    lookup[key]["has_dspark"] = True
     return lookup
 
 
@@ -197,49 +190,83 @@ def _build_capabilities_lookup():
 async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -> dict:
     """Return benchmark list (fulfills /api/benchmarks)."""
     try:
-        # Gather model filenames from both INI files
-        primary_ready = _read_ini_models(MODES_INI_PATH)
-        secondary_ready = _read_ini_models(MINI_MODELS_INI)
-        primary_ini_models = _get_ini_model_names(MODES_INI_PATH)
-        secondary_ini_models = _get_ini_model_names(MINI_MODELS_INI)
+        # Benchmark identity is the INI *block* (section header) per server —
+        # never the `model=` target it references. Strata has no INI, so its
+        # discovered model ids are the identity.
+        block_indexes = {
+            "primary": _build_block_index(MODES_INI_PATH),
+            "secondary": _build_block_index(MINI_MODELS_INI),
+        }
 
-        # Build capabilities lookup (mmproj / mtp) from both INI files
+        # Build capabilities lookup (mmproj / mtp / dflash / dspark)
         cap_lookup = _build_capabilities_lookup()
 
         conn = get_db_conn()
         cursor = conn.cursor()
-        # Latest run PER (model_id, server), pulling vram_gb from test_runs
-        # so models tested on both GPUs retain correct per-server VRAM.
-        # COALESCE(tr.vram_gb, m.vram_gb) prefers per-run VRAM when available.
+        # Per-(model_id, server) statistics over the retention window (last 5
+        # runs) so a model ranked on the GTX is not contaminated by P100 runs.
         query = """
-            WITH latest_runs AS (
-                SELECT tr.model_id, tr.run_id, tr.timestamp, tr.server, tr.vram_gb,
-                       ROW_NUMBER() OVER (PARTITION BY tr.model_id, tr.server ORDER BY tr.timestamp DESC) as rn
+            WITH run_totals AS (
+                SELECT tr.model_id,
+                       COALESCE(tr.server, 'primary') AS server,
+                       tr.run_id, tr.timestamp, tr.vram_gb,
+                       SUM(rs.score) AS total_score,
+                       MAX(CASE WHEN rs.round_name = 'speed_metric' THEN rs.speed_tps END) AS tps
                 FROM test_runs tr
+                LEFT JOIN round_scores rs ON rs.run_id = tr.run_id
+                GROUP BY tr.model_id, COALESCE(tr.server, 'primary'), tr.run_id
             ),
-            run_scores_agg AS (
-                SELECT lr.model_id, lr.run_id, lr.timestamp, lr.server, lr.vram_gb,
-                       SUM(rs.score) as total_score,
-                       MAX(CASE WHEN rs.round_name = 'speed_metric' THEN rs.speed_tps END) as avg_tps
-                FROM latest_runs lr
-                JOIN round_scores rs ON lr.run_id = rs.run_id
-                WHERE lr.rn = 1
-                GROUP BY lr.model_id, lr.run_id, lr.timestamp, lr.server, lr.vram_gb
+            ranked AS (
+                SELECT rt.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY model_id, server ORDER BY timestamp DESC
+                       ) AS rn
+                FROM run_totals rt
+            ),
+            latest AS (
+                SELECT * FROM ranked WHERE rn = 1
+            ),
+            last5 AS (
+                SELECT * FROM ranked WHERE rn <= 5
+            ),
+            stats AS (
+                SELECT model_id, server,
+                       COUNT(total_score) AS runs_count,
+                       AVG(total_score) AS avg_score,
+                       AVG(tps) AS avg_tps,
+                       SUM(total_score) AS sum_score,
+                       SUM(total_score * total_score) AS sum_sq
+                FROM last5
+                GROUP BY model_id, server
+            ),
+            round_stats AS (
+                SELECT l.model_id, l.server,
+                       AVG(CASE WHEN rs.round_name IN ('abstract_logic', 'technical_reasoning')
+                                THEN rs.score END) AS avg_reasoning,
+                       AVG(CASE WHEN rs.round_name = 'code_generation'
+                                THEN rs.score END) AS avg_code
+                FROM last5 l
+                JOIN round_scores rs ON rs.run_id = l.run_id
+                GROUP BY l.model_id, l.server
             )
             SELECT m.model_id, m.name, m.quantization, LOWER(m.status) as status, m.notes,
-                   m.vram_gb as model_vram_gb, m.category, m.avg_total_score, m.avg_tps as agg_avg_tps,
-                   m.score_stddev, m.runs_count,
-                   rsa.run_id, rsa.timestamp, rsa.total_score, rsa.avg_tps, rsa.server, rsa.vram_gb as run_vram_gb,
+                   m.vram_gb as model_vram_gb, m.category,
+                   l.run_id, l.timestamp, l.total_score, l.tps, l.server, l.vram_gb as run_vram_gb,
+                   st.runs_count, st.avg_score as scoped_avg_score, st.avg_tps as scoped_avg_tps,
+                   st.sum_score, st.sum_sq,
+                   rstat.avg_reasoning, rstat.avg_code,
                    (SELECT COUNT(*) FROM model_hallucinations mh WHERE mh.model_id = m.model_id) as hallucination_count
             FROM models m
-            LEFT JOIN run_scores_agg rsa ON m.model_id = rsa.model_id
-            ORDER BY COALESCE(m.avg_total_score, rsa.total_score) DESC;
+            JOIN latest l ON l.model_id = m.model_id
+            LEFT JOIN stats st ON st.model_id = l.model_id AND st.server = l.server
+            LEFT JOIN round_stats rstat ON rstat.model_id = l.model_id AND rstat.server = l.server
+            ORDER BY COALESCE(st.avg_score, l.total_score) DESC;
         """
         cursor.execute(query)
         rows = cursor.fetchall()
         conn.close()
 
-        from .aggregation import CATEGORY_LABELS
+        from .aggregation import CATEGORY_LABELS, classify_model
 
         benchmarks = []
         primary_tested_names = set()
@@ -247,29 +274,31 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
         strata_tested_names = set()
 
         for r in rows:
-            avg_tps = r["avg_tps"] or r["agg_avg_tps"] or 0.0
-            total_score = r["avg_total_score"] if r["avg_total_score"] is not None else (r["total_score"] or 0)
-            hallucinated = r["hallucination_count"] > 0
-            model_name = r["name"]
+            model_name = r["name"] or r["model_id"]
             name_low = model_name.lower()
             model_id_low = r["model_id"].lower()
             bench_server = r["server"] or "primary"
 
-            in_primary = _matches_ini_names(model_name, r["model_id"], primary_ini_models)
-            in_secondary = _matches_ini_names(model_name, r["model_id"], secondary_ini_models)
+            # Per-server stats over the retention window (last 5 runs).
+            scoped_runs = r["runs_count"] or 0
+            scoped_avg_score = r["scoped_avg_score"]
+            scoped_avg_tps = r["scoped_avg_tps"]
+            variance = 0.0
+            if scoped_runs > 1 and r["sum_score"] is not None and r["sum_sq"] is not None:
+                # Sample variance (n-1), matching aggregation.calculate_and_store_model_aggregates.
+                variance = (r["sum_sq"] - r["sum_score"] ** 2 / scoped_runs) / (scoped_runs - 1)
+            score_stddev = math.sqrt(variance) if variance > 0 else 0.0
+            latest_score = r["total_score"] or 0
+            score = scoped_avg_score if scoped_avg_score is not None else latest_score
+            avg_tps = scoped_avg_tps if scoped_avg_tps is not None else (r["tps"] or 0.0)
+            hallucinated = r["hallucination_count"] > 0
 
-            if bench_server == "secondary":
-                secondary_tested_names.add(name_low)
-                secondary_tested_names.add(model_id_low)
-                if name_low.endswith(".gguf"):
-                    secondary_tested_names.add(name_low[:-5])
-                else:
-                    secondary_tested_names.add(name_low + ".gguf")
-                is_model_ready = (name_low in secondary_ready) or (model_id_low in secondary_ready)
-                in_models_ini = False
-                in_modelg_ini = in_secondary
-                in_strata = False
-            elif bench_server == "strata":
+            # Identity = INI block (section), never its model= target.
+            block = None
+            if bench_server in block_indexes:
+                block = _lookup_block(block_indexes[bench_server], model_name, r["model_id"])
+
+            if bench_server == "strata":
                 strata_tested_names.add(name_low)
                 strata_tested_names.add(model_id_low)
                 strata_tested_names.add(_clean_model_id(r["model_id"]))
@@ -282,21 +311,29 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                 in_models_ini = False
                 in_modelg_ini = False
                 in_strata = True
+                is_retired = False
             else:
-                primary_tested_names.add(name_low)
-                primary_tested_names.add(model_id_low)
+                tested_names = (
+                    primary_tested_names if bench_server == "primary"
+                    else secondary_tested_names
+                )
+                tested_names.add(name_low)
+                tested_names.add(model_id_low)
                 if name_low.endswith(".gguf"):
-                    primary_tested_names.add(name_low[:-5])
+                    tested_names.add(name_low[:-5])
                 else:
-                    primary_tested_names.add(name_low + ".gguf")
-                is_model_ready = (name_low in primary_ready) or (model_id_low in primary_ready)
-                in_models_ini = in_primary
-                in_modelg_ini = False
+                    tested_names.add(name_low + ".gguf")
+                in_models_ini = block is not None and bench_server == "primary"
+                in_modelg_ini = block is not None and bench_server == "secondary"
                 in_strata = False
+                # A tested model with no current INI block is retired/historical.
+                is_retired = block is None
+                is_model_ready = bool(block and block["is_ready"])
 
             if not show_all:
-                if avg_tps < 20.0 or hallucinated or total_score < 50:
-                    if not is_model_ready:
+                if avg_tps < 20.0 or hallucinated or score < 50:
+                    # Keep retired rows available so the UI can reveal them on demand.
+                    if not is_model_ready and not is_retired:
                         continue
 
             if bench_server == "secondary":
@@ -323,21 +360,35 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                 if not caps and key_low.endswith('.gguf'):
                     caps = cap_lookup.get(key_low[:-5]) or {}
                 return caps
-            caps = _lookup_caps(name_low) or _lookup_caps(r["model_id"].lower())
+            caps_key = block["filename"].lower() if block else name_low
+            caps = _lookup_caps(caps_key) or _lookup_caps(name_low) or _lookup_caps(model_id_low)
 
-            cat_key = r["category"] or "unclassified"
+            # Category is computed from this server's runs, not the global model row.
+            if scoped_runs and (r["avg_reasoning"] is not None or r["avg_code"] is not None):
+                cat_key = classify_model(
+                    avg_tps,
+                    r["avg_reasoning"] or 0.0,
+                    r["avg_code"] or 0.0,
+                    effective_vram,
+                )
+            else:
+                cat_key = r["category"] or "unclassified"
+
+            # Quantization comes from the block's referenced weights file so
+            # preset aliases (e.g. `-dspark.gguf`) don't render as "Unknown".
+            quant = block["quant"] if block else (r["quantization"] or "Unknown")
 
             benchmarks.append({
                 "model_id": r["model_id"],
                 "model": model_name,
                 "platform": _get_platform(bench_server),
                 "server": bench_server,
-                "quant": r["quantization"] or "Unknown",
+                "quant": quant,
                 "tokens_sec": round(avg_tps, 1),
-                "score": total_score,
-                "avg_score": r["avg_total_score"] or total_score,
-                "score_stddev": r["score_stddev"] or 0.0,
-                "runs_count": r["runs_count"] or 1,
+                "score": score,
+                "avg_score": score,
+                "score_stddev": round(score_stddev, 2),
+                "runs_count": scoped_runs or 1,
                 "category": cat_key,
                 "category_label": CATEGORY_LABELS.get(cat_key, "❓ Unclassified"),
                 "vram_gb": effective_vram,
@@ -345,12 +396,14 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                 "status": r["status"] if (r and r["status"]) else "testing",
                 "is_ready": is_model_ready,
                 "is_tested": True,
+                "is_retired": is_retired,
                 "in_models_ini": in_models_ini,
                 "in_modelg_ini": in_modelg_ini,
                 "in_strata": in_strata,
                 "has_mmproj": caps.get("has_mmproj", False),
                 "has_mtp": caps.get("has_mtp", False),
                 "has_dflash": caps.get("has_dflash", False),
+                "has_dspark": caps.get("has_dspark", False),
             })
 
         # Append untested models from both INI files
@@ -359,51 +412,48 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                 continue
             tested_set = primary_tested_names if default_server == "primary" else secondary_tested_names
             try:
-                with open(ini_path) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith(";") or line.startswith("#"):
-                            continue
-                        m = re.match(r'^\[(.+?)\]$', line)
-                        if m:
-                            raw_name = m.group(1).strip()
-                            if raw_name == "*":
-                                continue
-                            if raw_name.lower().endswith(".gguf"):
-                                base_name = raw_name[:-5]
-                            else:
-                                base_name = raw_name
-                            filename = base_name + ".gguf"
-                            if filename.lower() not in tested_set and base_name.lower() not in tested_set:
-                                db_status, db_vram = _db_lookup_model(filename)
-                                vram_total = _get_vram_total(default_server)
-                                caps = cap_lookup.get(filename.lower(), {})
-                                file_ready = os.path.exists(os.path.join(MODELS_DIR, filename))
-                                benchmarks.append({
-                                    "model_id": filename,
-                                    "model": filename,
-                                    "platform": _get_platform(default_server),
-                                    "server": default_server,
-                                    "quant": get_quantization_from_name(filename),
-                                    "tokens_sec": None,
-                                    "score": None,
-                                    "avg_score": None,
-                                    "score_stddev": 0.0,
-                                    "runs_count": 0,
-                                    "category": "unclassified",
-                                    "category_label": "❓ Unclassified",
-                                    "vram_gb": db_vram,
-                                    "vram_total_gb": vram_total,
-                                    "status": db_status or "testing",
-                                    "is_ready": file_ready,
-                                    "is_tested": False,
-                                    "in_models_ini": (default_server == "primary"),
-                                    "in_modelg_ini": (default_server == "secondary"),
-                                    "in_strata": False,
-                                    "has_mmproj": caps.get("has_mmproj", False),
-                                    "has_mtp": caps.get("has_mtp", False),
-                                    "has_dflash": caps.get("has_dflash", False),
-                                })
+                for sec in _parse_ini_sections(ini_path):
+                    raw_name = sec["section"]
+                    if raw_name.lower().endswith(".gguf"):
+                        base_name = raw_name[:-5]
+                    else:
+                        base_name = raw_name
+                    filename = base_name + ".gguf"
+                    if filename.lower() in tested_set or base_name.lower() in tested_set:
+                        continue
+                    db_status, db_vram = _db_lookup_model(filename)
+                    vram_total = _get_vram_total(default_server)
+                    caps = cap_lookup.get(filename.lower(), {})
+                    file_ready = _section_is_ready(sec)
+                    model_ref = sec.get("model")
+                    quant_source = os.path.basename(model_ref) if model_ref else filename
+                    benchmarks.append({
+                        "model_id": filename,
+                        "model": filename,
+                        "platform": _get_platform(default_server),
+                        "server": default_server,
+                        "quant": get_quantization_from_name(quant_source),
+                        "tokens_sec": None,
+                        "score": None,
+                        "avg_score": None,
+                        "score_stddev": 0.0,
+                        "runs_count": 0,
+                        "category": "unclassified",
+                        "category_label": "❓ Unclassified",
+                        "vram_gb": db_vram,
+                        "vram_total_gb": vram_total,
+                        "status": db_status or "testing",
+                        "is_ready": file_ready,
+                        "is_tested": False,
+                        "is_retired": False,
+                        "in_models_ini": (default_server == "primary"),
+                        "in_modelg_ini": (default_server == "secondary"),
+                        "in_strata": False,
+                        "has_mmproj": caps.get("has_mmproj", False),
+                        "has_mtp": caps.get("has_mtp", False),
+                        "has_dflash": caps.get("has_dflash", False),
+                        "has_dspark": caps.get("has_dspark", False),
+                    })
             except Exception as e:
                 print(f"[Benchmarks API] Failed to append ready models from {ini_path}: {e}")
 
@@ -435,24 +485,22 @@ async def get_benchmarks(show_all: bool = False, server: Optional[str] = None) -
                     "status": "testing",
                     "is_ready": True,
                     "is_tested": False,
+                    "is_retired": False,
                     "in_models_ini": False,
                     "in_modelg_ini": False,
                     "in_strata": True,
                     "has_mmproj": False,
                     "has_mtp": False,
                     "has_dflash": False,
+                    "has_dspark": False,
                 })
         except Exception as e:
             print(f"[Benchmarks API] Failed to append Strata models: {e}")
 
         if server:
             s_low = server.lower()
-            if s_low == "primary":
-                benchmarks = [b for b in benchmarks if b.get("in_models_ini")]
-            elif s_low == "secondary":
-                benchmarks = [b for b in benchmarks if b.get("in_modelg_ini")]
-            elif s_low == "strata":
-                benchmarks = [b for b in benchmarks if b.get("in_strata")]
+            if s_low in ("primary", "secondary", "strata"):
+                benchmarks = [b for b in benchmarks if b.get("server") == s_low]
 
         return {"benchmarks": benchmarks}
     except Exception as e:
@@ -494,6 +542,36 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
         history_rows = cursor.fetchall()
         runs_history = [dict(r) for r in history_rows]
 
+        # Server-scoped statistics over the retention window (last 5 runs).
+        scoped_history = [h for h in runs_history if h["total_score"] is not None][:5]
+        scoped_scores = [h["total_score"] for h in scoped_history]
+        scoped_tps = [h["speed_tps"] for h in scoped_history if h["speed_tps"]]
+        n_runs = len(scoped_scores)
+        avg_total_score = (sum(scoped_scores) / n_runs) if n_runs else None
+        if n_runs > 1:
+            score_stddev = math.sqrt(
+                sum((s - avg_total_score) ** 2 for s in scoped_scores) / (n_runs - 1)
+            )
+        else:
+            score_stddev = 0.0
+        avg_tps = (sum(scoped_tps) / len(scoped_tps)) if scoped_tps else None
+
+        avg_reasoning = avg_code = None
+        last5_ids = [h["run_id"] for h in runs_history[:5]]
+        if last5_ids:
+            placeholders = ",".join(["?"] * len(last5_ids))
+            cursor.execute(f"""
+                SELECT AVG(CASE WHEN round_name IN ('abstract_logic', 'technical_reasoning')
+                                THEN score END) AS avg_reasoning,
+                       AVG(CASE WHEN round_name = 'code_generation'
+                                THEN score END) AS avg_code
+                FROM round_scores WHERE run_id IN ({placeholders})
+            """, last5_ids)
+            round_avgs = cursor.fetchone()
+            if round_avgs:
+                avg_reasoning = round_avgs["avg_reasoning"]
+                avg_code = round_avgs["avg_code"]
+
         rounds = []
         hallucinations = []
         timestamp = None
@@ -526,9 +604,8 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
                     print(f"[Benchmarks API] Failed to load raw JSON for {model_id}: {raw_err}")
         conn.close()
 
-        from .aggregation import CATEGORY_LABELS
+        from .aggregation import CATEGORY_LABELS, classify_model
 
-        cat_key = model_row["category"] or "unclassified"
         if server == "secondary":
             # Only fall back to models.vram_gb if it's plausibly a GTX reading (≤ 6 GB).
             if run_vram_gb is not None:
@@ -541,6 +618,16 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             effective_vram = run_vram_gb if run_vram_gb is not None else (model_row["vram_gb"] if model_row else None)
         total_gpu = _get_vram_total(server)
 
+        if n_runs and (avg_reasoning is not None or avg_code is not None):
+            cat_key = classify_model(
+                avg_tps or 0.0,
+                avg_reasoning or 0.0,
+                avg_code or 0.0,
+                effective_vram,
+            )
+        else:
+            cat_key = model_row["category"] or "unclassified"
+
         return {
             "model_id": model_row["model_id"],
             "name": model_row["name"],
@@ -548,10 +635,10 @@ def get_benchmark_details(model_id: str, server: str = "primary") -> dict:
             "status": model_row["status"] if (model_row and model_row["status"]) else "testing",
             "category": cat_key,
             "category_label": CATEGORY_LABELS.get(cat_key, "❓ Unclassified"),
-            "avg_total_score": model_row["avg_total_score"],
-            "avg_tps": model_row["avg_tps"],
-            "score_stddev": model_row["score_stddev"] or 0.0,
-            "runs_count": model_row["runs_count"] or len(runs_history) or 1,
+            "avg_total_score": round(avg_total_score, 2) if avg_total_score is not None else None,
+            "avg_tps": round(avg_tps, 2) if avg_tps is not None else None,
+            "score_stddev": round(score_stddev, 2),
+            "runs_count": n_runs or len(runs_history) or 1,
             "vram_gb": effective_vram,
             "vram_total_gb": total_gpu,
             "notes": model_row["notes"],

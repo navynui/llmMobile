@@ -307,7 +307,8 @@ export function renderBenchmarksView(ctx) {
           <button class="pill ${ctx.categoryFilter === 'balanced' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'balanced'}">⚖️ Balanced</button>
           <button class="pill ${ctx.categoryFilter === 'specialized' ? 'active' : ''}" @click="${() => ctx.categoryFilter = 'specialized'}">🎯 Specialized</button>
 
-          <button class="pill ${ctx.showOfflineModels ? '' : 'active'}" style="margin-left: auto; font-size: 0.65rem;" @click="${() => ctx.showOfflineModels = !ctx.showOfflineModels}">${ctx.showOfflineModels ? '📂 Show Offline' : '📂 Hide Offline'}</button>
+          <button class="pill ${ctx.showRetiredModels ? 'active' : ''}" style="margin-left: auto; font-size: 0.65rem;" @click="${() => ctx.showRetiredModels = !ctx.showRetiredModels}">${ctx.showRetiredModels ? '🗄️ Hide Retired' : '🗄️ Show Retired'}</button>
+          <button class="pill ${ctx.showOfflineModels ? '' : 'active'}" style="font-size: 0.65rem;" @click="${() => ctx.showOfflineModels = !ctx.showOfflineModels}">${ctx.showOfflineModels ? '📂 Show Offline' : '📂 Hide Offline'}</button>
         </div>
 
         <div class="table-wrapper">
@@ -383,6 +384,7 @@ export function renderBenchmarksView(ctx) {
                           ${isJudge ? html`<span class="meta-badge" style="background: rgba(99, 102, 241, 0.15); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); font-size: 0.6rem; padding: 1px 5px;">⚖️ Judge</span>` : ''}
                           ${b.server ? html`<span class="meta-badge" style="background: ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.15)' : b.server === 'strata' ? 'rgba(96, 165, 250, 0.15)' : 'rgba(16, 185, 129, 0.15)'}; color: ${b.server === 'secondary' ? '#fbbf24' : b.server === 'strata' ? '#60a5fa' : '#34d399'}; border: 1px solid ${b.server === 'secondary' ? 'rgba(251, 191, 36, 0.3)' : b.server === 'strata' ? 'rgba(96, 165, 250, 0.3)' : 'rgba(16, 185, 129, 0.3)'}; font-size: 0.6rem; padding: 1px 5px;">${b.server === 'secondary' ? '🟠 Secondary' : b.server === 'strata' ? '🔵 Strata' : '🟢 Primary'}</span>` : ''}
                           ${b.is_tested ? (b.status === 'aborted' ? html`<span class="meta-badge" style="background: rgba(239,68,68,0.15); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">⛔ Aborted</span>` : html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">Tested</span>`) : ''}
+                          ${b.is_retired ? html`<span class="meta-badge" style="background: rgba(148,163,184,0.15); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.3); font-size: 0.6rem; padding: 1px 5px;" title="Historic run with no current INI block">🗄️ Retired</span>` : ''}
                           ${b.is_ready ?
                             html`<span class="meta-badge" style="background: rgba(16, 185, 129, 0.1); color: #34d399; font-size: 0.6rem; padding: 1px 5px;">🟢 Ready</span>` :
                             html`<span class="meta-badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; font-size: 0.6rem; padding: 1px 5px;">🔴 Offline</span>`
@@ -402,6 +404,7 @@ export function renderBenchmarksView(ctx) {
                             ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
                             ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
                             ${b.has_dflash ? html`<span class="bench-chip" style="background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🚀 DFLASH</span>` : ''}
+                            ${b.has_dspark ? html`<span class="bench-chip" style="background: rgba(34,211,238,0.12); color: #22d3ee; border: 1px solid rgba(34,211,238,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🌀 DSPARK</span>` : ''}
                           </div>
                         ` : html`
                           <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px;">
@@ -412,6 +415,7 @@ export function renderBenchmarksView(ctx) {
                             ${b.has_mmproj ? html`<span class="bench-chip" style="background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">📷 MMPROJ</span>` : ''}
                             ${b.has_mtp ? html`<span class="bench-chip" style="background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">⚡ MTP</span>` : ''}
                             ${b.has_dflash ? html`<span class="bench-chip" style="background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🚀 DFLASH</span>` : ''}
+                            ${b.has_dspark ? html`<span class="bench-chip" style="background: rgba(34,211,238,0.12); color: #22d3ee; border: 1px solid rgba(34,211,238,0.25); font-size: 0.7rem; padding: 2px 8px; border-radius: var(--radius-sm);">🌀 DSPARK</span>` : ''}
                           </div>
                         `}
                       </div>

@@ -101,17 +101,22 @@ def test_benchmarks_ini_filtering(mock_docker):
         assert "in_models_ini" in b
         assert "in_modelg_ini" in b
 
-    # Server = primary filter
+    # Server = primary filter. Rows are scoped by server; a tested row with no
+    # current INI block is returned as retired (in_models_ini False).
     resp_p = client.get("/api/benchmarks?show_all=true&server=primary")
     assert resp_p.status_code == 200
     for b in resp_p.json()["benchmarks"]:
-        assert b["in_models_ini"] is True
+        assert b["server"] == "primary"
+        assert b["in_models_ini"] is True or b["is_retired"] is True
+        assert b["in_modelg_ini"] is False
 
     # Server = secondary filter
     resp_s = client.get("/api/benchmarks?show_all=true&server=secondary")
     assert resp_s.status_code == 200
     for b in resp_s.json()["benchmarks"]:
-        assert b["in_modelg_ini"] is True
+        assert b["server"] == "secondary"
+        assert b["in_modelg_ini"] is True or b["is_retired"] is True
+        assert b["in_models_ini"] is False
 
 def test_strata_endpoints(mock_docker):
     from app.main import app

@@ -7,7 +7,7 @@ from typing import Optional
 import httpx
 from fastapi import HTTPException
 
-from utils.db_utils import get_db_conn
+from utils.db_utils import get_db_conn, _clean_model_id
 from utils.common import get_quantization_from_name
 from models.requests import JudgeRequest
 from .gold import get_gold_key, get_gold_answers, load_raw_json
@@ -87,10 +87,10 @@ async def judge_benchmark(req: JudgeRequest):
 
         # 1. Determine run_id and model_id
         if req.run_id:
-            cursor.execute("SELECT run_id, model_id, raw_output_path FROM test_runs WHERE run_id = ?", (req.run_id,))
+            cursor.execute("SELECT run_id, model_id, raw_output_path, server FROM test_runs WHERE run_id = ?", (req.run_id,))
             run_row = cursor.fetchone()
         else:
-            cursor.execute("SELECT run_id, model_id, raw_output_path FROM test_runs ORDER BY timestamp DESC LIMIT 1")
+            cursor.execute("SELECT run_id, model_id, raw_output_path, server FROM test_runs ORDER BY timestamp DESC LIMIT 1")
             run_row = cursor.fetchone()
 
         if not run_row:
@@ -98,7 +98,9 @@ async def judge_benchmark(req: JudgeRequest):
             raise HTTPException(status_code=404, detail="No test run found to grade")
 
         run_id = run_row["run_id"]
-        model_id = run_row["model_id"]
+        raw_model_id = run_row["model_id"]
+        model_id = _clean_model_id(raw_model_id)
+        run_server = run_row["server"] or "primary"
         raw_output_path = run_row["raw_output_path"]
 
         # 2. Determine Judge model
@@ -270,7 +272,7 @@ JSON:"""
         cursor.execute("DELETE FROM model_hallucinations WHERE model_id = ?", (model_id,))
         cursor.execute("DELETE FROM round_scores WHERE run_id = ?", (run_id,))
 
-        model_name = raw_data.get("model_name") or model_id
+        model_name = raw_data.get("model_name") or raw_data.get("model_id") or raw_model_id or model_id
         quant = get_quantization_from_name(model_name)
         status = "failed" if hallucinations else "good"
 
@@ -309,7 +311,7 @@ JSON:"""
         from utils.db_utils import prune_old_runs
         from services.benchmark import calculate_and_store_model_aggregates
 
-        prune_old_runs(model_id, max_keep=5)
+        prune_old_runs(model_id, server=run_server, max_keep=5)
         aggregates = calculate_and_store_model_aggregates(model_id)
 
         return {

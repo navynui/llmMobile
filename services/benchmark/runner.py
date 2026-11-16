@@ -573,7 +573,7 @@ async def run_benchmark_queue_task(models: list, judge_model_id: str, server: st
                     cursor.execute("""
                     INSERT INTO test_runs (run_id, model_id, timestamp, raw_output_path, server, run_number, run_group_id, execution_mode, temperature)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (run_id, model_id, run_ts, raw_output_path, server, run_pass, run_group_id, execution_mode, temperature))
+                    """, (run_id, norm_model_id, run_ts, raw_output_path, server, run_pass, run_group_id, execution_mode, temperature))
                     conn.commit()
                     conn.close()
                 except Exception as db_err:

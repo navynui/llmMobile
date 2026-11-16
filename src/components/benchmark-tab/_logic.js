@@ -280,29 +280,26 @@ export function handleSort(ctx, field) {
 export function getFilteredAndSortedBenchmarks(ctx) {
   let list = [...ctx.benchmarks];
 
+  // Server filter is authoritative: a row belongs to the server whose INI
+  // block (or Strata id) it represents.
   const filter = (ctx.platformFilter || 'all').toLowerCase();
-  if (filter === 'primary') {
-    list = list.filter(b => b.in_models_ini ?? (b.server === 'primary'));
-  } else if (filter === 'secondary') {
-    list = list.filter(b => b.in_modelg_ini ?? (b.server === 'secondary'));
-  } else if (filter === 'strata') {
-    list = list.filter(b => b.in_strata ?? (b.server === 'strata'));
-  } else {
-    // 'all' (default): show models from all configured server sources
-    if (ctx.showOfflineModels) {
-      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || (b.in_strata ?? (b.server === 'strata')) || !b.is_ready);
-    } else {
-      list = list.filter(b => (b.in_models_ini ?? (b.server === 'primary')) || (b.in_modelg_ini ?? (b.server === 'secondary')) || (b.in_strata ?? (b.server === 'strata')));
-    }
+  if (filter === 'primary' || filter === 'secondary' || filter === 'strata') {
+    list = list.filter(b => (b.server || 'primary') === filter);
+  }
+
+  // Retired = tested DB history with no current INI block / Strata id.
+  if (!ctx.showRetiredModels) {
+    list = list.filter(b => !b.is_retired);
   }
 
   if (ctx.categoryFilter && ctx.categoryFilter !== 'all') {
     list = list.filter(b => b.category === ctx.categoryFilter);
   }
 
-  // Hide offline models unless user toggles them on
+  // Hide offline models unless user toggles them on. Retired rows keep their
+  // stats visible when explicitly revealed.
   if (!ctx.showOfflineModels) {
-    list = list.filter(b => b.is_ready === true);
+    list = list.filter(b => b.is_ready === true || (ctx.showRetiredModels && b.is_retired));
   }
 
   if (ctx.filterQuery.trim()) {

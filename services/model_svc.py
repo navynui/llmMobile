@@ -119,6 +119,7 @@ def list_models():
             has_mmproj = False
             has_mtp = False
             has_dflash = False
+            has_dspark = False
             for line in f:
                 line_stripped = line.strip()
                 if not line_stripped or line_stripped.startswith(";"):
@@ -126,12 +127,13 @@ def list_models():
                 m = re.match(r'^\[(.+?)\.gguf\]$', line_stripped, re.IGNORECASE)
                 if m:
                     if current_model:
-                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash})
+                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash, "has_dspark": has_dspark})
                     current_model = m.group(1) + ".gguf"
                     is_default = False
                     has_mmproj = False
                     has_mtp = False
                     has_dflash = False
+                    has_dspark = False
                 elif "load-on-startup" in line_stripped and "true" in line_stripped.lower() and current_model:
                     is_default = True
                 elif "mmproj" in line_stripped and "=" in line_stripped and current_model:
@@ -143,8 +145,10 @@ def list_models():
                     has_mtp = True
                 elif "spec-type" in line_stripped and "dflash" in line_stripped.lower() and current_model:
                     has_dflash = True
+                elif "spec-type" in line_stripped and "dspark" in line_stripped.lower() and current_model:
+                    has_dspark = True
             if current_model:
-                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash})
+                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash, "has_dspark": has_dspark})
     except Exception as e:
         print(f"[Models INI] Failed to parse: {e}")
     return {"models": models}
@@ -311,6 +315,7 @@ def _list_models_from_ini(ini_path: str) -> list:
             has_mmproj = False
             has_mtp = False
             has_dflash = False
+            has_dspark = False
             for line in f:
                 line_stripped = line.strip()
                 if not line_stripped or line_stripped.startswith(";"):
@@ -318,12 +323,13 @@ def _list_models_from_ini(ini_path: str) -> list:
                 m = re.match(r'^\[(.+?)\.gguf\]$', line_stripped, re.IGNORECASE)
                 if m:
                     if current_model:
-                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash})
+                        models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash, "has_dspark": has_dspark})
                     current_model = m.group(1) + ".gguf"
                     is_default = False
                     has_mmproj = False
                     has_mtp = False
                     has_dflash = False
+                    has_dspark = False
                 elif "load-on-startup" in line_stripped and "true" in line_stripped.lower() and current_model:
                     is_default = True
                 elif "mmproj" in line_stripped and "=" in line_stripped and current_model:
@@ -332,8 +338,10 @@ def _list_models_from_ini(ini_path: str) -> list:
                     has_mtp = True
                 elif "spec-type" in line_stripped and "dflash" in line_stripped.lower() and current_model:
                     has_dflash = True
+                elif "spec-type" in line_stripped and "dspark" in line_stripped.lower() and current_model:
+                    has_dspark = True
             if current_model:
-                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash})
+                models.append({"filename": current_model, "is_default": is_default, "has_mmproj": has_mmproj, "has_mtp": has_mtp, "has_dflash": has_dflash, "has_dspark": has_dspark})
     except Exception as e:
         print(f"[Models INI] Failed to parse {ini_path}: {e}")
     return models
